@@ -1,0 +1,46 @@
+{
+  "name": "@gtmship/deploy-engine",
+  "version": "0.1.0",
+  "description": "GTMShip Deploy Engine — Pulumi programs for AWS/GCP deployment",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./logs": {
+      "types": "./dist/logs.d.ts",
+      "default": "./dist/logs.js"
+    },
+    "./triggers": {
+      "types": "./dist/triggers.d.ts",
+      "default": "./dist/triggers.js"
+    },
+    "./planner": {
+      "types": "./dist/planner.d.ts",
+      "default": "./dist/planner.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3.0.0",
+    "@pulumi/aws": "^6.0.0",
+    "@pulumi/awsx": "^2.0.0",
+    "@pulumi/gcp": "^7.0.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.0.0",
+    "@google-cloud/logging": "^11.0.0",
+    "cron-parser": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

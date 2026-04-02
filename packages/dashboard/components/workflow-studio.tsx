@@ -1,0 +1,3484 @@
+"use client";
+
+import {
+  FormEvent,
+  ReactNode,
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useChat } from "ai/react";
+import type { UIMessage } from "ai";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  ChevronRight,
+  Code2,
+  FileJson,
+  FolderPlus,
+  Loader2,
+  Package,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Save,
+  Sparkles,
+  Workflow,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
+import {
+  type DashboardDeployInfraKey,
+  type GcpComputeType,
+  type ResolvedCloudDeploySettings,
+  type WorkflowDeploymentOverview,
+  type WorkflowExecutionHistoryEntry,
+  getDeploymentInfra,
+  isDashboardDeploySuccess,
+  loadCloudDeploySettings,
+  resolveWorkflowDeployTarget,
+} from "@/lib/deploy";
+import { MermaidDiagram } from "@/components/mermaid-diagram";
+import { ToolRenderer } from "@/components/agent/tool-renderers";
+import { buildWorkflowPlanFromArtifact } from "@/lib/workflow-studio/deploy-plan";
+import { deriveWorkflowStudioState } from "@/lib/workflow-studio/transcript";
+import type {
+  WorkflowBindingSelectorType,
+  StoredWorkflowRecord,
+  WorkflowAccessRequirement,
+  WorkflowBuildResult,
+  WorkflowDeploymentRun,
+  WorkflowListItem,
+  WorkflowListingResponse,
+  WorkflowProjectDeploymentDefaults,
+  WorkflowPreviewResult,
+  WorkflowStudioArtifact,
+  WorkflowStudioMessage,
+  WorkflowStudioMessagePart,
+  WorkflowStudioToolInvocation,
+  WorkflowValidationIssue,
+  WorkflowValidationReport,
+} from "@/lib/workflow-studio/types";
+
+type StudioTab =
+  | "flow"
+  | "deploy"
+  | "code"
+  | "validation"
+  | "preview"
+  | "build";
+
+interface WorkflowBuildRunResponse {
+  artifact: WorkflowStudioArtifact;
+  build: WorkflowBuildResult;
+  repaired: boolean;
+  assistantMessage?: string;
+  blockedAccesses?: WorkflowAccessRequirement[];
+}
+
+interface WorkflowPreviewRunResponse {
+  artifact: WorkflowStudioArtifact;
+  preview: WorkflowPreviewResult;
+}
+
+type WorkflowStudioDeployResponse =
+  | {
+      success: true;
+      provider: "aws" | "gcp";
+      region?: string;
+      projectName: string;
+      apiEndpoint?: string | null;
+      computeId?: string | null;
+      databaseEndpoint?: string | null;
+      storageBucket?: string | null;
+      schedulerJobId?: string | null;
+      output?: string;
+      artifact?: WorkflowStudioArtifact;
+    }
+  | {
+      error: string;
+      output?: string;
+      artifact?: WorkflowStudioArtifact;
+    };
+
+interface WorkflowConversationPanelHandle {
+  sendPrompt: (content: string) => Promise<void>;
+}
+
+interface WorkflowConversationPanelProps {
+  sessionKey: string;
+  initialMessages: WorkflowStudioMessage[];
+  artifact: WorkflowStudioArtifact | null;
+  onTranscriptChange: (messages: WorkflowStudioMessage[]) => void;
+  onArtifactSync: (
+    nextArtifact: WorkflowStudioArtifact | null,
+    blockedAccesses: WorkflowAccessRequirement[]
+  ) => void;
+  onBusyChange: (value: boolean) => void;
+  onError: (message: string | null) => void;
+}
+
+function withDeploymentPlan(
+  artifact: WorkflowStudioArtifact,
+  defaults?: WorkflowProjectDeploymentDefaults
+): WorkflowStudioArtifact {
+  return {
+    ...artifact,
+    deploymentPlan: buildWorkflowPlanFromArtifact(artifact, defaults),
+  };
+}
+
+function emptyArtifact(
+  defaults?: WorkflowProjectDeploymentDefaults
+): WorkflowStudioArtifact {
+  return withDeploymentPlan({
+    slug: "custom-workflow",
+    title: "Untitled Workflow",
+    summary:
+      "Describe a workflow in chat to generate code and a data-flow diagram.",
+    description: "",
+    mermaid:
+      "flowchart LR\n  trigger([Trigger]) --> workflow[Workflow]\n  workflow --> output([Result])",
+    code: "",
+    samplePayload: "{}",
+    requiredAccesses: [],
+    writeCheckpoints: [],
+    chatSummary: "",
+    messages: [],
+    deploy: undefined,
+    triggerConfig: undefined,
+    bindings: [],
+  }, defaults);
+}
+
+function defaultRegionForProvider(
+  provider: "aws" | "gcp",
+  defaults?: WorkflowProjectDeploymentDefaults
+): string {
+  if (defaults?.provider === provider && defaults.region) {
+    return defaults.region;
+  }
+
+  return provider === "gcp" ? "us-central1" : "us-east-1";
+}
+
+function deploymentStatusTone(status?: string | null): string {
+  const normalized = (status || "").toLowerCase();
+  if (
+    normalized === "success" ||
+    normalized === "succeeded" ||
+    normalized === "completed"
+  ) {
+    return "border-emerald-900/40 bg-emerald-950/20 text-emerald-200";
+  }
+  if (normalized === "running" || normalized === "in_progress") {
+    return "border-blue-900/40 bg-blue-950/20 text-blue-200";
+  }
+  if (
+    normalized === "failed" ||
+    normalized === "error" ||
+    normalized === "cancelled"
+  ) {
+    return "border-rose-900/40 bg-rose-950/20 text-rose-200";
+  }
+  return "border-zinc-800 bg-zinc-900 text-zinc-300";
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) {
+    return "N/A";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+function buildLogsHref(deploymentId: string, executionName?: string | null): string {
+  const params = new URLSearchParams({
+    provider: "gcp",
+    deploymentId,
+  });
+  if (executionName) {
+    params.set("executionName", executionName);
+  }
+  return `/deploy/logs?${params.toString()}`;
+}
+
+function truncateIssueContext(value: string | undefined, maxChars = 3000): string {
+  if (!value) {
+    return "";
+  }
+
+  return value.length <= maxChars
+    ? value
+    : `${value.slice(0, maxChars)}\n\n... (issue details truncated)`;
+}
+
+function createValidationFixPrompt(
+  artifact: WorkflowStudioArtifact,
+  issue: WorkflowValidationIssue
+): string {
+  return [
+    "Fix this issue in the current workflow.",
+    "",
+    `Workflow: ${artifact.title || artifact.slug}`,
+    `Validation ${issue.level}: ${issue.message}`,
+    "",
+    "Update the draft to resolve the issue without breaking the intended workflow behavior, then explain what changed.",
+  ].join("\n");
+}
+
+function createBuildFixPrompt(
+  artifact: WorkflowStudioArtifact,
+  build: WorkflowBuildResult
+): string {
+  const failedSteps = build.steps.filter((step) => step.status === "error");
+  const validationIssues =
+    build.validation?.issues.map((issue) => `- ${issue.message}`) || [];
+  const failedStepSummary = failedSteps
+    .slice(0, 3)
+    .map((step) =>
+      [
+        `- ${step.label}: ${step.summary}`,
+        step.command ? `  Command: ${step.command}` : "",
+        step.output
+          ? `  Output:\n${truncateIssueContext(step.output, 1600)
+              .split("\n")
+              .map((line) => `  ${line}`)
+              .join("\n")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+
+  return [
+    "Fix this issue in the current workflow build.",
+    "",
+    `Workflow: ${artifact.title || artifact.slug}`,
+    build.error
+      ? `Build error:\n${truncateIssueContext(build.error, 2400)}`
+      : "",
+    validationIssues.length > 0
+      ? `Validation issues seen during build:\n${validationIssues.join("\n")}`
+      : "",
+    failedStepSummary.length > 0
+      ? `Failed build steps:\n${failedStepSummary.join("\n")}`
+      : "",
+    "Update the workflow code or configuration to resolve the failure, then explain what changed.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function CollapsibleSection(input: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group rounded-xl border border-zinc-800 bg-zinc-900/30">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
+        <div>
+          <h4 className="text-sm font-medium text-white">{input.title}</h4>
+          <p className="mt-1 text-xs text-zinc-500">{input.description}</p>
+        </div>
+        <ChevronRight
+          size={14}
+          className="shrink-0 text-zinc-500 transition-transform group-open:rotate-90"
+        />
+      </summary>
+      <div className="border-t border-zinc-800 px-5 py-5">{input.children}</div>
+    </details>
+  );
+}
+
+function isPlaceholderArtifact(
+  artifact: WorkflowStudioArtifact | null | undefined
+): boolean {
+  if (!artifact) {
+    return true;
+  }
+
+  return !(
+    artifact.code.trim() ||
+    artifact.requiredAccesses.length > 0 ||
+    artifact.writeCheckpoints.length > 0 ||
+    artifact.deploy ||
+    artifact.bindings?.length ||
+    artifact.triggerConfig ||
+    artifact.deploymentRun ||
+    artifact.validation ||
+    artifact.preview ||
+    artifact.build
+  );
+}
+
+function formatDate(value?: string): string {
+  if (!value) {
+    return "Unknown";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
+function formatBytes(value?: number): string {
+  if (!value) {
+    return "0 KB";
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed.");
+  }
+
+  return data as T;
+}
+
+function getToolInvocations(
+  message: WorkflowStudioMessage
+): WorkflowStudioToolInvocation[] {
+  const fromToolInvocations: WorkflowStudioToolInvocation[] =
+    message.toolInvocations || [];
+  const fromParts: WorkflowStudioToolInvocation[] =
+    message.parts?.flatMap((part) => {
+      const invocation = getToolInvocationPart(part);
+      return invocation ? [invocation] : [];
+    }) || [];
+
+  return fromParts.length > 0 ? fromParts : fromToolInvocations;
+}
+
+function getTextPartText(part: WorkflowStudioMessagePart): string | null {
+  return part.type === "text" && typeof part.text === "string"
+    ? part.text
+    : null;
+}
+
+function getToolInvocationPart(
+  part: WorkflowStudioMessagePart
+): WorkflowStudioToolInvocation | null {
+  return part.type === "tool-invocation" && part.toolInvocation
+    ? (part.toolInvocation as WorkflowStudioToolInvocation)
+    : null;
+}
+
+function getRenderableParts(
+  message: WorkflowStudioMessage
+): WorkflowStudioMessagePart[] {
+  const parts = message.parts || [];
+  const content = message.content?.trim();
+
+  if (parts.length === 0) {
+    const fallbackParts: WorkflowStudioMessagePart[] = [];
+
+    if (content) {
+      fallbackParts.push({ type: "text", text: content });
+    }
+
+    for (const invocation of getToolInvocations(message)) {
+      fallbackParts.push({
+        type: "tool-invocation",
+        toolInvocation: invocation,
+      });
+    }
+
+    return fallbackParts;
+  }
+
+  const hasTextPart = parts.some((part) => Boolean(getTextPartText(part)?.trim()));
+
+  const seenToolKeys = new Set(
+    parts.flatMap((part) => {
+      const invocation = getToolInvocationPart(part);
+      return invocation
+        ? [[invocation.toolCallId || "", invocation.toolName, invocation.state].join(":")]
+        : [];
+    })
+  );
+
+  const trailingToolParts = getToolInvocations(message).flatMap((invocation) => {
+    const key = [
+      invocation.toolCallId || "",
+      invocation.toolName,
+      invocation.state,
+    ].join(":");
+
+    if (seenToolKeys.has(key)) {
+      return [];
+    }
+
+    return [{ type: "tool-invocation", toolInvocation: invocation } satisfies WorkflowStudioMessagePart];
+  });
+
+  return [
+    ...(content && !hasTextPart ? [{ type: "text", text: content } satisfies WorkflowStudioMessagePart] : []),
+    ...parts,
+    ...trailingToolParts,
+  ];
+}
+
+function hasActiveToolInvocation(message?: WorkflowStudioMessage): boolean {
+  if (!message) {
+    return false;
+  }
+
+  return getToolInvocations(message).some((invocation) => invocation.state === "call");
+}
+
+function MarkdownContent({
+  text,
+  tone = "assistant",
+}: {
+  text: string;
+  tone?: "assistant" | "system";
+}) {
+  const strongClassName =
+    tone === "system" ? "text-amber-50 font-medium" : "text-white font-medium";
+  const inlineCodeClassName =
+    tone === "system"
+      ? "rounded bg-amber-950/40 px-1 py-0.5 text-xs font-mono text-amber-100"
+      : "rounded bg-zinc-800 px-1 py-0.5 text-xs font-mono text-zinc-300";
+  const blockCodeClassName =
+    tone === "system"
+      ? "block overflow-x-auto whitespace-pre rounded border border-amber-900/40 bg-amber-950/40 px-3 py-2 text-xs font-mono text-amber-100 my-2"
+      : "block overflow-x-auto whitespace-pre rounded border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-green-300/80 my-2";
+  const tableBorderClassName =
+    tone === "system" ? "border-amber-900/30" : "border-zinc-800";
+  const tableHeadClassName =
+    tone === "system" ? "bg-amber-950/20" : "bg-zinc-900/50";
+  const tableTextClassName =
+    tone === "system" ? "text-amber-100" : "text-zinc-300";
+  const mutedTextClassName =
+    tone === "system" ? "text-amber-200/80" : "text-zinc-400";
+  const linkClassName =
+    tone === "system" ? "text-amber-200 hover:underline" : "text-blue-400 hover:underline";
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h2: ({ children }) => (
+          <h2 className="mb-2 mt-4 text-base font-semibold text-white first:mt-0">
+            {children}
+          </h2>
+        ),
+        h3: ({ children }) => (
+          <h3 className="mb-1.5 mt-3 text-sm font-semibold text-white first:mt-0">
+            {children}
+          </h3>
+        ),
+        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+        strong: ({ children }) => (
+          <strong className={strongClassName}>{children}</strong>
+        ),
+        code: ({ className, children }) => {
+          const isBlock = className?.includes("language-");
+
+          if (isBlock) {
+            return <code className={blockCodeClassName}>{children}</code>;
+          }
+
+          return <code className={inlineCodeClassName}>{children}</code>;
+        },
+        pre: ({ children }) => <>{children}</>,
+        ul: ({ children }) => (
+          <ul className="mb-2 list-disc space-y-0.5 pl-5">{children}</ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="mb-2 list-decimal space-y-0.5 pl-5">{children}</ol>
+        ),
+        li: ({ children }) => <li>{children}</li>,
+        table: ({ children }) => (
+          <div className="my-2 overflow-x-auto">
+            <table className={`rounded border text-xs ${tableBorderClassName}`}>
+              {children}
+            </table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className={tableHeadClassName}>{children}</thead>,
+        th: ({ children }) => (
+          <th
+            className={`border-b px-3 py-1.5 text-left font-medium ${tableBorderClassName} ${mutedTextClassName}`}
+          >
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td
+            className={`border-b px-3 py-1.5 ${tableBorderClassName} ${tableTextClassName}`}
+          >
+            {children}
+          </td>
+        ),
+        hr: () => <hr className={`my-3 ${tableBorderClassName}`} />,
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={linkClassName}
+          >
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}
+
+function ChatMessage({
+  message,
+}: {
+  message: WorkflowStudioMessage;
+}) {
+  if (message.role === "user") {
+    return (
+      <div className="flex gap-3">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-700">
+          <Workflow size={14} />
+        </div>
+        <div className="min-w-0 flex-1 rounded-2xl bg-zinc-800/60 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-zinc-200">
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+
+  if (message.role === "system") {
+    return (
+      <div className="flex gap-3">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-600">
+          <AlertCircle size={14} />
+        </div>
+        <div className="min-w-0 flex-1 rounded-2xl border border-amber-900/40 bg-amber-950/20 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-amber-100">
+          <MarkdownContent text={message.content} tone="system" />
+        </div>
+      </div>
+    );
+  }
+
+  const parts = getRenderableParts(message);
+  let needsAvatar = true;
+
+  return (
+    <div className="space-y-2">
+      {parts.map((part, index) => {
+        const text = getTextPartText(part);
+
+        if (text?.trim()) {
+          const showAvatar = needsAvatar;
+          needsAvatar = false;
+
+          return (
+            <div key={`${message.id}_text_${index}`} className="flex gap-3">
+              {showAvatar ? (
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600">
+                  <Sparkles size={14} />
+                </div>
+              ) : (
+                <div className="w-7 shrink-0" />
+              )}
+              <div className="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm leading-relaxed text-zinc-200">
+                <MarkdownContent text={text} />
+              </div>
+            </div>
+          );
+        }
+
+        const invocation = getToolInvocationPart(part);
+
+        if (invocation) {
+          needsAvatar = true;
+
+          return (
+            <div
+              key={`${message.id}_${invocation.toolCallId || invocation.toolName}_${index}`}
+              className="pl-10"
+            >
+              <ToolRenderer
+                invocation={{
+                  toolName: invocation.toolName,
+                  args: invocation.args || {},
+                  state: invocation.state,
+                  result: invocation.result,
+                }}
+              />
+            </div>
+          );
+        }
+
+        return null;
+      })}
+    </div>
+  );
+}
+
+const WorkflowConversationPanel = forwardRef<
+  WorkflowConversationPanelHandle,
+  WorkflowConversationPanelProps
+>(function WorkflowConversationPanel({
+  sessionKey,
+  initialMessages,
+  artifact,
+  onTranscriptChange,
+  onArtifactSync,
+  onBusyChange,
+  onError,
+}, ref) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [composer, setComposer] = useState("");
+
+  const { messages, append, isLoading } = useChat({
+    id: `workflow-studio-${sessionKey}`,
+    api: "/api/workflows/agent",
+    initialMessages: initialMessages as unknown as UIMessage[],
+    maxSteps: 30,
+    onError(error) {
+      onError(error.message);
+    },
+  });
+
+  useEffect(() => {
+    onBusyChange(isLoading);
+  }, [isLoading, onBusyChange]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
+  }, [messages, isLoading]);
+
+  useEffect(() => {
+    const nextMessages = messages as unknown as WorkflowStudioMessage[];
+    onTranscriptChange(nextMessages);
+    const state = deriveWorkflowStudioState(nextMessages, artifact);
+    onArtifactSync(state.artifact, state.blockedAccesses);
+  }, [messages, onArtifactSync, onTranscriptChange]);
+
+  const sendPrompt = useCallback(
+    async (rawContent: string) => {
+      const content = rawContent.trim();
+      if (!content) {
+        return;
+      }
+
+      onError(null);
+      await append(
+        { role: "user", content },
+        {
+          body: {
+            currentArtifact: isPlaceholderArtifact(artifact) ? null : artifact,
+          },
+        }
+      );
+    },
+    [append, artifact, onError]
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      sendPrompt,
+    }),
+    [sendPrompt]
+  );
+
+  async function handleSend(event: FormEvent) {
+    event.preventDefault();
+    if (!composer.trim()) {
+      return;
+    }
+
+    const content = composer.trim();
+    setComposer("");
+    await sendPrompt(content);
+  }
+
+  const transcript = messages as unknown as WorkflowStudioMessage[];
+  const hasActiveTool = hasActiveToolInvocation(
+    transcript[transcript.length - 1]
+  );
+
+  return (
+    <div className="flex h-full flex-col">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-5">
+        {transcript.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-8">
+              <Sparkles size={28} className="mx-auto text-blue-500" />
+              <h3 className="mt-4 text-base font-medium text-white">
+                Build with an agentic workflow loop
+              </h3>
+              <p className="mt-2 max-w-sm text-sm leading-relaxed text-zinc-500">
+                Ask for a workflow, then the agent can inspect integrations,
+                read docs, run <code>curl</code>, <code>rg</code>,{" "}
+                <code>python</code>, and self-debug the draft in chat.
+              </p>
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                {[
+                  "Read the Factors Journey API and email the result",
+                  "Pull data from a public API and transform it",
+                  "Inspect docs first, then build the workflow",
+                ].map((prompt) => (
+                  <button
+                    key={prompt}
+                    onClick={() => setComposer(prompt)}
+                    className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-500 hover:text-zinc-200"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {transcript.map((message) => (
+              <ChatMessage key={message.id} message={message} />
+            ))}
+            {isLoading && !hasActiveTool ? (
+              <div className="flex gap-3">
+                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600">
+                  <Sparkles size={14} />
+                </div>
+                <div className="flex items-center gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 animate-pulse" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 animate-pulse [animation-delay:0.2s]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-500 animate-pulse [animation-delay:0.4s]" />
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      <form
+        onSubmit={handleSend}
+        className="border-t border-zinc-800 bg-zinc-950/80 p-4"
+      >
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 transition-colors focus-within:border-zinc-600">
+          <textarea
+            value={composer}
+            onChange={(event) => setComposer(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                void handleSend(event);
+              }
+            }}
+            rows={4}
+            placeholder="Describe the workflow, ask it to inspect docs, or tell it to debug the current draft..."
+            className="w-full resize-none bg-transparent text-sm text-white outline-none placeholder:text-zinc-600"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-[11px] text-zinc-600">
+              {typeof navigator !== "undefined" &&
+              navigator.platform?.includes("Mac")
+                ? "\u2318"
+                : "Ctrl"}
+              +Enter to send
+            </p>
+            <button
+              type="submit"
+              disabled={isLoading || !composer.trim()}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+            >
+              {isLoading ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}
+              Send
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+});
+
+export function WorkflowStudio() {
+  const [listing, setListing] = useState<WorkflowListingResponse | null>(null);
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [artifact, setArtifact] = useState<WorkflowStudioArtifact | null>(null);
+  const [messages, setMessages] = useState<WorkflowStudioMessage[]>([]);
+  const [activeTab, setActiveTab] = useState<StudioTab>("flow");
+  const [loadingList, setLoadingList] = useState(true);
+  const [loadingWorkflow, setLoadingWorkflow] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [liveDeploymentOverview, setLiveDeploymentOverview] =
+    useState<WorkflowDeploymentOverview | null>(null);
+  const [liveDeploymentLoading, setLiveDeploymentLoading] = useState(false);
+  const [liveDeploymentError, setLiveDeploymentError] = useState("");
+  const [cloudSettings, setCloudSettings] =
+    useState<ResolvedCloudDeploySettings | null>(null);
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
+  const [projects, setProjects] = useState<
+    Array<{
+      name: string;
+      path: string;
+      isDefault: boolean;
+      workflowCount: number;
+    }>
+  >([]);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [switchingProject, setSwitchingProject] = useState(false);
+  const [approvedCheckpoints, setApprovedCheckpoints] = useState<string[]>([]);
+  const [blockedAccesses, setBlockedAccesses] = useState<
+    WorkflowAccessRequirement[]
+  >([]);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editorSessionKey, setEditorSessionKey] = useState(() =>
+    `workflow-studio-${Date.now()}`
+  );
+  const conversationRef = useRef<WorkflowConversationPanelHandle | null>(null);
+
+  // Refs to preserve manually-run validation/preview/build results from being
+  // overwritten by stale agent-derived state when the transcript effect re-runs.
+  const manualPreviewRef = useRef<WorkflowPreviewResult | null>(null);
+  const manualValidationRef = useRef<WorkflowValidationReport | null>(null);
+  const manualBuildRef = useRef<WorkflowBuildResult | null>(null);
+  const deploymentDefaults = listing?.deploymentDefaults;
+
+  const showEditor = artifact !== null;
+  const currentArtifact = artifact || emptyArtifact(deploymentDefaults);
+  const effectiveDeployTarget = resolveWorkflowDeployTarget({
+    workflowDeploy: currentArtifact.deploy,
+    cloudSettings,
+    projectDefaults: deploymentDefaults,
+  });
+  const effectiveProvider = effectiveDeployTarget.provider;
+  const effectiveRegion = effectiveDeployTarget.region;
+  const effectiveGcpProject = effectiveDeployTarget.gcpProject || "";
+  const deploymentRun = currentArtifact.deploymentRun || null;
+  const deployStatus = deploymentRun?.status || "idle";
+  const deployErrorMessage = deploymentRun?.error || "";
+  const deployOutput = deploymentRun?.output || "";
+  const deployResult = deploymentRun?.status === "success" ? deploymentRun : null;
+  const deploymentPlan = buildWorkflowPlanFromArtifact(
+    currentArtifact,
+    effectiveDeployTarget
+  );
+  const selectedWorkflowId =
+    listing?.workflows.find((workflow) => workflow.slug === selectedSlug)?.workflowId ||
+    deploymentPlan.workflowId ||
+    currentArtifact.slug;
+  const liveGcpComputeType: GcpComputeType | null =
+    liveDeploymentOverview?.platform?.computeType ||
+    (liveDeploymentOverview?.executionKind === "job" ? "job" : "service");
+  const deployInfra = getDeploymentInfra(effectiveDeployTarget.provider, {
+    gcpComputeType: liveGcpComputeType,
+    includeScheduler:
+      effectiveDeployTarget.provider === "gcp" &&
+      Boolean(
+        deployResult?.schedulerJobId ||
+          liveDeploymentOverview?.platform?.schedulerJobId ||
+          liveDeploymentOverview?.schedulerId
+      ),
+  });
+  const missingGcpProject =
+    effectiveDeployTarget.provider === "gcp" &&
+    !effectiveDeployTarget.gcpProject;
+  const deployDisabled =
+    !artifact ||
+    !listing?.projectRootConfigured ||
+    validating ||
+    previewing ||
+    building ||
+    saving ||
+    deploying ||
+    agentBusy ||
+    missingGcpProject;
+  const fixWithAiDisabled =
+    !artifact ||
+    loadingWorkflow ||
+    saving ||
+    validating ||
+    previewing ||
+    building ||
+    deploying ||
+    agentBusy;
+  const bindingProviderSlugs = useMemo(() => {
+    const providers = new Set<string>();
+    for (const access of currentArtifact.requiredAccesses) {
+      if (access.type === "integration" && access.providerSlug) {
+        providers.add(access.providerSlug);
+      }
+    }
+    for (const binding of currentArtifact.bindings || []) {
+      providers.add(binding.providerSlug);
+    }
+    return Array.from(providers);
+  }, [currentArtifact.requiredAccesses, currentArtifact.bindings]);
+  const visibleAccesses = useMemo(
+    () =>
+      blockedAccesses.length > 0
+        ? blockedAccesses
+        : currentArtifact.requiredAccesses || [],
+    [blockedAccesses, currentArtifact.requiredAccesses]
+  );
+
+  function resetLiveDeploymentState() {
+    setLiveDeploymentOverview(null);
+    setLiveDeploymentError("");
+  }
+
+  const loadLiveDeploymentOverview = useCallback(async () => {
+    if (effectiveProvider !== "gcp") {
+      resetLiveDeploymentState();
+      return;
+    }
+
+    if (!selectedWorkflowId) {
+      resetLiveDeploymentState();
+      return;
+    }
+
+    setLiveDeploymentLoading(true);
+    setLiveDeploymentError("");
+    try {
+      const fetchDeployments = async () => {
+        const deployments = await api.getWorkflowDeployments({
+          provider: "gcp",
+          includeLive: true,
+          executionLimit: 5,
+        });
+        return Array.isArray(deployments) ? deployments : [];
+      };
+
+      let matches = await fetchDeployments();
+      if (matches.length === 0) {
+        await api.reconcileWorkflowDeployments({
+          provider: "gcp",
+          region: effectiveRegion,
+          gcpProject: effectiveGcpProject.trim() || undefined,
+          workflow: selectedSlug || undefined,
+        });
+        matches = await fetchDeployments();
+      }
+
+      const normalizedProject = effectiveGcpProject.trim();
+      const bestMatch =
+        matches.find((deployment) => {
+          if (
+            deployment.workflowId !== selectedWorkflowId &&
+            deployment.workflowId !== selectedSlug
+          ) {
+            return false;
+          }
+          if (deployment.region && deployment.region !== effectiveRegion) {
+            return false;
+          }
+          if (
+            normalizedProject &&
+            deployment.gcpProject &&
+            deployment.gcpProject !== normalizedProject
+          ) {
+            return false;
+          }
+          return deployment.provider === "gcp";
+        }) || matches[0] || null;
+
+      setLiveDeploymentOverview(bestMatch);
+    } catch (liveError) {
+      setLiveDeploymentOverview(null);
+      setLiveDeploymentError(
+        liveError instanceof Error
+          ? liveError.message
+          : "Failed to load live deployment details."
+      );
+    } finally {
+      setLiveDeploymentLoading(false);
+    }
+  }, [
+    effectiveGcpProject,
+    effectiveProvider,
+    effectiveRegion,
+    selectedSlug,
+    selectedWorkflowId,
+  ]);
+
+  const sendIssueToChat = useCallback(
+    async (prompt: string) => {
+      if (!conversationRef.current) {
+        setError("The workflow chat is not ready yet.");
+        return;
+      }
+
+      try {
+        await conversationRef.current.sendPrompt(prompt);
+      } catch (chatError) {
+        setError(
+          chatError instanceof Error
+            ? chatError.message
+            : "Failed to send the issue to chat."
+        );
+      }
+    },
+    []
+  );
+
+  async function loadListing() {
+    setLoadingList(true);
+    try {
+      const response = await fetch("/api/workflows", { cache: "no-store" });
+      const data = await parseResponse<WorkflowListingResponse>(response);
+      setListing(data);
+      setError(null);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "Failed to load workflows."
+      );
+    } finally {
+      setLoadingList(false);
+    }
+  }
+
+  async function loadWorkflow(slug: string) {
+    setLoadingWorkflow(true);
+    setSelectedSlug(slug);
+    setLiveDeploymentOverview(null);
+    setLiveDeploymentError("");
+    try {
+      const response = await fetch(`/api/workflows/${slug}`, {
+        cache: "no-store",
+      });
+      const record = await parseResponse<StoredWorkflowRecord>(response);
+      manualPreviewRef.current = null;
+      manualValidationRef.current = null;
+      manualBuildRef.current = null;
+      setArtifact(withDeploymentPlan(record.artifact, deploymentDefaults));
+      setMessages(record.artifact.messages || []);
+      setApprovedCheckpoints([]);
+      setBlockedAccesses([]);
+      setActiveTab("flow");
+      setEditorSessionKey(`${slug}-${Date.now()}`);
+      setError(null);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "Failed to load workflow."
+      );
+    } finally {
+      setLoadingWorkflow(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadListing();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      const settings = await loadCloudDeploySettings();
+      if (active) {
+        setCloudSettings(settings);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!deploymentDefaults) {
+      return;
+    }
+
+    setArtifact((current) =>
+      current ? withDeploymentPlan(current, deploymentDefaults) : current
+    );
+  }, [deploymentDefaults]);
+
+  useEffect(() => {
+    void loadLiveDeploymentOverview();
+  }, [loadLiveDeploymentOverview]);
+
+  function startNewWorkflow() {
+    const draft = emptyArtifact(deploymentDefaults);
+    manualPreviewRef.current = null;
+    manualValidationRef.current = null;
+    manualBuildRef.current = null;
+    setSelectedSlug(null);
+    resetLiveDeploymentState();
+    setArtifact(draft);
+    setMessages([]);
+    setApprovedCheckpoints([]);
+    setBlockedAccesses([]);
+    setActiveTab("flow");
+    setEditingTitle(false);
+    setEditorSessionKey(`new-${Date.now()}`);
+    setError(null);
+  }
+
+  function goBackToList() {
+    manualPreviewRef.current = null;
+    manualValidationRef.current = null;
+    manualBuildRef.current = null;
+    setSelectedSlug(null);
+    resetLiveDeploymentState();
+    setArtifact(null);
+    setMessages([]);
+    setApprovedCheckpoints([]);
+    setBlockedAccesses([]);
+    setEditingTitle(false);
+    setAgentBusy(false);
+    setError(null);
+  }
+
+  function updateArtifact(
+    updater: (current: WorkflowStudioArtifact) => WorkflowStudioArtifact
+  ) {
+    setArtifact((current) =>
+      withDeploymentPlan(
+        updater(current || emptyArtifact(deploymentDefaults)),
+        deploymentDefaults
+      )
+    );
+  }
+
+  function updateBindingSelectorType(
+    providerSlug: string,
+    selectorType: WorkflowBindingSelectorType
+  ) {
+    updateArtifact((current) => {
+      const nextBindings = [...(current.bindings || [])];
+      const existingIndex = nextBindings.findIndex(
+        (binding) => binding.providerSlug === providerSlug
+      );
+      const existingBinding =
+        existingIndex >= 0
+          ? nextBindings[existingIndex]
+          : {
+              providerSlug,
+              selector: {
+                type: "latest_active" as const,
+              },
+            };
+
+      const nextBinding = {
+        ...existingBinding,
+        selector: {
+          type: selectorType,
+          connectionId:
+            selectorType === "connection_id"
+              ? existingBinding.selector.connectionId || ""
+              : undefined,
+          label:
+            selectorType === "label"
+              ? existingBinding.selector.label || ""
+              : undefined,
+        },
+      };
+
+      if (existingIndex >= 0) {
+        nextBindings[existingIndex] = nextBinding;
+      } else {
+        nextBindings.push(nextBinding);
+      }
+
+      return {
+        ...current,
+        bindings: nextBindings,
+      };
+    });
+  }
+
+  function updateBindingSelectorValue(providerSlug: string, value: string) {
+    updateArtifact((current) => {
+      const nextBindings = [...(current.bindings || [])];
+      const existingIndex = nextBindings.findIndex(
+        (binding) => binding.providerSlug === providerSlug
+      );
+      const existingBinding =
+        existingIndex >= 0
+          ? nextBindings[existingIndex]
+          : {
+              providerSlug,
+              selector: {
+                type: "connection_id" as const,
+              },
+            };
+
+      const nextBinding = {
+        ...existingBinding,
+        selector: {
+          ...existingBinding.selector,
+          connectionId:
+            existingBinding.selector.type === "connection_id"
+              ? value
+              : undefined,
+          label:
+            existingBinding.selector.type === "label" ? value : undefined,
+        },
+      };
+
+      if (existingIndex >= 0) {
+        nextBindings[existingIndex] = nextBinding;
+      } else {
+        nextBindings.push(nextBinding);
+      }
+
+      return {
+        ...current,
+        bindings: nextBindings,
+      };
+    });
+  }
+
+  const handleTranscriptChange = useCallback(
+    (nextMessages: WorkflowStudioMessage[]) => {
+      setMessages(nextMessages);
+    },
+    []
+  );
+
+  const handleArtifactSync = useCallback(
+    (
+      nextArtifact: WorkflowStudioArtifact | null,
+      nextBlockedAccesses: WorkflowAccessRequirement[]
+    ) => {
+      if (nextArtifact) {
+        // If the agent generated a new draft (different code), clear manual overrides
+        setArtifact((current) => {
+          const isNewDraft = !current || nextArtifact.code !== current.code;
+          if (isNewDraft) {
+            manualPreviewRef.current = null;
+            manualValidationRef.current = null;
+            manualBuildRef.current = null;
+          }
+
+          // Preserve manually-run preview/validation over stale agent-derived state
+          let merged: WorkflowStudioArtifact = {
+            ...nextArtifact,
+            deploy: nextArtifact.deploy || current?.deploy,
+            deploymentRun:
+              nextArtifact.deploymentRun || current?.deploymentRun,
+            triggerConfig: nextArtifact.triggerConfig || current?.triggerConfig,
+            bindings: nextArtifact.bindings || current?.bindings,
+          };
+          if (manualBuildRef.current) {
+            merged = { ...merged, build: manualBuildRef.current };
+          }
+          if (manualPreviewRef.current) {
+            merged = { ...merged, preview: manualPreviewRef.current };
+          }
+          if (manualValidationRef.current) {
+            merged = { ...merged, validation: manualValidationRef.current };
+          }
+          return withDeploymentPlan(merged, deploymentDefaults);
+        });
+        setSelectedSlug(nextArtifact.slug);
+      }
+
+      setBlockedAccesses(nextBlockedAccesses);
+    },
+    [deploymentDefaults]
+  );
+
+  async function runValidation() {
+    if (!artifact) {
+      return;
+    }
+
+    setValidating(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/workflows/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifact: {
+            ...artifact,
+            messages,
+          },
+        }),
+      });
+      const validation = await parseResponse<WorkflowValidationReport>(response);
+      manualValidationRef.current = validation;
+      updateArtifact((current) => ({
+        ...current,
+        validation,
+        messages,
+      }));
+      setActiveTab("validation");
+    } catch (validationError) {
+      setError(
+        validationError instanceof Error
+          ? validationError.message
+          : "Validation failed."
+      );
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  async function runPreview(extraApproved: string[] = []) {
+    if (!artifact) {
+      return;
+    }
+
+    const nextApproved = Array.from(
+      new Set([...approvedCheckpoints, ...extraApproved])
+    );
+
+    setPreviewing(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/workflows/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifact: {
+            ...artifact,
+            messages,
+          },
+          approvedCheckpoints: nextApproved,
+        }),
+      });
+      const result = await parseResponse<WorkflowPreviewRunResponse>(response);
+      const preview = result.preview;
+      console.log("[workflow-studio] Preview result:", preview.status, preview.error || "");
+      manualPreviewRef.current = preview;
+      setApprovedCheckpoints(nextApproved);
+      setArtifact(withDeploymentPlan(result.artifact, deploymentDefaults));
+      setMessages(result.artifact.messages || messages);
+      setSelectedSlug(result.artifact.slug);
+      await loadListing();
+      setActiveTab("preview");
+    } catch (previewError) {
+      console.error("[workflow-studio] Preview error:", previewError);
+      setError(
+        previewError instanceof Error ? previewError.message : "Preview failed."
+      );
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  async function runBuild(
+    extraApproved: string[] = [],
+    options: { repair?: boolean } = {}
+  ) {
+    if (!artifact) {
+      return;
+    }
+
+    const nextApproved = Array.from(
+      new Set([...approvedCheckpoints, ...extraApproved])
+    );
+
+    setBuilding(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/workflows/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifact: {
+            ...artifact,
+            messages,
+          },
+          approvedCheckpoints: nextApproved,
+          repair: options.repair || undefined,
+        }),
+      });
+      const result = await parseResponse<WorkflowBuildRunResponse>(response);
+      const nextMessages = result.artifact.messages || messages;
+      manualBuildRef.current = result.build;
+      manualValidationRef.current = result.build.validation || null;
+      manualPreviewRef.current = result.build.preview || null;
+      setApprovedCheckpoints(nextApproved);
+      setBlockedAccesses(result.blockedAccesses || []);
+      setMessages(nextMessages);
+      setArtifact(
+        withDeploymentPlan(
+          result.artifact,
+          deploymentDefaults
+        )
+      );
+      setSelectedSlug(result.artifact.slug);
+      await loadListing();
+      setActiveTab("build");
+    } catch (buildError) {
+      setError(buildError instanceof Error ? buildError.message : "Build failed.");
+    } finally {
+      setBuilding(false);
+    }
+  }
+
+  async function persistWorkflow(): Promise<StoredWorkflowRecord> {
+    if (!artifact) {
+      throw new Error("A workflow is required before saving.");
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/workflows/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artifact: {
+            ...artifact,
+            deploymentPlan,
+            messages,
+          },
+        }),
+      });
+      const saved = await parseResponse<StoredWorkflowRecord>(response);
+      setArtifact(withDeploymentPlan(saved.artifact, deploymentDefaults));
+      setMessages(saved.artifact.messages || messages);
+      setSelectedSlug(saved.slug);
+      await loadListing();
+      return saved;
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "Save failed.";
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveWorkflow() {
+    try {
+      await persistWorkflow();
+    } catch {
+      // persistWorkflow already surfaces the error toast.
+    }
+  }
+
+  async function runDeploy() {
+    if (!artifact) {
+      return;
+    }
+
+    setDeploying(true);
+    setActiveTab("deploy");
+    setError(null);
+
+    try {
+      const saved = await persistWorkflow();
+      const response = (await api.deploy({
+        provider: effectiveDeployTarget.provider,
+        region: effectiveDeployTarget.region,
+        gcpProject:
+          effectiveDeployTarget.provider === "gcp"
+            ? effectiveDeployTarget.gcpProject || undefined
+            : undefined,
+        projectName: listing?.projectName || "gtmship",
+        workflow: saved.slug,
+        artifact: saved.artifact,
+      })) as WorkflowStudioDeployResponse;
+      const fallbackDeploymentRun: WorkflowDeploymentRun =
+        isDashboardDeploySuccess(response)
+          ? {
+              status: "success",
+              provider: effectiveDeployTarget.provider,
+              region: effectiveDeployTarget.region,
+              gcpProject:
+                effectiveDeployTarget.provider === "gcp"
+                  ? effectiveDeployTarget.gcpProject || undefined
+                  : undefined,
+              projectName: listing?.projectName || "gtmship",
+              deployedAt: new Date().toISOString(),
+              apiEndpoint: response.apiEndpoint,
+              computeId: response.computeId,
+              databaseEndpoint: response.databaseEndpoint,
+              storageBucket: response.storageBucket,
+              schedulerJobId: response.schedulerJobId,
+              output: response.output,
+            }
+          : {
+              status: "error",
+              provider: effectiveDeployTarget.provider,
+              region: effectiveDeployTarget.region,
+              gcpProject:
+                effectiveDeployTarget.provider === "gcp"
+                  ? effectiveDeployTarget.gcpProject || undefined
+                  : undefined,
+              projectName: listing?.projectName || "gtmship",
+              deployedAt: new Date().toISOString(),
+              error: response.error,
+              output: response.output,
+            };
+
+      if (response.artifact) {
+        setArtifact(withDeploymentPlan(response.artifact, deploymentDefaults));
+        setMessages(response.artifact.messages || messages);
+        setSelectedSlug(response.artifact.slug);
+      } else {
+        updateArtifact((current) => ({
+          ...current,
+          deploymentRun: fallbackDeploymentRun,
+          messages,
+        }));
+      }
+
+      await loadListing();
+
+      if (!isDashboardDeploySuccess(response)) {
+        return;
+      }
+
+      void loadLiveDeploymentOverview();
+    } catch (deployError) {
+      setError(
+        deployError instanceof Error ? deployError.message : "Deployment failed."
+      );
+    } finally {
+      setDeploying(false);
+    }
+  }
+
+  async function loadProjects() {
+    try {
+      const response = await fetch("/api/projects", { cache: "no-store" });
+      const data = await response.json();
+      setProjects(data.projects || []);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function switchProject(projectPath: string) {
+    setSwitchingProject(true);
+    setError(null);
+    try {
+      await api.setSetting("project_root", projectPath);
+      await loadListing();
+      setShowProjectPicker(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to switch project.");
+    } finally {
+      setSwitchingProject(false);
+    }
+  }
+
+  async function handleCreateProject() {
+    if (!newProjectName.trim()) return;
+    setCreatingProject(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newProjectName.trim() }),
+      });
+      const project = await response.json();
+      if (!response.ok) throw new Error(project.error);
+      await api.setSetting("project_root", project.path);
+      setNewProjectName("");
+      await loadListing();
+      setShowProjectPicker(false);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create project."
+      );
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
+  const resolveDeployInfraValue = (key: DashboardDeployInfraKey): string | null => {
+    const deployedValue = deployResult?.[key];
+    if (typeof deployedValue === "string" && deployedValue.trim()) {
+      return deployedValue.trim();
+    }
+
+    if (effectiveProvider === "gcp" && liveDeploymentOverview) {
+      if (key === "apiEndpoint") {
+        return (
+          liveDeploymentOverview.platform?.endpointUrl ||
+          liveDeploymentOverview.endpointUrl ||
+          null
+        );
+      }
+      if (key === "computeId") {
+        return liveDeploymentOverview.platform?.computeName || null;
+      }
+      if (key === "schedulerJobId") {
+        return (
+          liveDeploymentOverview.platform?.schedulerJobId ||
+          liveDeploymentOverview.schedulerId ||
+          null
+        );
+      }
+    }
+
+    return null;
+  };
+
+  const workflows: WorkflowListItem[] = listing?.workflows || [];
+  const tabs: Array<{
+    value: StudioTab;
+    label: string;
+    icon: typeof Workflow;
+  }> = [
+    { value: "flow", label: "Flow", icon: Workflow },
+    { value: "code", label: "Code", icon: Code2 },
+    { value: "validation", label: "Validation", icon: FileJson },
+    { value: "preview", label: "Preview", icon: Play },
+    { value: "build", label: "Build", icon: Package },
+    { value: "deploy", label: "Deploy", icon: Rocket },
+  ];
+
+  return (
+    <div className="relative flex h-[calc(100vh-1rem)] min-h-[720px] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950">
+      {!showEditor ? (
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">
+                Workflow Studio
+              </h2>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Repo-backed AI workflow generation.
+              </p>
+            </div>
+            <button
+              onClick={startNewWorkflow}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+            >
+              <Plus size={14} />
+              New Workflow
+            </button>
+          </header>
+
+          <div className="flex-1 overflow-y-auto p-6">
+            {listing?.projectRootConfigured ? (
+              <div className="mb-4 flex items-center gap-2">
+                <p className="text-xs text-zinc-500">
+                  Project:{" "}
+                  <span className="font-medium text-zinc-300">
+                    {listing.projectName || listing.projectRoot?.split("/").pop() || "default"}
+                  </span>
+                </p>
+                <button
+                  onClick={() => {
+                    void loadProjects();
+                    setShowProjectPicker(!showProjectPicker);
+                  }}
+                  className="rounded px-2 py-0.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                >
+                  Switch
+                </button>
+              </div>
+            ) : null}
+
+            {showProjectPicker ? (
+              <div className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+                <p className="mb-3 text-sm font-medium text-white">
+                  Your Projects
+                </p>
+                <p className="mb-3 text-xs text-zinc-500">
+                  Each project has its own workflows directory. Pick one or
+                  create a new project.
+                </p>
+                <div className="space-y-1.5">
+                  {projects.map((project) => (
+                    <button
+                      key={project.path}
+                      onClick={() => void switchProject(project.path)}
+                      disabled={switchingProject}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left text-xs transition-colors",
+                        listing?.projectRoot === project.path
+                          ? "border-blue-600/50 bg-blue-600/10 text-white"
+                          : "border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/50"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="font-medium">{project.name}</span>
+                        {project.isDefault ? (
+                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                            default
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-zinc-600">
+                        {project.workflowCount} workflow
+                        {project.workflowCount !== 1 ? "s" : ""}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleCreateProject();
+                    }}
+                    placeholder="New project name"
+                    className="flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none focus:border-blue-600"
+                  />
+                  <button
+                    onClick={() => void handleCreateProject()}
+                    disabled={creatingProject || !newProjectName.trim()}
+                    className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                  >
+                    {creatingProject ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <FolderPlus size={12} />
+                    )}
+                    Create
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {loadingList ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500">
+                <Loader2 size={14} className="animate-spin" />
+                Loading workflows...
+              </div>
+            ) : workflows.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <Workflow size={36} className="text-zinc-700" />
+                <h3 className="mt-4 text-base font-medium text-white">
+                  No workflows yet
+                </h3>
+                <p className="mt-2 max-w-md text-sm text-zinc-500">
+                  Create a new workflow to get started. The agent can inspect
+                  docs, debug issues, and keep the draft in sync as it works.
+                </p>
+                <button
+                  onClick={startNewWorkflow}
+                  className="mt-6 flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+                >
+                  <Plus size={14} />
+                  Create your first workflow
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {workflows.map((workflow) => (
+                  <button
+                    key={workflow.slug}
+                    onClick={() => void loadWorkflow(workflow.slug)}
+                    className={cn(
+                      "rounded-xl border px-4 py-4 text-left transition-colors hover:border-zinc-600 hover:bg-zinc-900/60",
+                      selectedSlug === workflow.slug
+                        ? "border-blue-600 bg-blue-600/5"
+                        : "border-zinc-800 bg-zinc-900/30"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-white">
+                        {workflow.title}
+                      </p>
+                      {workflow.hasStudioMetadata ? (
+                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
+                          studio
+                        </span>
+                      ) : (
+                        <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
+                          legacy
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1.5 line-clamp-2 text-xs text-zinc-500">
+                      {workflow.summary}
+                    </p>
+                    <p className="mt-2 text-[11px] text-zinc-600">
+                      {workflow.trigger} &middot; {formatDate(workflow.updatedAt)}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <header className="flex items-center justify-between gap-4 border-b border-zinc-800 bg-zinc-950/80 px-5 py-3">
+            <div className="min-w-0 flex items-center gap-3">
+              <button
+                onClick={goBackToList}
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-2 text-xs text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-200"
+              >
+                <ArrowLeft size={14} />
+              </button>
+
+              <div className="min-w-0">
+                {editingTitle ? (
+                  <input
+                    autoFocus
+                    value={currentArtifact.title}
+                    onChange={(event) =>
+                      updateArtifact((current) => ({
+                        ...current,
+                        title: event.target.value,
+                      }))
+                    }
+                    onBlur={() => setEditingTitle(false)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === "Escape") {
+                        setEditingTitle(false);
+                      }
+                    }}
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-base font-semibold text-white outline-none focus:border-blue-600"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setEditingTitle(true)}
+                    className="group flex items-center gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-zinc-900"
+                  >
+                    <h2 className="truncate text-base font-semibold text-white">
+                      {currentArtifact.title}
+                    </h2>
+                    <Pencil
+                      size={12}
+                      className="shrink-0 text-zinc-600 opacity-0 transition-opacity group-hover:opacity-100"
+                    />
+                  </button>
+                )}
+                <p className="mt-0.5 truncate px-2 text-xs text-zinc-500">
+                  {currentArtifact.summary}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {agentBusy ? (
+                <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-blue-300">
+                  agent running
+                </span>
+              ) : null}
+              <button
+                onClick={() => void runValidation()}
+                disabled={
+                  !artifact || validating || building || deploying || agentBusy
+                }
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+              >
+                {validating ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <FileJson size={12} />
+                )}
+                Validate
+              </button>
+              <button
+                onClick={() => void runPreview()}
+                disabled={
+                  !artifact || previewing || building || deploying || agentBusy
+                }
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+              >
+                {previewing ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Play size={12} />
+                )}
+                Preview
+              </button>
+              <button
+                onClick={() => void runBuild()}
+                disabled={
+                  !artifact ||
+                  validating ||
+                  previewing ||
+                  building ||
+                  saving ||
+                  deploying ||
+                  agentBusy
+                }
+                className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+              >
+                {building ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Package size={12} />
+                )}
+                Build
+              </button>
+              <button
+                onClick={() => void runDeploy()}
+                disabled={deployDisabled}
+                className="flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+              >
+                {saving && deploying ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : deploying ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Rocket size={12} />
+                )}
+                {saving && deploying
+                  ? "Saving..."
+                  : deploying
+                    ? "Deploying..."
+                    : `Deploy ${effectiveDeployTarget.provider.toUpperCase()}`}
+              </button>
+              <button
+                onClick={() => void saveWorkflow()}
+                disabled={!artifact || saving || building || deploying || agentBusy}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+              >
+                {saving ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Save size={12} />
+                )}
+                Save
+              </button>
+            </div>
+          </header>
+
+          <div className="flex min-h-0 flex-1">
+            <div className="flex w-[32rem] shrink-0 flex-col border-r border-zinc-800">
+              {loadingWorkflow ? (
+                <div className="flex flex-1 items-center justify-center gap-2 text-sm text-zinc-500">
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading workflow...
+                </div>
+              ) : (
+                <WorkflowConversationPanel
+                  key={editorSessionKey}
+                  ref={conversationRef}
+                  sessionKey={editorSessionKey}
+                  initialMessages={messages}
+                  artifact={{
+                    ...currentArtifact,
+                    messages,
+                  }}
+                  onTranscriptChange={handleTranscriptChange}
+                  onArtifactSync={handleArtifactSync}
+                  onBusyChange={setAgentBusy}
+                  onError={setError}
+                />
+              )}
+            </div>
+
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex items-center gap-1 border-b border-zinc-800 px-5 py-2">
+                {tabs.map(({ value, label, icon: Icon }) => (
+                  <button
+                    key={value}
+                    onClick={() => setActiveTab(value)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                      activeTab === value
+                        ? "bg-blue-600/10 text-blue-400"
+                        : "text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300"
+                    )}
+                  >
+                    <Icon size={14} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5">
+                {activeTab === "flow" ? (
+                  <div className="space-y-6">
+                    <MermaidDiagram chart={currentArtifact.mermaid} />
+
+                    <details className="group overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+                      <summary className="flex cursor-pointer items-center justify-between gap-3 px-5 py-4 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-900/60">
+                        <div className="flex items-center gap-2">
+                          <ChevronRight
+                            size={14}
+                            className="text-zinc-500 transition-transform group-open:rotate-90"
+                          />
+                          <span>Mermaid Source</span>
+                        </div>
+                        <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-blue-200">
+                          Live editable
+                        </span>
+                      </summary>
+                      <div className="border-t border-zinc-800 bg-zinc-950/35 px-5 py-5">
+                        <p className="mb-4 max-w-2xl text-sm leading-6 text-zinc-500">
+                          Fine-tune labels, group related steps, or adjust flow direction when you want the visual story to be tighter than the generated default.
+                        </p>
+                        <textarea
+                          value={currentArtifact.mermaid}
+                          onChange={(event) =>
+                            updateArtifact((current) => ({
+                              ...current,
+                              mermaid: event.target.value,
+                            }))
+                          }
+                          rows={8}
+                          className="w-full rounded-2xl border border-zinc-800 bg-zinc-950/90 px-4 py-4 font-mono text-xs leading-6 text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] outline-none transition-colors focus:border-blue-500"
+                        />
+                      </div>
+                    </details>
+
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Required Access
+                      </h4>
+                      {visibleAccesses.length === 0 ? (
+                        <p className="mt-3 text-xs text-zinc-600">
+                          Access requirements will appear after generation.
+                        </p>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {visibleAccesses.map((access) => (
+                            <div
+                              key={access.id}
+                              className="rounded-lg border border-zinc-800 px-3 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-xs font-medium text-white">
+                                  {access.label}
+                                </p>
+                                <span
+                                  className={cn(
+                                    "rounded-full px-2 py-0.5 text-[10px]",
+                                    access.status === "verified" ||
+                                      access.status === "reachable"
+                                      ? "bg-emerald-500/10 text-emerald-300"
+                                      : access.status === "missing" ||
+                                          access.status === "blocked"
+                                        ? "bg-amber-500/10 text-amber-200"
+                                        : "bg-zinc-800 text-zinc-400"
+                                  )}
+                                >
+                                  {access.status}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-zinc-500">
+                                {access.purpose}
+                              </p>
+                              {access.statusMessage ? (
+                                <p className="mt-1 text-[11px] text-zinc-600">
+                                  {access.statusMessage}
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Write Checkpoints
+                      </h4>
+                      {currentArtifact.writeCheckpoints.length === 0 ? (
+                        <p className="mt-3 text-xs text-zinc-600">
+                          No write approvals required for the current artifact.
+                        </p>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {currentArtifact.writeCheckpoints.map((checkpoint) => (
+                            <div
+                              key={checkpoint.id}
+                              className="rounded-lg border border-zinc-800 px-3 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-xs font-medium text-white">
+                                  {checkpoint.label}
+                                </p>
+                                <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">
+                                  {checkpoint.method}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-zinc-500">
+                                {checkpoint.description}
+                              </p>
+                              <p className="mt-1 text-[11px] text-zinc-600">
+                                {checkpoint.providerSlug ||
+                                  checkpoint.url ||
+                                  checkpoint.id}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeTab === "deploy" ? (
+                  <div className="space-y-5">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-medium text-white">
+                            Deployment Run
+                          </h4>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            Auto-saves this workflow, then deploys it with the
+                            same cloud flow used by the Deploy page.
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300">
+                          {effectiveDeployTarget.provider.toUpperCase()}{" "}
+                          {effectiveDeployTarget.region}
+                        </span>
+                      </div>
+
+                      <div className="mt-4 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
+                        <p>
+                          <span className="text-zinc-500">Workflow:</span>{" "}
+                          {selectedSlug || currentArtifact.slug}
+                        </p>
+                        <p>
+                          <span className="text-zinc-500">Provider:</span>{" "}
+                          {effectiveDeployTarget.provider.toUpperCase()}
+                        </p>
+                        <p>
+                          <span className="text-zinc-500">Region:</span>{" "}
+                          {effectiveDeployTarget.region}
+                        </p>
+                        {effectiveDeployTarget.provider === "gcp" ? (
+                          <p>
+                            <span className="text-zinc-500">GCP Project:</span>{" "}
+                            {effectiveDeployTarget.gcpProject || "Missing"}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      {missingGcpProject ? (
+                        <div className="mt-4 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                          Add a GCP project in this workflow or in Settings
+                          before deploying to GCP.
+                        </div>
+                      ) : null}
+
+                      {deploying ? (
+                        <div className="mt-4 flex items-center gap-2 rounded-md border border-blue-900/40 bg-blue-950/20 px-3 py-3 text-sm text-blue-100">
+                          <Loader2 size={14} className="animate-spin text-blue-300" />
+                          Saving and deploying this workflow...
+                        </div>
+                      ) : null}
+
+                      {deployStatus === "idle" && !deploying ? (
+                        <p className="mt-4 text-xs text-zinc-500">
+                          Use the header Deploy button to save the current draft
+                          and ship this workflow to the configured cloud
+                          provider.
+                        </p>
+                      ) : null}
+
+                      {deployStatus === "success" ? (
+                        <div className="mt-4 rounded-md border border-emerald-900/40 bg-emerald-950/20 px-3 py-3">
+                          <div className="flex items-center gap-2 text-sm text-emerald-200">
+                            <CheckCircle2 size={14} className="text-emerald-300" />
+                            Deployment completed successfully.
+                          </div>
+                          {deploymentRun?.deployedAt ? (
+                            <p className="mt-2 text-xs text-zinc-400">
+                              Last run: {formatDate(deploymentRun.deployedAt)}
+                            </p>
+                          ) : null}
+                          <div className="mt-3 space-y-2 text-xs text-zinc-400">
+                            {deployInfra.map((item) => (
+                              <div
+                                key={item.key}
+                                className="flex items-center justify-between gap-4"
+                              >
+                                <span>{item.label}</span>
+                                <span
+                                  className={
+                                    resolveDeployInfraValue(item.key)
+                                      ? "text-emerald-300"
+                                      : "text-zinc-600"
+                                  }
+                                >
+                                  {resolveDeployInfraValue(item.key) || "Not deployed"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {effectiveProvider === "gcp" ? (
+                        <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-950/50 px-3 py-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                              Live GCP Deployment
+                            </p>
+                            <button
+                              onClick={() => void loadLiveDeploymentOverview()}
+                              disabled={liveDeploymentLoading}
+                              className="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
+                            >
+                              {liveDeploymentLoading ? "Refreshing..." : "Refresh"}
+                            </button>
+                          </div>
+
+                          {liveDeploymentError ? (
+                            <div className="rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+                              {liveDeploymentError}
+                            </div>
+                          ) : null}
+
+                          {!liveDeploymentLoading && !liveDeploymentOverview && !liveDeploymentError ? (
+                            <p className="text-xs text-zinc-500">
+                              No deployment record found for this workflow yet.
+                            </p>
+                          ) : null}
+
+                          {liveDeploymentOverview ? (
+                            <div className="space-y-3">
+                              <div className="grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
+                                <p>
+                                  <span className="text-zinc-500">Compute:</span>{" "}
+                                  {liveDeploymentOverview.platform?.computeType === "job"
+                                    ? "Cloud Run Job"
+                                    : "Cloud Run Service"}{" "}
+                                  ({liveDeploymentOverview.platform?.computeName || "unknown"})
+                                </p>
+                                <p>
+                                  <span className="text-zinc-500">Scheduler:</span>{" "}
+                                  {liveDeploymentOverview.platform?.schedulerJobId ||
+                                    liveDeploymentOverview.schedulerId ||
+                                    "Not configured"}
+                                </p>
+                                <p>
+                                  <span className="text-zinc-500">Last deployed:</span>{" "}
+                                  {formatDateTime(
+                                    liveDeploymentOverview.deployedAt ||
+                                      liveDeploymentOverview.updatedAt
+                                  )}
+                                </p>
+                                <p>
+                                  <span className="text-zinc-500">Status:</span>{" "}
+                                  {(
+                                    liveDeploymentOverview.recentExecutions?.[0]?.status ||
+                                    liveDeploymentOverview.status ||
+                                    "unknown"
+                                  ).toUpperCase()}
+                                </p>
+                              </div>
+
+                              {liveDeploymentOverview.platform?.endpointUrl ? (
+                                <p className="break-all text-xs text-zinc-400">
+                                  <span className="text-zinc-500">Endpoint:</span>{" "}
+                                  {liveDeploymentOverview.platform.endpointUrl}
+                                </p>
+                              ) : null}
+
+                              {liveDeploymentOverview.liveError ? (
+                                <div className="rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                                  {liveDeploymentOverview.liveError}
+                                </div>
+                              ) : null}
+
+                              {(liveDeploymentOverview.recentExecutions || []).length > 0 ? (
+                                <div className="space-y-2">
+                                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                    Recent Runs
+                                  </p>
+                                  {(liveDeploymentOverview.recentExecutions || []).map(
+                                    (
+                                      execution: WorkflowExecutionHistoryEntry,
+                                      index: number
+                                    ) => (
+                                      <div
+                                        key={`${liveDeploymentOverview.id}-run-${execution.executionName || index}`}
+                                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-300"
+                                      >
+                                        <div className="space-y-1">
+                                          <p className="break-all text-zinc-200">
+                                            {execution.executionName || "execution"}
+                                          </p>
+                                          <p className="text-zinc-500">
+                                            {formatDateTime(execution.startedAt)}
+                                            {" -> "}
+                                            {formatDateTime(execution.completedAt)}
+                                          </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span
+                                            className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
+                                              execution.status
+                                            )}`}
+                                          >
+                                            {(execution.status || "unknown").toUpperCase()}
+                                          </span>
+                                          <a
+                                            href={buildLogsHref(
+                                              liveDeploymentOverview.id,
+                                              execution.executionName || undefined
+                                            )}
+                                            className="text-[11px] text-blue-300 hover:text-blue-200"
+                                          >
+                                            Logs
+                                          </a>
+                                        </div>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-zinc-500">
+                                  No recent executions reported yet.
+                                </p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {deployStatus === "error" ? (
+                        <div className="mt-4 rounded-md border border-rose-900/40 bg-rose-950/20 px-3 py-3 text-sm text-rose-100">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle size={14} className="text-rose-300" />
+                            {deployErrorMessage || "Deployment failed."}
+                          </div>
+                          {deploymentRun?.deployedAt ? (
+                            <p className="mt-2 text-xs text-rose-200/80">
+                              Last attempt: {formatDate(deploymentRun.deployedAt)}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {deployOutput ? (
+                        <div className="mt-4">
+                          <h5 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                            Deploy Output
+                          </h5>
+                          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-xs text-zinc-300">
+                            {deployOutput}
+                          </pre>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <CollapsibleSection
+                      title="Deployment Settings"
+                      description="Configure deploy defaults and connection bindings for this workflow."
+                    >
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="text-xs text-zinc-400">
+                          Provider
+                          <select
+                            value={effectiveProvider}
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                deploy: {
+                                  ...(current.deploy || {}),
+                                  provider: event.target.value as "aws" | "gcp",
+                                  region:
+                                    current.deploy?.region ||
+                                    defaultRegionForProvider(
+                                      event.target.value as "aws" | "gcp",
+                                      deploymentDefaults
+                                    ),
+                                },
+                              }))
+                            }
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          >
+                            <option value="aws">AWS</option>
+                            <option value="gcp">GCP</option>
+                          </select>
+                        </label>
+
+                        <label className="text-xs text-zinc-400">
+                          Region
+                          <input
+                            value={effectiveRegion}
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                deploy: {
+                                  ...(current.deploy || {}),
+                                  region: event.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={defaultRegionForProvider(
+                              effectiveProvider,
+                              deploymentDefaults
+                            )}
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          />
+                        </label>
+
+                        {effectiveProvider === "gcp" ? (
+                          <label className="text-xs text-zinc-400">
+                            GCP Project
+                            <input
+                              value={effectiveGcpProject}
+                              onChange={(event) =>
+                                updateArtifact((current) => ({
+                                  ...current,
+                                  deploy: {
+                                    ...(current.deploy || {}),
+                                    gcpProject: event.target.value,
+                                  },
+                                }))
+                              }
+                              placeholder="my-gcp-project"
+                              className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                            />
+                          </label>
+                        ) : null}
+
+                        <label className="text-xs text-zinc-400">
+                          Execution Kind
+                          <select
+                            value={currentArtifact.deploy?.execution?.kind || ""}
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                deploy: {
+                                  ...(current.deploy || {}),
+                                  execution: {
+                                    kind: event.target.value as "service" | "job",
+                                  },
+                                },
+                              }))
+                            }
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          >
+                            <option value="">auto from trigger</option>
+                            <option value="service">service</option>
+                            <option value="job">job</option>
+                          </select>
+                        </label>
+
+                        <label className="text-xs text-zinc-400">
+                          Auth Mode
+                          <select
+                            value={
+                              currentArtifact.deploy?.auth?.mode ===
+                              "synced_secrets"
+                                ? "secret_manager"
+                                : currentArtifact.deploy?.auth?.mode || "proxy"
+                            }
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                deploy: {
+                                  ...(current.deploy || {}),
+                                  auth: {
+                                    mode: event.target.value as
+                                      | "proxy"
+                                      | "secret_manager",
+                                  },
+                                },
+                              }))
+                            }
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          >
+                            <option value="proxy">proxy</option>
+                            <option value="secret_manager">secret_manager</option>
+                          </select>
+                        </label>
+
+                        {(currentArtifact.deploy?.auth?.mode === "secret_manager" ||
+                          currentArtifact.deploy?.auth?.mode === "synced_secrets") ? (
+                          <>
+                            <label className="text-xs text-zinc-400">
+                              Secret Backend
+                              <select
+                                value={
+                                  currentArtifact.deploy?.auth?.backend?.kind || ""
+                                }
+                                onChange={(event) =>
+                                  updateArtifact((current) => ({
+                                    ...current,
+                                    deploy: {
+                                      ...(current.deploy || {}),
+                                      auth: {
+                                        ...(current.deploy?.auth || {}),
+                                        mode: "secret_manager",
+                                        backend: {
+                                          ...(current.deploy?.auth?.backend || {}),
+                                          kind: (event.target.value || undefined) as
+                                            | "aws_secrets_manager"
+                                            | "gcp_secret_manager"
+                                            | undefined,
+                                        },
+                                      },
+                                    },
+                                  }))
+                                }
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                              >
+                                <option value="">select backend</option>
+                                <option value="aws_secrets_manager">
+                                  aws_secrets_manager
+                                </option>
+                                <option value="gcp_secret_manager">
+                                  gcp_secret_manager
+                                </option>
+                              </select>
+                            </label>
+
+                            <label className="text-xs text-zinc-400">
+                              Runtime Access
+                              <select
+                                value={
+                                  currentArtifact.deploy?.auth?.runtimeAccess ||
+                                  "direct"
+                                }
+                                onChange={(event) =>
+                                  updateArtifact((current) => ({
+                                    ...current,
+                                    deploy: {
+                                      ...(current.deploy || {}),
+                                      auth: {
+                                        ...(current.deploy?.auth || {}),
+                                        mode: "secret_manager",
+                                        runtimeAccess: (event.target.value ||
+                                          "direct") as "direct" | "local_cache",
+                                      },
+                                    },
+                                  }))
+                                }
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                              >
+                                <option value="direct">direct</option>
+                                <option value="local_cache">local_cache</option>
+                              </select>
+                            </label>
+
+                            <label className="text-xs text-zinc-400">
+                              Secret Prefix
+                              <input
+                                value={
+                                  currentArtifact.deploy?.auth?.backend
+                                    ?.secretPrefix || ""
+                                }
+                                onChange={(event) =>
+                                  updateArtifact((current) => ({
+                                    ...current,
+                                    deploy: {
+                                      ...(current.deploy || {}),
+                                      auth: {
+                                        ...(current.deploy?.auth || {}),
+                                        mode: "secret_manager",
+                                        backend: {
+                                          ...(current.deploy?.auth?.backend || {}),
+                                          secretPrefix:
+                                            event.target.value || undefined,
+                                        },
+                                      },
+                                    },
+                                  }))
+                                }
+                                placeholder="gtmship-connections"
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                              />
+                            </label>
+
+                            {currentArtifact.deploy?.auth?.backend?.kind ===
+                            "aws_secrets_manager" ? (
+                              <label className="text-xs text-zinc-400">
+                                Secret Region
+                                <input
+                                  value={
+                                    currentArtifact.deploy?.auth?.backend?.region ||
+                                    ""
+                                  }
+                                  onChange={(event) =>
+                                    updateArtifact((current) => ({
+                                      ...current,
+                                      deploy: {
+                                        ...(current.deploy || {}),
+                                        auth: {
+                                          ...(current.deploy?.auth || {}),
+                                          mode: "secret_manager",
+                                          backend: {
+                                            ...(current.deploy?.auth?.backend ||
+                                              {}),
+                                            region: event.target.value || undefined,
+                                          },
+                                        },
+                                      },
+                                    }))
+                                  }
+                                  placeholder="us-east-1"
+                                  className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                                />
+                              </label>
+                            ) : null}
+
+                            {currentArtifact.deploy?.auth?.backend?.kind ===
+                            "gcp_secret_manager" ? (
+                              <label className="text-xs text-zinc-400">
+                                Secret Project ID
+                                <input
+                                  value={
+                                    currentArtifact.deploy?.auth?.backend
+                                      ?.projectId || ""
+                                  }
+                                  onChange={(event) =>
+                                    updateArtifact((current) => ({
+                                      ...current,
+                                      deploy: {
+                                        ...(current.deploy || {}),
+                                        auth: {
+                                          ...(current.deploy?.auth || {}),
+                                          mode: "secret_manager",
+                                          backend: {
+                                            ...(current.deploy?.auth?.backend ||
+                                              {}),
+                                            projectId:
+                                              event.target.value || undefined,
+                                          },
+                                        },
+                                      },
+                                    }))
+                                  }
+                                  placeholder="my-gcp-project"
+                                  className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                                />
+                              </label>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                    </CollapsibleSection>
+
+                    <CollapsibleSection
+                      title="Trigger Overrides"
+                      description="Optional metadata for webhook, schedule, and event triggers."
+                    >
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <label className="text-xs text-zinc-400">
+                          Webhook Path
+                          <input
+                            value={currentArtifact.triggerConfig?.webhook?.path || ""}
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                triggerConfig: {
+                                  ...(current.triggerConfig || {}),
+                                  webhook: {
+                                    ...(current.triggerConfig?.webhook || {}),
+                                    path: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                            placeholder="/inbound"
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          />
+                        </label>
+
+                        <label className="text-xs text-zinc-400">
+                          Webhook Visibility
+                          <select
+                            value={
+                              currentArtifact.triggerConfig?.webhook?.visibility ||
+                              "public"
+                            }
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                triggerConfig: {
+                                  ...(current.triggerConfig || {}),
+                                  webhook: {
+                                    ...(current.triggerConfig?.webhook || {}),
+                                    visibility: event.target.value as
+                                      | "public"
+                                      | "private",
+                                  },
+                                },
+                              }))
+                            }
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          >
+                            <option value="public">public</option>
+                            <option value="private">private</option>
+                          </select>
+                        </label>
+
+                        <label className="text-xs text-zinc-400">
+                          Schedule Cron Override
+                          <input
+                            value={currentArtifact.triggerConfig?.schedule?.cron || ""}
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                triggerConfig: {
+                                  ...(current.triggerConfig || {}),
+                                  schedule: {
+                                    ...(current.triggerConfig?.schedule || {}),
+                                    cron: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                            placeholder="0 * * * *"
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          />
+                        </label>
+
+                        <label className="text-xs text-zinc-400">
+                          Schedule Timezone
+                          <input
+                            value={
+                              currentArtifact.triggerConfig?.schedule?.timezone || ""
+                            }
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                triggerConfig: {
+                                  ...(current.triggerConfig || {}),
+                                  schedule: {
+                                    ...(current.triggerConfig?.schedule || {}),
+                                    timezone: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                            placeholder="UTC"
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          />
+                        </label>
+
+                        <label className="text-xs text-zinc-400">
+                          Event Source
+                          <input
+                            value={currentArtifact.triggerConfig?.event?.source || ""}
+                            onChange={(event) =>
+                              updateArtifact((current) => ({
+                                ...current,
+                                triggerConfig: {
+                                  ...(current.triggerConfig || {}),
+                                  event: {
+                                    ...(current.triggerConfig?.event || {}),
+                                    source: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                            placeholder="eventbridge://default"
+                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                          />
+                        </label>
+                      </div>
+                    </CollapsibleSection>
+
+                    <CollapsibleSection
+                      title="Connection Bindings"
+                      description="Select how each provider should resolve a connection at runtime."
+                    >
+                      {bindingProviderSlugs.length === 0 ? (
+                        <p className="text-xs text-zinc-600">
+                          No integration accesses detected yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {bindingProviderSlugs.map((providerSlug) => {
+                            const binding = (currentArtifact.bindings || []).find(
+                              (entry) => entry.providerSlug === providerSlug
+                            );
+                            const selectorType =
+                              binding?.selector.type || "latest_active";
+                            const selectorValue =
+                              binding?.selector.connectionId ||
+                              binding?.selector.label ||
+                              "";
+
+                            return (
+                              <div
+                                key={providerSlug}
+                                className="rounded-lg border border-zinc-800 px-3 py-3"
+                              >
+                                <p className="text-xs font-medium text-white">
+                                  {providerSlug}
+                                </p>
+                                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                  <select
+                                    value={selectorType}
+                                    onChange={(event) =>
+                                      updateBindingSelectorType(
+                                        providerSlug,
+                                        event.target.value as WorkflowBindingSelectorType
+                                      )
+                                    }
+                                    className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                                  >
+                                    <option value="latest_active">
+                                      latest_active
+                                    </option>
+                                    <option value="connection_id">
+                                      connection_id
+                                    </option>
+                                    <option value="label">label</option>
+                                  </select>
+                                  <input
+                                    value={selectorValue}
+                                    onChange={(event) =>
+                                      updateBindingSelectorValue(
+                                        providerSlug,
+                                        event.target.value
+                                      )
+                                    }
+                                    disabled={selectorType === "latest_active"}
+                                    placeholder={
+                                      selectorType === "label"
+                                        ? "production"
+                                        : "conn_123"
+                                    }
+                                    className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600 disabled:opacity-50"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CollapsibleSection>
+
+                    <CollapsibleSection
+                      title="Computed Deployment Plan"
+                      description={`Trigger ${deploymentPlan.trigger.type} will run as ${deploymentPlan.executionKind} on ${deploymentPlan.provider.toUpperCase()}.`}
+                    >
+                      <div className="grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
+                        <p>
+                          <span className="text-zinc-500">Summary:</span>{" "}
+                          {deploymentPlan.trigger.endpoint ||
+                            deploymentPlan.trigger.cron ||
+                            deploymentPlan.trigger.eventName ||
+                            deploymentPlan.trigger.description}
+                        </p>
+                        <p>
+                          <span className="text-zinc-500">Auth mode:</span>{" "}
+                          {deploymentPlan.authMode}
+                        </p>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {deploymentPlan.resources.map((resource) => (
+                          <span
+                            key={`${deploymentPlan.workflowId}-${resource.name}`}
+                            className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300"
+                          >
+                            {resource.kind}
+                          </span>
+                        ))}
+                      </div>
+
+                      {deploymentPlan.warnings.length > 0 ? (
+                        <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                          {deploymentPlan.warnings.map((warning, index) => (
+                            <p key={`${deploymentPlan.workflowId}-warning-${index}`}>
+                              {warning}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </CollapsibleSection>
+                  </div>
+                ) : null}
+
+                {activeTab === "code" ? (
+                  <div className="flex h-full flex-col gap-5">
+                    <div className="flex flex-[3] flex-col">
+                      <label className="mb-2 flex items-center gap-2 text-xs font-medium text-zinc-400">
+                        <Code2 size={12} />
+                        Workflow Code
+                      </label>
+                      <textarea
+                        value={currentArtifact.code}
+                        onChange={(event) =>
+                          updateArtifact((current) => ({
+                            ...current,
+                            code: event.target.value,
+                          }))
+                        }
+                        className="w-full flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-xs leading-relaxed text-zinc-200 outline-none focus:border-blue-600"
+                      />
+                    </div>
+                    <div className="flex flex-1 flex-col">
+                      <label className="mb-2 flex items-center gap-2 text-xs font-medium text-zinc-400">
+                        <FileJson size={12} />
+                        Sample Payload JSON
+                      </label>
+                      <textarea
+                        value={currentArtifact.samplePayload}
+                        onChange={(event) =>
+                          updateArtifact((current) => ({
+                            ...current,
+                            samplePayload: event.target.value,
+                          }))
+                        }
+                        className="w-full flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-xs leading-relaxed text-zinc-200 outline-none focus:border-blue-600"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeTab === "validation" ? (
+                  <div className="space-y-5">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-medium text-white">
+                            Validation Report
+                          </h4>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            Compile checks, export checks, helper usage, and
+                            write checkpoint coverage.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => void runValidation()}
+                          disabled={validating || building || agentBusy}
+                          className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+                        >
+                          {validating ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={12} />
+                          )}
+                          Re-run
+                        </button>
+                      </div>
+
+                      {currentArtifact.validation ? (
+                        <>
+                          <div className="mt-4 flex items-center gap-2">
+                            {currentArtifact.validation.ok ? (
+                              <CheckCircle2
+                                size={16}
+                                className="text-emerald-300"
+                              />
+                            ) : (
+                              <AlertCircle
+                                size={16}
+                                className="text-amber-200"
+                              />
+                            )}
+                            <p className="text-sm text-white">
+                              {currentArtifact.validation.ok
+                                ? "Validation passed"
+                                : "Validation found issues"}
+                            </p>
+                          </div>
+                          <div className="mt-4 space-y-2">
+                            {currentArtifact.validation.issues.length === 0 ? (
+                              <p className="text-xs text-zinc-500">
+                                No issues found.
+                              </p>
+                            ) : (
+                              currentArtifact.validation.issues.map(
+                                (issue, index) => (
+                                  <div
+                                    key={`${issue.message}-${index}`}
+                                    className={cn(
+                                      "rounded-lg border px-3 py-2 text-xs",
+                                      issue.level === "error"
+                                        ? "border-amber-900/40 bg-amber-950/20 text-amber-100"
+                                        : "border-zinc-800 bg-zinc-950 text-zinc-300"
+                                    )}
+                                  >
+                                    <div className="flex items-start justify-between gap-3">
+                                      <p className="min-w-0 flex-1">
+                                        {issue.message}
+                                      </p>
+                                      <button
+                                        onClick={() =>
+                                          void sendIssueToChat(
+                                            createValidationFixPrompt(
+                                              currentArtifact,
+                                              issue
+                                            )
+                                          )
+                                        }
+                                        disabled={fixWithAiDisabled}
+                                        className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+                                      >
+                                        Fix With AI
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              )
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="mt-4 text-xs text-zinc-500">
+                          Run validation to inspect the generated code.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeTab === "preview" ? (
+                  <div className="space-y-5">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-medium text-white">
+                            Preview Execution
+                          </h4>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            Runs the workflow with the sample payload and pauses
+                            before external writes.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => void runPreview()}
+                          disabled={previewing || building || agentBusy}
+                          className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+                        >
+                          {previewing ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Play size={12} />
+                          )}
+                          Run
+                        </button>
+                      </div>
+
+                      {currentArtifact.preview ? (
+                        <>
+                          <div className="mt-4 flex items-center gap-2">
+                            {currentArtifact.preview.status === "success" ? (
+                              <CheckCircle2
+                                size={16}
+                                className="text-emerald-300"
+                              />
+                            ) : currentArtifact.preview.status ===
+                              "needs_approval" ? (
+                              <AlertCircle
+                                size={16}
+                                className="text-amber-200"
+                              />
+                            ) : (
+                              <AlertCircle
+                                size={16}
+                                className="text-rose-300"
+                              />
+                            )}
+                            <p className="text-sm text-white">
+                              {currentArtifact.preview.status === "success"
+                                ? "Preview completed"
+                                : currentArtifact.preview.status ===
+                                    "needs_approval"
+                                  ? "Approval required"
+                                  : "Preview failed"}
+                            </p>
+                          </div>
+
+                          {currentArtifact.preview.pendingApproval ? (
+                            <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
+                              <p className="font-medium">
+                                {
+                                  currentArtifact.preview.pendingApproval
+                                    .checkpoint
+                                }
+                              </p>
+                              <p className="mt-1">
+                                {currentArtifact.preview.pendingApproval
+                                  .description ||
+                                  "This step wants to perform an external write."}
+                              </p>
+                              <p className="mt-1 text-amber-200/80">
+                                {currentArtifact.preview.pendingApproval.method}{" "}
+                                &middot;{" "}
+                                {currentArtifact.preview.pendingApproval.target}
+                              </p>
+                              <button
+                                onClick={() =>
+                                  void runPreview([
+                                    currentArtifact.preview?.pendingApproval
+                                      ?.checkpoint || "",
+                                  ])
+                                }
+                                disabled={previewing || building}
+                                className="mt-3 flex items-center gap-2 rounded-md bg-amber-400 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
+                              >
+                                {previewing ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : null}
+                                {previewing
+                                  ? "Running..."
+                                  : "Approve And Continue"}
+                              </button>
+                            </div>
+                          ) : null}
+
+                          {currentArtifact.preview.warnings?.length ? (
+                            <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
+                              <div className="flex items-center gap-2 font-medium mb-1">
+                                <AlertCircle size={14} className="text-amber-300 shrink-0" />
+                                Some API calls failed
+                              </div>
+                              <ul className="mt-1 space-y-0.5 text-amber-200/80">
+                                {currentArtifact.preview.warnings.map((w, i) => (
+                                  <li key={i}>{w}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {currentArtifact.preview.error ? (
+                            <div className="mt-4 rounded-lg border border-rose-900/40 bg-rose-950/20 px-3 py-3 text-xs text-rose-100">
+                              {currentArtifact.preview.error}
+                            </div>
+                          ) : null}
+
+                          {currentArtifact.preview.result !== undefined ? (
+                            <pre className="mt-4 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-xs text-zinc-200">
+                              {JSON.stringify(
+                                currentArtifact.preview.result,
+                                null,
+                                2
+                              )}
+                            </pre>
+                          ) : null}
+
+                          <div className="mt-5">
+                            <h5 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                              Operations
+                            </h5>
+                            <div className="mt-2 space-y-2">
+                              {currentArtifact.preview.operations.length === 0 ? (
+                                <p className="text-xs text-zinc-600">
+                                  No operations captured yet.
+                                </p>
+                              ) : (
+                                currentArtifact.preview.operations.map(
+                                  (operation) => (
+                                    <div
+                                      key={operation.id}
+                                      className={`rounded-lg border px-3 py-2 text-xs ${
+                                        operation.responseStatus && (operation.responseStatus < 200 || operation.responseStatus >= 400)
+                                          ? "border-rose-900/40 bg-rose-950/10"
+                                          : "border-zinc-800"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-3">
+                                        <p className="font-medium text-white">
+                                          {operation.method} {operation.target}
+                                        </p>
+                                        <div className="flex items-center gap-1.5">
+                                          {operation.responseStatus ? (
+                                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                              operation.responseStatus >= 200 && operation.responseStatus < 400
+                                                ? "bg-emerald-900/40 text-emerald-400"
+                                                : "bg-rose-900/40 text-rose-400"
+                                            }`}>
+                                              {operation.responseStatus}
+                                            </span>
+                                          ) : null}
+                                          <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">
+                                            {operation.mode}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <p className="mt-1 text-zinc-500">
+                                        {operation.url}
+                                      </p>
+                                      {operation.checkpoint ? (
+                                        <p className="mt-1 text-zinc-600">
+                                          checkpoint: {operation.checkpoint}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  )
+                                )
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="mt-4 text-xs text-zinc-500">
+                          Run preview to test the current code.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                {activeTab === "build" ? (
+                  <div className="space-y-5">
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-medium text-white">
+                            Build Artifact
+                          </h4>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            Runs validation and preview, then auto-saves the
+                            workflow and uses the same CLI build flow as Deploy
+                            without publishing.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {currentArtifact.build?.status === "error" ? (
+                            <button
+                              onClick={() => {
+                                const build = currentArtifact.build;
+                                if (!build) {
+                                  return;
+                                }
+
+                                const buildResult: WorkflowBuildResult = build;
+
+                                void sendIssueToChat(
+                                  createBuildFixPrompt(currentArtifact, buildResult)
+                                );
+                              }}
+                              disabled={
+                                fixWithAiDisabled
+                              }
+                              className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+                            >
+                              {agentBusy ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Sparkles size={12} />
+                              )}
+                              Fix With AI
+                            </button>
+                          ) : null}
+                          <button
+                            onClick={() => void runBuild()}
+                            disabled={
+                              building ||
+                              previewing ||
+                              validating ||
+                              deploying ||
+                              agentBusy
+                            }
+                            className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+                          >
+                            {building ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Package size={12} />
+                            )}
+                            Run
+                          </button>
+                        </div>
+                      </div>
+
+                      {currentArtifact.build ? (
+                        <>
+                          <div className="mt-4 flex items-center gap-2">
+                            {currentArtifact.build.status === "success" ? (
+                              <CheckCircle2
+                                size={16}
+                                className="text-emerald-300"
+                              />
+                            ) : (
+                              <AlertCircle
+                                size={16}
+                                className="text-rose-300"
+                              />
+                            )}
+                            <p className="text-sm text-white">
+                              {currentArtifact.build.status === "success"
+                                ? "Build completed"
+                                : "Build failed"}
+                            </p>
+                          </div>
+
+                          <div className="mt-4 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
+                            <p>
+                              <span className="text-zinc-500">Provider:</span>{" "}
+                              {currentArtifact.build.provider.toUpperCase()}
+                            </p>
+                            <p>
+                              <span className="text-zinc-500">Region:</span>{" "}
+                              {currentArtifact.build.region || "default"}
+                            </p>
+                            <p>
+                              <span className="text-zinc-500">Built:</span>{" "}
+                              {formatDate(currentArtifact.build.builtAt)}
+                            </p>
+                            <p>
+                              <span className="text-zinc-500">Workflow:</span>{" "}
+                              {currentArtifact.build.artifact?.workflowId ||
+                                currentArtifact.slug}
+                            </p>
+                          </div>
+
+                          {currentArtifact.build.artifact ? (
+                            <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-xs text-zinc-300">
+                              <p>
+                                <span className="text-zinc-500">Artifact:</span>{" "}
+                                {currentArtifact.build.artifact.artifactPath}
+                              </p>
+                              <p className="mt-1">
+                                <span className="text-zinc-500">Bundle size:</span>{" "}
+                                {formatBytes(
+                                  currentArtifact.build.artifact.bundleSizeBytes
+                                )}
+                              </p>
+                              {currentArtifact.build.artifact.imageUri ? (
+                                <p className="mt-1">
+                                  <span className="text-zinc-500">Image:</span>{" "}
+                                  {currentArtifact.build.artifact.imageUri}
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {currentArtifact.build.error ? (
+                            <div className="mt-4 rounded-lg border border-rose-900/40 bg-rose-950/20 px-3 py-3 text-xs text-rose-100">
+                              {currentArtifact.build.error}
+                            </div>
+                          ) : null}
+
+                          {currentArtifact.build.preview?.pendingApproval ? (
+                            <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
+                              <p className="font-medium">
+                                Build reached checkpoint{" "}
+                                {
+                                  currentArtifact.build.preview.pendingApproval
+                                    .checkpoint
+                                }
+                              </p>
+                              <p className="mt-1">
+                                Approve the write step and rerun build if you
+                                want preview to continue past the checkpoint.
+                              </p>
+                              <button
+                                onClick={() =>
+                                  void runBuild([
+                                    currentArtifact.build?.preview
+                                      ?.pendingApproval?.checkpoint || "",
+                                  ])
+                                }
+                                disabled={building}
+                                className="mt-3 flex items-center gap-2 rounded-md bg-amber-400 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
+                              >
+                                {building ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : null}
+                                {building
+                                  ? "Running..."
+                                  : "Approve And Build Again"}
+                              </button>
+                            </div>
+                          ) : null}
+
+                          <div className="mt-5">
+                            <h5 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                              Build Steps
+                            </h5>
+                            <div className="mt-2 space-y-2">
+                              {currentArtifact.build.steps.map((step, index) => (
+                                <div
+                                  key={`${step.stage}-${index}`}
+                                  className={cn(
+                                    "rounded-lg border px-3 py-3 text-xs",
+                                    step.status === "error"
+                                      ? "border-rose-900/40 bg-rose-950/10"
+                                      : "border-zinc-800 bg-zinc-950/40"
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {step.status === "error" ? (
+                                      <AlertCircle
+                                        size={14}
+                                        className="text-rose-300 shrink-0"
+                                      />
+                                    ) : (
+                                      <CheckCircle2
+                                        size={14}
+                                        className="text-emerald-300 shrink-0"
+                                      />
+                                    )}
+                                    <p className="font-medium text-white">
+                                      {step.label}
+                                    </p>
+                                    {step.durationMs !== undefined ? (
+                                      <span className="text-zinc-500">
+                                        {Math.max(
+                                          0.1,
+                                          step.durationMs / 1000
+                                        ).toFixed(1)}
+                                        s
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <p className="mt-1 text-zinc-400">
+                                    {step.summary}
+                                  </p>
+                                  {step.command ? (
+                                    <p className="mt-2 rounded bg-zinc-900 px-2 py-1 font-mono text-[11px] text-zinc-300">
+                                      {step.command}
+                                    </p>
+                                  ) : null}
+                                  {step.output ? (
+                                    <pre className="mt-2 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-[11px] leading-relaxed text-zinc-300">
+                                      {step.output}
+                                    </pre>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="mt-4 text-xs text-zinc-500">
+                          Run build to validate, preview, save, and package the
+                          workflow with the shared deploy pipeline.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {error ? (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-lg border border-rose-900/40 bg-rose-950/90 px-4 py-3 text-sm text-rose-100 shadow-lg backdrop-blur-sm">
+          <AlertCircle size={14} className="shrink-0 text-rose-400" />
+          <span>{error}</span>
+          <button
+            onClick={() => setError(null)}
+            className="ml-2 shrink-0 text-rose-400 hover:text-rose-200"
+          >
+            &times;
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}

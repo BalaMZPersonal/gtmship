@@ -1,0 +1,16 @@
+name: Salesforce
+slug: salesforce
+auth_type: oauth2
+authorize_url: https://login.salesforce.com/services/oauth2/authorize
+token_url: https://login.salesforce.com/services/oauth2/token
+base_url: "{instance_url}"
+scopes:
+  - api
+  - refresh_token
+  - offline_access
+token_refresh: true
+test_endpoint: /services/data/v59.0/sobjects
+docs_url: https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest
+notes: |
+  Salesforce uses a dynamic instance_url returned during OAuth.
+  The base_url is set from the token response's instance_url field.

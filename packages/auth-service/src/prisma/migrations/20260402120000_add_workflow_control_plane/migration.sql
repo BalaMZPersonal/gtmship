@@ -1,0 +1,5 @@
+-- This migration name was created after the workflow control-plane schema had
+-- already been added in 20260402101500_add_workflow_control_plane, and after
+-- shared OAuth had already been added in 20260402120000_add_shared_oauth.
+-- It is intentionally left as a no-op so existing databases can be resolved
+-- cleanly and fresh databases do not attempt to recreate already-defined tables.

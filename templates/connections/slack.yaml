@@ -1,0 +1,16 @@
+name: Slack
+slug: slack
+auth_type: oauth2
+authorize_url: https://slack.com/oauth/v2/authorize
+token_url: https://slack.com/api/oauth.v2.access
+base_url: https://slack.com/api
+scopes:
+  - chat:write
+  - channels:read
+  - users:read
+token_refresh: false
+test_endpoint: /auth.test
+docs_url: https://api.slack.com/methods
+notes: |
+  Slack OAuth tokens do not expire and do not need refreshing.
+  The token_type is "bot" by default.

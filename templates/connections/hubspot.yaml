@@ -1,0 +1,16 @@
+name: HubSpot
+slug: hubspot
+auth_type: oauth2
+authorize_url: https://app.hubspot.com/oauth/authorize
+token_url: https://api.hubapi.com/oauth/v1/token
+base_url: https://api.hubapi.com
+scopes:
+  - crm.objects.contacts.read
+  - crm.objects.contacts.write
+  - crm.objects.companies.read
+  - crm.objects.companies.write
+  - crm.objects.deals.read
+  - crm.objects.deals.write
+token_refresh: true
+test_endpoint: /crm/v3/objects/contacts?limit=1
+docs_url: https://developers.hubspot.com/docs/api/overview

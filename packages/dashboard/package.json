@@ -1,0 +1,41 @@
+{
+  "name": "@gtmship/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node next-dev.js dev --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "@gtmship/deploy-engine": "workspace:*",
+    "@gtmship/sdk": "workspace:*",
+    "ai": "^4.0.0",
+    "archiver": "^7.0.0",
+    "clsx": "^2.1.0",
+    "esbuild": "^0.24.0",
+    "lucide-react": "^0.460.0",
+    "mermaid": "^11.4.1",
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.6.0",
+    "typescript": "^5.7.0",
+    "yaml": "^2.8.3",
+    "zod": "^3.25.28"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0"
+  }
+}

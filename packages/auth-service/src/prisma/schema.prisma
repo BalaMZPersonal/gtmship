@@ -1,0 +1,208 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Shared OAuth app configuration reused across multiple services
+model OAuthProvider {
+  id            String            @id @default(cuid())
+  key           String            @unique
+  name          String
+  callbackSlug  String            @map("callback_slug")
+  authorizeUrl  String            @map("authorize_url")
+  tokenUrl      String            @map("token_url")
+  clientId      String?           @map("client_id")
+  clientSecret  String?           @map("client_secret") // Encrypted
+  credentials   OAuthCredential[]
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  @@map("oauth_providers")
+}
+
+/// OAuth provider configuration (e.g., HubSpot, Salesforce)
+model Provider {
+  id            String       @id @default(cuid())
+  name          String
+  slug          String       @unique
+  authType      String       @map("auth_type") // oauth2, api_key, basic
+  authorizeUrl  String?      @map("authorize_url")
+  tokenUrl      String?      @map("token_url")
+  baseUrl       String       @map("base_url")
+  scopes        String[]     @default([])
+  tokenRefresh  Boolean      @default(true) @map("token_refresh")
+  testEndpoint  String?      @map("test_endpoint")
+  headerName    String?      @map("header_name") // For API key auth
+  docsUrl       String?      @map("docs_url")
+  notes         String?
+  category      String?
+  logoUrl       String?      @map("logo_url")
+  description   String?
+  source        String?      @default("manual") // "catalog", "agent", "manual"
+  apiSchema     Json?        @map("api_schema") // Endpoints, response structures, test instructions
+  oauthProviderKey String?   @map("oauth_provider_key")
+  clientId      String?      @map("client_id")
+  clientSecret  String?      @map("client_secret") // Encrypted
+  connections   Connection[]
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  @@map("providers")
+}
+
+/// A reusable OAuth credential shared across multiple service connections
+model OAuthCredential {
+  id               String          @id @default(cuid())
+  oauthProviderId  String          @map("oauth_provider_id")
+  oauthProvider    OAuthProvider   @relation(fields: [oauthProviderId], references: [id], onDelete: Cascade)
+  externalAccountId String?        @map("external_account_id")
+  accountEmail     String?         @map("account_email")
+  accessToken      String          @map("access_token") // Encrypted
+  refreshToken     String?         @map("refresh_token") // Encrypted
+  tokenExpiresAt   DateTime?       @map("token_expires_at")
+  scopes           String[]        @default([])
+  metadata         Json?
+  connections      Connection[]
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  @@unique([oauthProviderId, externalAccountId])
+  @@map("oauth_credentials")
+}
+
+/// A user's active connection to a platform
+model Connection {
+  id            String           @id @default(cuid())
+  providerId    String           @map("provider_id")
+  provider      Provider         @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  oauthCredentialId String?      @map("oauth_credential_id")
+  oauthCredential OAuthCredential? @relation(fields: [oauthCredentialId], references: [id], onDelete: SetNull)
+  workflowBindings WorkflowBinding[]
+  secretReplicas ConnectionSecretReplica[]
+  label         String?          // e.g., "hubspot-production"
+  status        String           @default("active") // active, expired, revoked
+  accessToken   String?          @map("access_token") // Encrypted
+  refreshToken  String?          @map("refresh_token") // Encrypted
+  tokenExpiresAt DateTime? @map("token_expires_at")
+  instanceUrl   String?          @map("instance_url") // For Salesforce dynamic URLs
+  metadata      Json?            // Additional provider-specific data
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+
+  @@unique([providerId, oauthCredentialId])
+  @@map("connections")
+}
+
+/// Deployed workflow runtime metadata
+model WorkflowDeployment {
+  id                String            @id @default(cuid())
+  workflowId        String            @map("workflow_id")
+  workflowVersion   String?           @map("workflow_version")
+  provider          String
+  region            String?
+  gcpProject        String?           @map("gcp_project")
+  executionKind     String            @map("execution_kind") // service | job
+  authMode          String            @default("proxy") @map("auth_mode")
+  authBackendKind   String?           @map("auth_backend_kind")
+  authBackendRegion String?           @map("auth_backend_region")
+  authBackendProjectId String?        @map("auth_backend_project_id")
+  authRuntimeAccess String?           @map("auth_runtime_access")
+  runtimeAuthManifest Json?           @map("runtime_auth_manifest")
+  triggerType       String?           @map("trigger_type")
+  triggerConfig     Json?             @map("trigger_config")
+  resourceInventory Json?             @map("resource_inventory")
+  endpointUrl       String?           @map("endpoint_url")
+  schedulerId       String?           @map("scheduler_id")
+  eventTriggerId    String?           @map("event_trigger_id")
+  status            String            @default("active")
+  deployedAt        DateTime?         @map("deployed_at")
+  bindings          WorkflowBinding[]
+  runs              WorkflowRun[]
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  @@index([workflowId])
+  @@index([provider])
+  @@index([status])
+  @@map("workflow_deployments")
+}
+
+/// Deterministic connection binding for a deployment/provider pair
+model WorkflowBinding {
+  id           String             @id @default(cuid())
+  deploymentId String             @map("deployment_id")
+  deployment   WorkflowDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  providerSlug String             @map("provider_slug")
+  selectorType String             @default("latest_active") @map("selector_type") // latest_active | connection_id | label
+  selectorValue String?           @map("selector_value")
+  connectionId String?            @map("connection_id")
+  connection   Connection?        @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  metadata     Json?
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  @@unique([deploymentId, providerSlug])
+  @@index([providerSlug])
+  @@index([connectionId])
+  @@map("workflow_bindings")
+}
+
+/// Workflow execution history tracked by deployment
+model WorkflowRun {
+  id              String             @id @default(cuid())
+  deploymentId    String             @map("deployment_id")
+  deployment      WorkflowDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  executionId     String?            @unique @map("execution_id")
+  triggerSource   String             @default("manual") @map("trigger_source")
+  status          String             @default("queued")
+  cloudRef        String?            @map("cloud_ref")
+  startedAt       DateTime?          @map("started_at")
+  endedAt         DateTime?          @map("ended_at")
+  requestPayload  Json?              @map("request_payload")
+  responsePayload Json?              @map("response_payload")
+  error           Json?
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  @@index([deploymentId, createdAt])
+  @@index([status])
+  @@map("workflow_runs")
+}
+
+/// Replicated connection credentials in external secret managers
+model ConnectionSecretReplica {
+  id               String      @id @default(cuid())
+  connectionId     String      @map("connection_id")
+  connection       Connection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  backendKind      String      @map("backend_kind") // aws_secrets_manager | gcp_secret_manager
+  backendRegion    String      @default("") @map("backend_region")
+  backendProjectId String      @default("") @map("backend_project_id")
+  runtimeSecretRef String      @map("runtime_secret_ref")
+  controlSecretRef String?     @map("control_secret_ref")
+  status           String      @default("active")
+  lastSyncedAt     DateTime?   @map("last_synced_at")
+  lastError        String?     @map("last_error")
+  metadata         Json?
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
+
+  @@unique([connectionId, backendKind, backendRegion, backendProjectId], name: "connection_backend_target_key")
+  @@index([backendKind])
+  @@index([status])
+  @@map("connection_secret_replicas")
+}
+
+/// Application settings (AI provider keys, cloud config)
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String // Encrypted for sensitive values
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}

@@ -1,0 +1,15 @@
+name: Factors.ai
+slug: factors
+auth_type: api_key
+base_url: https://api.factors.ai
+header_name: Authorization
+token_refresh: false
+test_endpoint: /open/v1/account/factors.ai/journey
+docs_url: https://help.factors.ai/en/articles/11028633-account-journey-api
+category: Analytics
+notes: |
+  Factors.ai Account Journey API. Uses Bearer token auth.
+  Header format: Authorization: Bearer <private_token>
+  Endpoint: GET /open/v1/account/{account_domain}/journey
+  Optional query params: from, to (YYYY-MM-DD), event_name, user_name
+  Default date range: last 30 days if from/to omitted.

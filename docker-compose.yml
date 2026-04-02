@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gtmship
+      POSTGRES_PASSWORD: gtmship_dev
+      POSTGRES_DB: gtmship
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+  auth-service:
+    build: ./packages/auth-service
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: postgresql://gtmship:gtmship_dev@postgres:5432/gtmship
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: dev-encryption-key-change-in-production-32chars!
+      PORT: 4000
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:

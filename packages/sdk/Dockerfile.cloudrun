@@ -1,0 +1,25 @@
+# GTMShip Cloud Run runtime image
+# Works for both Cloud Run Service and Job — behaviour is controlled
+# by the GTMSHIP_RUNTIME_MODE environment variable set at deploy time.
+
+# --- Build stage (copy pre-bundled esbuild output) ---
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY dist/ ./dist/
+
+# --- Production stage ---
+FROM node:20-alpine
+WORKDIR /app
+
+RUN addgroup -g 1001 -S gtmship && adduser -S gtmship -u 1001
+
+COPY --from=builder /app/dist/ ./dist/
+
+ENV NODE_ENV=production
+# Default — overridden by deploy engine per execution kind
+ENV GTMSHIP_RUNTIME_MODE=cloud-run-service
+ENV GTMSHIP_WORKFLOW_PATH=./workflow.js
+
+USER gtmship
+
+CMD ["node", "--enable-source-maps", "dist/runner.js"]

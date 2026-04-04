@@ -676,12 +676,13 @@ function encodeBasicCredentials(username: string, password: string): string {
 }
 
 function encodeBasicToken(token: string): string {
+  const normalizedToken = token.includes(":") ? token : `${token}:`;
   if (typeof Buffer !== "undefined") {
-    return Buffer.from(token).toString("base64");
+    return Buffer.from(normalizedToken).toString("base64");
   }
 
   if (typeof btoa === "function") {
-    return btoa(token);
+    return btoa(normalizedToken);
   }
 
   throw new Error("Unable to encode basic auth token in this runtime.");

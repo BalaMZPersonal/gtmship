@@ -32,7 +32,9 @@ function formatApiKeyHeaderValue(
   const authFormat = auth?.format?.toLowerCase() || "";
 
   if (authType.includes("basic") || authFormat.includes("basic")) {
-    return `Basic ${token}`;
+    return `Basic ${Buffer.from(
+      token.includes(":") ? token : `${token}:`
+    ).toString("base64")}`;
   }
 
   if (
@@ -69,7 +71,9 @@ export function buildAuthHeaders(connection: {
       };
     case "basic":
       return {
-        Authorization: `Basic ${Buffer.from(token).toString("base64")}`,
+        Authorization: `Basic ${Buffer.from(
+          token.includes(":") ? token : `${token}:`
+        ).toString("base64")}`,
       };
     default:
       return { Authorization: `Bearer ${token}` };

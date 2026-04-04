@@ -2,6 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import type { ResearchResult } from "@/lib/research";
+import {
+  WORKFLOW_DRAFT_PROGRESS_LABELS,
+  WORKFLOW_DRAFT_PROGRESS_STAGES,
+  isWorkflowDraftProgressEvent,
+  type WorkflowDraftProgressEvent,
+  type WorkflowDraftProgressStage,
+} from "@/lib/workflow-studio/types";
 import {
   Globe,
   Terminal,
@@ -20,6 +28,7 @@ interface ToolInvocation {
   args: Record<string, unknown>;
   state: "call" | "result" | "partial-call";
   result?: unknown;
+  toolCallId?: string;
 }
 
 export interface OAuthCompletionPayload {
@@ -32,13 +41,17 @@ export interface OAuthCompletionPayload {
 export function ToolRenderer({
   invocation,
   onOAuthComplete,
+  streamData,
 }: {
   invocation: ToolInvocation;
   onOAuthComplete?: (payload: OAuthCompletionPayload) => void;
+  streamData?: unknown[];
 }) {
   const { toolName, args, state, result } = invocation;
 
   switch (toolName) {
+    case "researchWeb":
+      return <ResearchWebRenderer args={args} state={state} result={result} />;
     case "searchDocumentation":
       return <SearchResultsRenderer args={args} state={state} result={result} />;
     case "fetchUrl":
@@ -54,7 +67,16 @@ export function ToolRenderer({
     case "readProjectFile":
       return <ProjectFileRenderer args={args} state={state} result={result} />;
     case "generateWorkflowDraft":
-      return <DraftRenderer args={args} state={state} result={result} title="Generating draft" />;
+      return (
+        <DraftRenderer
+          args={args}
+          state={state}
+          result={result}
+          title="Generating draft"
+          toolCallId={invocation.toolCallId}
+          streamData={streamData}
+        />
+      );
     case "getCurrentDraft":
       return <DraftRenderer args={args} state={state} result={result} title="Inspecting draft" />;
     case "validateWorkflowDraft":
@@ -89,7 +111,120 @@ export function ToolRenderer({
   }
 }
 
-function SearchResultsRenderer({
+function getWorkflowDraftProgressEvents(
+  streamData: unknown[] | undefined,
+  toolCallId?: string
+): WorkflowDraftProgressEvent[] {
+  if (!toolCallId || !streamData?.length) {
+    return [];
+  }
+
+  return streamData.filter(isWorkflowDraftProgressEvent).filter((event) => {
+    return event.toolCallId === toolCallId;
+  });
+}
+
+function getLatestDraftProgressByStage(
+  progressEvents: WorkflowDraftProgressEvent[]
+): Map<WorkflowDraftProgressStage, WorkflowDraftProgressEvent> {
+  const latestByStage = new Map<
+    WorkflowDraftProgressStage,
+    WorkflowDraftProgressEvent
+  >();
+
+  for (const event of progressEvents) {
+    latestByStage.set(event.stage, event);
+  }
+
+  return latestByStage;
+}
+
+type ResearchRenderResult = ResearchResult & {
+  page?: NonNullable<ResearchResult["page"]>;
+};
+
+function getDomainLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+}
+
+function coerceString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeSearchResult(
+  args: Record<string, unknown>,
+  result: unknown
+): ResearchRenderResult {
+  const res = result as
+    | {
+        query?: string;
+        results?: Array<{ title: string; url: string; snippet?: string }>;
+        warnings?: string[];
+        noUsefulResults?: boolean;
+        error?: string;
+      }
+    | undefined;
+
+  return {
+    provider: "duckduckgo",
+    mode: "search",
+    query: coerceString(res?.query) || coerceString(args.query),
+    results:
+      res?.results?.map((entry) => ({
+        title: entry.title,
+        url: entry.url,
+        snippet: entry.snippet || "",
+        domain: getDomainLabel(entry.url),
+        score: 0,
+      })) || [],
+    warnings: res?.warnings,
+    noUsefulResults: res?.noUsefulResults,
+    error: res?.error,
+  };
+}
+
+function normalizeFetchResult(
+  args: Record<string, unknown>,
+  result: unknown
+): ResearchRenderResult {
+  const res = result as
+    | {
+        status?: number;
+        contentType?: string;
+        body?: string;
+        finalUrl?: string;
+        title?: string;
+        excerpt?: string;
+        warnings?: string[];
+        error?: string;
+      }
+    | undefined;
+  const body = coerceString(res?.body);
+  const finalUrl = coerceString(res?.finalUrl) || coerceString(args.url);
+
+  return {
+    provider: "direct",
+    mode: "scrape",
+    warnings: res?.warnings,
+    error: res?.error,
+    page: {
+      finalUrl,
+      title: coerceString(res?.title) || finalUrl,
+      status: typeof res?.status === "number" ? res.status : 0,
+      contentType: coerceString(res?.contentType),
+      excerpt: coerceString(res?.excerpt) || body.slice(0, 240),
+      text: body,
+      headings: [],
+      links: [],
+    },
+  };
+}
+
+function ResearchWebRenderer({
   args,
   state,
   result,
@@ -98,30 +233,92 @@ function SearchResultsRenderer({
   state: string;
   result: unknown;
 }) {
-  const res = result as {
-    query?: string;
-    results?: Array<{ title: string; url: string; snippet?: string }>;
-    error?: string;
-  } | undefined;
+  const res = (result || {}) as ResearchRenderResult;
+  const mode =
+    coerceString(args.mode) ||
+    coerceString(res.mode) ||
+    (res.page ? "scrape" : "search");
+  const target =
+    coerceString(args.query) ||
+    coerceString(args.url) ||
+    coerceString(res.query) ||
+    coerceString(res.page?.finalUrl);
+  const isScrape = mode === "scrape";
+  const isResearch = mode === "research";
+  const icon = isScrape ? Globe : Search;
+  const iconColor = isScrape ? "text-blue-400" : "text-purple-400";
+  const title = isScrape
+    ? "Scraping page"
+    : isResearch
+      ? "Researching web"
+      : "Searching web";
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 overflow-hidden my-2">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 text-xs">
-        <Search size={12} className="text-purple-400" />
-        <span className="text-zinc-400">Searching docs</span>
-        <span className="truncate font-mono text-purple-300">
-          {String(args.query || res?.query || "")}
+        {icon === Globe ? (
+          <Globe size={12} className={iconColor} />
+        ) : (
+          <Search size={12} className={iconColor} />
+        )}
+        <span className="text-zinc-400">{title}</span>
+        <span className={`truncate font-mono ${isScrape ? "text-blue-300" : "text-purple-300"}`}>
+          {target}
         </span>
-        {state === "call" && <Loader2 size={12} className="animate-spin text-zinc-500 ml-auto" />}
+        {res.provider ? (
+          <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+            {res.provider}
+          </span>
+        ) : null}
+        {state === "call" && <Loader2 size={12} className="animate-spin text-zinc-500" />}
+        {res.page?.status ? (
+          <span
+            className={`font-mono ${
+              res.page.status >= 200 && res.page.status < 300
+                ? "text-green-400"
+                : "text-red-400"
+            }`}
+          >
+            {res.page.status}
+          </span>
+        ) : null}
       </div>
-      {res?.error ? (
+
+      {res.error ? (
         <div className="px-3 py-2 text-xs text-red-400">{res.error}</div>
       ) : null}
-      {res?.results?.length ? (
+
+      {res.warnings?.length ? (
+        <div className="px-3 py-2 border-b border-zinc-800/80 space-y-1">
+          {res.warnings.map((warning) => (
+            <p key={warning} className="text-[11px] text-amber-300">
+              {warning}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
+      {res.noUsefulResults ? (
+        <div className="px-3 py-2 text-[11px] text-zinc-400">
+          No strong documentation matches were found.
+        </div>
+      ) : null}
+
+      {res.results?.length ? (
         <div className="px-3 py-2 space-y-2">
           {res.results.slice(0, 4).map((entry) => (
-            <div key={entry.url} className="rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2">
-              <p className="text-xs font-medium text-white">{entry.title}</p>
+            <div
+              key={entry.url}
+              className="rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-medium text-white">{entry.title}</p>
+                {entry.domain ? (
+                  <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                    {entry.domain}
+                  </span>
+                ) : null}
+              </div>
               <a
                 href={entry.url}
                 target="_blank"
@@ -140,7 +337,74 @@ function SearchResultsRenderer({
           ))}
         </div>
       ) : null}
+
+      {res.page ? (
+        <div className="border-t border-zinc-800 px-3 py-2 space-y-2">
+          <div>
+            <p className="text-xs font-medium text-white">
+              {res.page.title || res.page.finalUrl}
+            </p>
+            {res.page.finalUrl ? (
+              <a
+                href={res.page.finalUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-[11px] text-blue-400 hover:underline"
+              >
+                {res.page.finalUrl}
+                <ExternalLink size={10} />
+              </a>
+            ) : null}
+          </div>
+
+          {res.page.excerpt ? (
+            <p className="text-[11px] leading-relaxed text-zinc-400">
+              {res.page.excerpt}
+            </p>
+          ) : null}
+
+          {res.page.headings?.length ? (
+            <div className="flex flex-wrap gap-1">
+              {res.page.headings.slice(0, 4).map((heading) => (
+                <span
+                  key={heading}
+                  className="rounded bg-zinc-800 px-2 py-1 text-[10px] text-zinc-300"
+                >
+                  {heading}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          {res.page.text ? (
+            <div className="max-h-48 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-950/70 p-3">
+              <pre className="text-xs text-zinc-400 whitespace-pre-wrap font-mono leading-relaxed">
+                {res.page.text.slice(0, 2000)}
+                {res.page.text.length > 2000 && "..."}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function SearchResultsRenderer({
+  args,
+  state,
+  result,
+}: {
+  args: Record<string, unknown>;
+  state: string;
+  result: unknown;
+}) {
+  return (
+    <ResearchWebRenderer
+      args={{ ...args, mode: "search" }}
+      state={state}
+      result={normalizeSearchResult(args, result)}
+    />
   );
 }
 
@@ -153,34 +417,12 @@ function FetchUrlRenderer({
   state: string;
   result: unknown;
 }) {
-  const res = result as { status?: number; body?: string; error?: string } | undefined;
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 overflow-hidden my-2">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 text-xs">
-        <Globe size={12} className="text-blue-400" />
-        <span className="text-zinc-400">Fetching</span>
-        <span className="text-blue-400 truncate font-mono">{String(args.url || "")}</span>
-        {state === "call" && <Loader2 size={12} className="animate-spin text-zinc-500 ml-auto" />}
-        {res?.status && (
-          <span
-            className={`ml-auto font-mono ${res.status >= 200 && res.status < 300 ? "text-green-400" : "text-red-400"}`}
-          >
-            {res.status}
-          </span>
-        )}
-      </div>
-      {res?.error && (
-        <div className="px-3 py-2 text-xs text-red-400">{res.error}</div>
-      )}
-      {res?.body && (
-        <div className="px-3 py-2 max-h-48 overflow-y-auto">
-          <pre className="text-xs text-zinc-400 whitespace-pre-wrap font-mono leading-relaxed">
-            {res.body.slice(0, 2000)}
-            {res.body.length > 2000 && "..."}
-          </pre>
-        </div>
-      )}
-    </div>
+    <ResearchWebRenderer
+      args={{ ...args, mode: "scrape" }}
+      state={state}
+      result={normalizeFetchResult(args, result)}
+    />
   );
 }
 
@@ -814,11 +1056,15 @@ function DraftRenderer({
   state,
   result,
   title,
+  toolCallId,
+  streamData,
 }: {
   args: Record<string, unknown>;
   state: string;
   result: unknown;
   title: string;
+  toolCallId?: string;
+  streamData?: unknown[];
 }) {
   const res = result as {
     assistantMessage?: string;
@@ -828,7 +1074,172 @@ function DraftRenderer({
     message?: string;
     error?: string;
   } | undefined;
-  const hasRenderableArtifact = Boolean(res?.artifact?.code?.trim());
+  const hasRenderableArtifact = Boolean(
+    !res?.error && res?.artifact?.code?.trim()
+  );
+  const isRunning = state === "call" || state === "partial-call";
+  const progressEvents = useMemo(
+    () => getWorkflowDraftProgressEvents(streamData, toolCallId),
+    [streamData, toolCallId]
+  );
+  const latestByStage = useMemo(
+    () => getLatestDraftProgressByStage(progressEvents),
+    [progressEvents]
+  );
+  const stageStates = useMemo(
+    () =>
+      WORKFLOW_DRAFT_PROGRESS_STAGES.map((stage) => {
+        const event = latestByStage.get(stage);
+        return {
+          stage,
+          event,
+          label: event?.label || WORKFLOW_DRAFT_PROGRESS_LABELS[stage],
+        };
+      }),
+    [latestByStage]
+  );
+  const activeStageIndex = stageStates.findIndex(({ event }) => {
+    return event?.status === "started" || event?.status === "update";
+  });
+  const blockedStageIndex = stageStates.findIndex(
+    ({ event }) => event?.status === "blocked"
+  );
+  const failedStageIndex = stageStates.findIndex(
+    ({ event }) => event?.status === "failed"
+  );
+  const completedCount = stageStates.filter(
+    ({ event }) => event?.status === "completed"
+  ).length;
+  const currentIndex =
+    activeStageIndex >= 0
+      ? activeStageIndex
+      : blockedStageIndex >= 0
+        ? blockedStageIndex
+        : failedStageIndex >= 0
+          ? failedStageIndex
+          : Math.min(completedCount, stageStates.length - 1);
+  const currentEvent =
+    stageStates[currentIndex]?.event ||
+    (progressEvents.length > 0 ? progressEvents[progressEvents.length - 1] : undefined);
+  const statusLabel =
+    blockedStageIndex >= 0
+      ? "Needs attention"
+      : failedStageIndex >= 0
+        ? "Failed"
+        : `Step ${Math.min(currentIndex + 1, stageStates.length)} of ${stageStates.length}`;
+  const currentAttemptLabel =
+    currentEvent?.attempt && currentEvent?.totalAttempts
+      ? `Attempt ${currentEvent.attempt} of ${currentEvent.totalAttempts}`
+      : null;
+
+  if (isRunning) {
+    return (
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 overflow-hidden my-2">
+        <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 text-xs">
+          <FileJson size={12} className="text-blue-400" />
+          <span className="text-zinc-300">{title}</span>
+          <span
+            className={
+              blockedStageIndex >= 0
+                ? "ml-auto text-amber-300"
+                : failedStageIndex >= 0
+                  ? "ml-auto text-red-300"
+                  : "ml-auto text-zinc-500"
+            }
+          >
+            {statusLabel}
+          </span>
+        </div>
+        <div className="space-y-3 px-3 py-3">
+          <div className="rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              {blockedStageIndex >= 0 ? (
+                <XCircle size={12} className="text-amber-400" />
+              ) : failedStageIndex >= 0 ? (
+                <XCircle size={12} className="text-red-400" />
+              ) : (
+                <Loader2 size={12} className="animate-spin text-blue-400" />
+              )}
+              <span>{currentEvent?.detail || "Starting draft generation..."}</span>
+            </div>
+            {currentAttemptLabel ? (
+              <p className="mt-1 text-[11px] text-zinc-500">
+                {currentAttemptLabel}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            {stageStates.map(({ stage, label, event }, index) => {
+              const isBlocked = event?.status === "blocked";
+              const isFailed = event?.status === "failed";
+              const isCompleted = event?.status === "completed";
+              const isActive =
+                (!isBlocked && !isFailed && !isCompleted && index === currentIndex) ||
+                event?.status === "started" ||
+                event?.status === "update";
+              const rowToneClassName = isCompleted
+                ? "border-emerald-900/40 bg-emerald-950/20"
+                : isBlocked
+                  ? "border-amber-900/40 bg-amber-950/20"
+                  : isFailed
+                    ? "border-red-900/40 bg-red-950/20"
+                    : isActive
+                      ? "border-blue-900/40 bg-blue-950/20"
+                      : "border-zinc-800 bg-zinc-950/40";
+              const labelToneClassName = isCompleted
+                ? "text-emerald-100"
+                : isBlocked
+                  ? "text-amber-100"
+                  : isFailed
+                    ? "text-red-100"
+                    : isActive
+                      ? "text-blue-100"
+                      : "text-zinc-400";
+              const detailToneClassName = isCompleted
+                ? "text-emerald-300/80"
+                : isBlocked
+                  ? "text-amber-300/80"
+                  : isFailed
+                    ? "text-red-300/80"
+                    : isActive
+                      ? "text-blue-200/80"
+                      : "text-zinc-500";
+
+              return (
+                <div
+                  key={stage}
+                  className={`rounded-md border px-3 py-2 ${rowToneClassName}`}
+                >
+                  <div className="flex items-center gap-2">
+                    {isCompleted ? (
+                      <CheckCircle size={13} className="shrink-0 text-emerald-400" />
+                    ) : isBlocked ? (
+                      <XCircle size={13} className="shrink-0 text-amber-400" />
+                    ) : isFailed ? (
+                      <XCircle size={13} className="shrink-0 text-red-400" />
+                    ) : isActive ? (
+                      <Loader2 size={13} className="shrink-0 animate-spin text-blue-400" />
+                    ) : (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-700" />
+                    )}
+                    <span className={`text-xs font-medium ${labelToneClassName}`}>
+                      {label}
+                    </span>
+                  </div>
+                  {event?.detail ? (
+                    <p className={`mt-1 pl-5 text-[11px] ${detailToneClassName}`}>
+                      {event.detail}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 overflow-hidden my-2">
@@ -941,7 +1352,7 @@ function PreviewRenderer({
         {preview?.error ? <p className="text-red-400">{preview.error}</p> : null}
         {preview?.pendingApproval ? (
           <p className="text-amber-300">
-            Waiting for approval: {preview.pendingApproval.checkpoint} → {preview.pendingApproval.target}
+            Waiting for approval: {preview.pendingApproval.checkpoint} → {preview.pendingApproval.target}. More declared checkpoints may appear after this one is approved.
           </p>
         ) : null}
       </div>

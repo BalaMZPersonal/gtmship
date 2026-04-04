@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { listActiveConnections } from "@/lib/workflow-studio/auth-service";
+import {
+  getAuthStrategy,
+  listActiveConnections,
+} from "@/lib/workflow-studio/auth-service";
 import { buildWorkflowDeploymentPlanForArtifact } from "@/lib/workflow-studio/deployment";
 import {
   listStoredWorkflows,
@@ -30,7 +33,10 @@ export async function GET(request: Request) {
       });
     }
 
-    const connections = await listActiveConnections();
+    const [connections, authStrategy] = await Promise.all([
+      listActiveConnections(),
+      getAuthStrategy(),
+    ]);
     const plans: WorkflowDeploymentPlan[] = [];
 
     for (const workflow of listing.workflows) {
@@ -42,6 +48,7 @@ export async function GET(request: Request) {
           provider: provider || undefined,
           region,
           gcpProject,
+          authStrategy,
         })
       );
     }

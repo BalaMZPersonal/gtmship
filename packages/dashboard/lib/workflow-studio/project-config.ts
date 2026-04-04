@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { WorkflowProjectDeploymentDefaults } from "./types";
-import { getSetting } from "./auth-service";
+import { getAuthStrategy, getSetting } from "./auth-service";
 import { resolveProjectRoot } from "./project-root";
 
 interface RawProjectConfig {
@@ -19,6 +19,7 @@ interface DashboardDeploymentSettings {
   awsRegion?: string;
   gcpRegion?: string;
   gcpProject?: string;
+  authStrategy?: WorkflowProjectDeploymentDefaults["authStrategy"];
 }
 
 function normalizeProvider(
@@ -50,11 +51,12 @@ function normalizeDeploymentDefaults(
 }
 
 async function loadDashboardDeploymentSettings(): Promise<DashboardDeploymentSettings> {
-  const [provider, awsRegion, gcpRegion, gcpProject] = await Promise.all([
+  const [provider, awsRegion, gcpRegion, gcpProject, authStrategy] = await Promise.all([
     getSetting("cloud_provider"),
     getSetting("aws_region"),
     getSetting("gcp_region"),
     getSetting("gcp_project_id"),
+    getAuthStrategy(),
   ]);
 
   return {
@@ -62,6 +64,7 @@ async function loadDashboardDeploymentSettings(): Promise<DashboardDeploymentSet
     awsRegion: normalizeString(awsRegion),
     gcpRegion: normalizeString(gcpRegion),
     gcpProject: normalizeString(gcpProject),
+    authStrategy,
   };
 }
 
@@ -102,5 +105,6 @@ export async function loadProjectDeploymentDefaults(
           ? dashboardDefaults.awsRegion
           : undefined),
     gcpProject: projectDefaults.gcpProject || dashboardDefaults.gcpProject,
+    authStrategy: dashboardDefaults.authStrategy || null,
   };
 }

@@ -34,6 +34,8 @@ export async function POST(req: Request) {
 You have tools to search provider templates, create connections, test them, and manage providers.
 Be concise and helpful. When setting up a connection, guide the user step by step.
 
+When reconnecting an existing API key or basic-auth integration, call listConnections first and pass the original connection id into connectApiKey so the saved connection is updated in place instead of creating a duplicate.
+
 When a provider uses a shared OAuth family such as Google, explain that one OAuth app/callback can cover multiple Google services, ask whether the user also wants the other supported Google services enabled, save the shared OAuth app credentials, and pass every selected service slug to startOAuth.
 
 For OAuth flows started with startOAuth:
@@ -124,18 +126,24 @@ For OAuth flows started with startOAuth:
         },
       }),
       connectApiKey: tool({
-        description: "Create a connection using an API key",
+        description:
+          "Create or update a connection using an API key. Provide connectionId when reconnecting an existing integration.",
         parameters: z.object({
           provider: z.string().describe("Provider slug"),
           api_key: z.string().describe("The API key"),
           label: z.string().optional(),
+          connectionId: z.string().optional(),
         }),
-        execute: async ({ provider, api_key, label }) => {
+        execute: async ({ provider, api_key, label, connectionId }) => {
           try {
             const res = await fetch(`${AUTH_URL}/auth/${provider}/connect-key`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ api_key, label }),
+              body: JSON.stringify({
+                api_key,
+                label,
+                connection_id: connectionId,
+              }),
             });
             return await res.json();
           } catch {

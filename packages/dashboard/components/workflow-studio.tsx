@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { useChat } from "ai/react";
 import type { UIMessage } from "ai";
 import ReactMarkdown from "react-markdown";
@@ -32,17 +33,21 @@ import {
   Rocket,
   Save,
   Sparkles,
+  Trash2,
   Workflow,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import {
+  buildDeploymentLogsHref,
   type DashboardDeployInfraKey,
   type GcpComputeType,
   type ResolvedCloudDeploySettings,
   type WorkflowDeploymentOverview,
   type WorkflowExecutionHistoryEntry,
   getDeploymentInfra,
+  getScopedWorkflowDeployments,
   isDashboardDeploySuccess,
   loadCloudDeploySettings,
   resolveWorkflowDeployTarget,
@@ -50,6 +55,19 @@ import {
 import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { ToolRenderer } from "@/components/agent/tool-renderers";
 import { buildWorkflowPlanFromArtifact } from "@/lib/workflow-studio/deploy-plan";
+import {
+  WORKFLOW_TRANSCRIPT_HARD_LIMIT_TOKENS,
+  WORKFLOW_TRANSCRIPT_MAX_PENDING_MESSAGE_TOKENS,
+  WORKFLOW_TRANSCRIPT_TRIGGER_TOKENS,
+  applyTranscriptCompaction,
+  buildFallbackTranscriptSummary,
+  buildTranscriptCompactionPlan,
+  createTranscriptTooLargeError,
+  estimateTextTokens,
+  estimateVisibleTranscriptTokens,
+  getArtifactTranscriptCompaction,
+  stripArchivedMessagesFromCompaction,
+} from "@/lib/workflow-studio/transcript-compaction";
 import { deriveWorkflowStudioState } from "@/lib/workflow-studio/transcript";
 import type {
   WorkflowBindingSelectorType,
@@ -59,14 +77,18 @@ import type {
   WorkflowDeploymentRun,
   WorkflowListItem,
   WorkflowListingResponse,
+  WorkflowPendingApproval,
   WorkflowProjectDeploymentDefaults,
+  WorkflowPreviewLogLevel,
   WorkflowPreviewResult,
   WorkflowStudioArtifact,
   WorkflowStudioMessage,
   WorkflowStudioMessagePart,
   WorkflowStudioToolInvocation,
+  WorkflowTranscriptCompaction,
   WorkflowValidationIssue,
   WorkflowValidationReport,
+  WorkflowWriteCheckpoint,
 } from "@/lib/workflow-studio/types";
 
 type StudioTab =
@@ -112,6 +134,7 @@ type WorkflowStudioDeployResponse =
 
 interface WorkflowConversationPanelHandle {
   sendPrompt: (content: string) => Promise<void>;
+  cancelRun: () => void;
 }
 
 interface WorkflowConversationPanelProps {
@@ -125,6 +148,17 @@ interface WorkflowConversationPanelProps {
   ) => void;
   onBusyChange: (value: boolean) => void;
   onError: (message: string | null) => void;
+}
+
+type WorkflowConnectionBlockerStatus = "missing" | "blocked" | "attention";
+
+interface WorkflowConnectionBlocker {
+  key: string;
+  label: string;
+  detail: string;
+  status: WorkflowConnectionBlockerStatus;
+  providerSlug?: string;
+  purpose?: string;
 }
 
 function withDeploymentPlan(
@@ -154,6 +188,7 @@ function emptyArtifact(
     writeCheckpoints: [],
     chatSummary: "",
     messages: [],
+    transcriptCompaction: undefined,
     deploy: undefined,
     triggerConfig: undefined,
     bindings: [],
@@ -206,17 +241,6 @@ function formatDateTime(value?: string | null): string {
   return date.toLocaleString();
 }
 
-function buildLogsHref(deploymentId: string, executionName?: string | null): string {
-  const params = new URLSearchParams({
-    provider: "gcp",
-    deploymentId,
-  });
-  if (executionName) {
-    params.set("executionName", executionName);
-  }
-  return `/deploy/logs?${params.toString()}`;
-}
-
 function truncateIssueContext(value: string | undefined, maxChars = 3000): string {
   if (!value) {
     return "";
@@ -225,6 +249,226 @@ function truncateIssueContext(value: string | undefined, maxChars = 3000): strin
   return value.length <= maxChars
     ? value
     : `${value.slice(0, maxChars)}\n\n... (issue details truncated)`;
+}
+
+function getPreviewLogLevelClassName(level: WorkflowPreviewLogLevel): string {
+  switch (level) {
+    case "error":
+      return "bg-rose-900/40 text-rose-300";
+    case "warn":
+      return "bg-amber-900/40 text-amber-300";
+    case "info":
+      return "bg-sky-900/40 text-sky-300";
+    case "debug":
+      return "bg-violet-900/40 text-violet-300";
+    default:
+      return "bg-zinc-800 text-zinc-300";
+  }
+}
+
+function formatPreviewLogsForPrompt(
+  preview: WorkflowPreviewResult,
+  maxEntries = 24
+): string {
+  return (preview.logs || [])
+    .slice(-maxEntries)
+    .map(
+      (entry) =>
+        `[${entry.level.toUpperCase()} ${formatDateTime(entry.timestamp)}] ${entry.message}`
+    )
+    .join("\n");
+}
+
+type WorkflowCheckpointProgressStatus = "approved" | "current" | "pending";
+
+interface WorkflowCheckpointProgressItem {
+  id: string;
+  label: string;
+  description: string;
+  method: string;
+  target: string;
+  status: WorkflowCheckpointProgressStatus;
+}
+
+function getCheckpointTarget(checkpoint: WorkflowWriteCheckpoint): string {
+  return checkpoint.providerSlug || checkpoint.url || checkpoint.id;
+}
+
+function buildCheckpointProgress(
+  checkpoints: WorkflowWriteCheckpoint[],
+  approvedCheckpoints: string[],
+  pendingApproval?: WorkflowPendingApproval
+): WorkflowCheckpointProgressItem[] {
+  const approved = new Set(approvedCheckpoints);
+  const items = checkpoints.map((checkpoint) => ({
+    id: checkpoint.id,
+    label: checkpoint.label,
+    description: checkpoint.description,
+    method: checkpoint.method,
+    target: getCheckpointTarget(checkpoint),
+    status: approved.has(checkpoint.id)
+      ? ("approved" as const)
+      : pendingApproval?.checkpoint === checkpoint.id
+        ? ("current" as const)
+        : ("pending" as const),
+  }));
+
+  if (
+    pendingApproval &&
+    !items.some((item) => item.id === pendingApproval.checkpoint)
+  ) {
+    items.push({
+      id: pendingApproval.checkpoint,
+      label: pendingApproval.checkpoint,
+      description:
+        pendingApproval.description ||
+        "This step wants to perform an external write.",
+      method: pendingApproval.method,
+      target: pendingApproval.target,
+      status: approved.has(pendingApproval.checkpoint) ? "approved" : "current",
+    });
+  }
+
+  return items;
+}
+
+function getCheckpointStatusClasses(
+  status: WorkflowCheckpointProgressStatus
+): string {
+  switch (status) {
+    case "approved":
+      return "border-emerald-900/40 bg-emerald-950/20 text-emerald-100";
+    case "current":
+      return "border-amber-900/40 bg-amber-950/20 text-amber-100";
+    default:
+      return "border-zinc-800 bg-zinc-950/40 text-zinc-300";
+  }
+}
+
+function getCheckpointStatusLabel(
+  status: WorkflowCheckpointProgressStatus
+): string {
+  switch (status) {
+    case "approved":
+      return "Approved";
+    case "current":
+      return "Awaiting approval";
+    default:
+      return "Pending later";
+  }
+}
+
+function CheckpointApprovalCallout({
+  title,
+  pendingApproval,
+  progress,
+  running,
+  disabled,
+  primaryLabel,
+  runningLabel,
+  onApproveNext,
+  onApproveAllRemaining,
+}: {
+  title: string;
+  pendingApproval?: WorkflowPendingApproval;
+  progress: WorkflowCheckpointProgressItem[];
+  running: boolean;
+  disabled: boolean;
+  primaryLabel: string;
+  runningLabel: string;
+  onApproveNext: () => void;
+  onApproveAllRemaining: () => void;
+}) {
+  const approvedCount = progress.filter(
+    (checkpoint) => checkpoint.status === "approved"
+  ).length;
+  const remainingCheckpoints = progress.filter(
+    (checkpoint) => checkpoint.status !== "approved"
+  );
+  const hasMultipleRemaining = remainingCheckpoints.length > 1;
+
+  return (
+    <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-medium">{title}</p>
+          {pendingApproval ? (
+            <p className="mt-1 text-amber-200/90">
+              Next checkpoint: {pendingApproval.checkpoint}
+            </p>
+          ) : null}
+          <p className="mt-1">
+            Approve the next write step, or approve every remaining checkpoint
+            to finish the run in one pass.
+          </p>
+          {pendingApproval ? (
+            <p className="mt-1 text-amber-200/80">
+              {pendingApproval.method} &middot; {pendingApproval.target}
+            </p>
+          ) : null}
+        </div>
+        {progress.length > 0 ? (
+          <span className="rounded-full border border-amber-800/60 px-2 py-0.5 text-[10px] text-amber-200">
+            {approvedCount}/{progress.length} approved
+          </span>
+        ) : null}
+      </div>
+
+      {progress.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          {progress.map((checkpoint) => (
+            <div
+              key={checkpoint.id}
+              className={cn(
+                "rounded-lg border px-3 py-2",
+                getCheckpointStatusClasses(checkpoint.status)
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{checkpoint.label}</p>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px] uppercase tracking-wide">
+                    {checkpoint.method}
+                  </span>
+                  <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px]">
+                    {getCheckpointStatusLabel(checkpoint.status)}
+                  </span>
+                </div>
+              </div>
+              <p className="mt-1 opacity-90">{checkpoint.description}</p>
+              <p className="mt-1 text-[11px] opacity-70">{checkpoint.target}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={onApproveNext}
+          disabled={disabled || !pendingApproval}
+          className="flex items-center gap-2 rounded-md bg-amber-400 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
+        >
+          {running ? <Loader2 size={12} className="animate-spin" /> : null}
+          {running ? runningLabel : primaryLabel}
+        </button>
+        {hasMultipleRemaining ? (
+          <button
+            onClick={onApproveAllRemaining}
+            disabled={disabled}
+            className="rounded-md border border-amber-700/60 px-3 py-2 text-xs font-medium text-amber-100 transition-colors hover:bg-amber-950/40 disabled:opacity-50"
+          >
+            Approve All Remaining
+          </button>
+        ) : null}
+        {hasMultipleRemaining ? (
+          <p className="text-[11px] text-amber-200/80">
+            More declared checkpoints will pause preview again unless you
+            approve the remaining steps together.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function createValidationFixPrompt(
@@ -282,6 +526,300 @@ function createBuildFixPrompt(
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function createPreviewFixPrompt(
+  artifact: WorkflowStudioArtifact,
+  preview: WorkflowPreviewResult
+): string {
+  const operationSummary = preview.operations
+    .slice(-10)
+    .map((operation) =>
+      [
+        `- ${operation.method} ${operation.target}`,
+        `mode=${operation.mode}`,
+        operation.responseStatus ? `status=${operation.responseStatus}` : "",
+        operation.checkpoint ? `checkpoint=${operation.checkpoint}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    )
+    .join("\n");
+  const logSummary = formatPreviewLogsForPrompt(preview, 30);
+
+  return [
+    "Review the latest workflow preview and fix any issues you find.",
+    "",
+    `Workflow: ${artifact.title || artifact.slug}`,
+    `Preview status: ${preview.status}`,
+    preview.error
+      ? `Preview error:\n${truncateIssueContext(preview.error, 2400)}`
+      : "",
+    preview.warnings?.length
+      ? `Preview warnings:\n${preview.warnings.map((warning) => `- ${warning}`).join("\n")}`
+      : "",
+    operationSummary ? `Operations observed:\n${operationSummary}` : "",
+    logSummary
+      ? `Execution logs:\n${truncateIssueContext(logSummary, 3200)}`
+      : "No preview console output was captured.",
+    "Update the current workflow draft if needed, then explain what changed and why.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function getWorkflowIntentSummary(
+  artifact: WorkflowStudioArtifact,
+  messages: WorkflowStudioMessage[]
+): string {
+  const chatSummary = artifact.chatSummary?.trim();
+  if (chatSummary) {
+    return chatSummary;
+  }
+
+  const summary = artifact.summary?.trim();
+  if (
+    summary &&
+    summary !== "Describe a workflow in chat to generate code and a data-flow diagram."
+  ) {
+    return summary;
+  }
+
+  const latestUserPrompt = [...messages]
+    .reverse()
+    .find((message) => message.role === "user" && message.content?.trim())
+    ?.content?.trim();
+
+  return latestUserPrompt
+    ? truncateIssueContext(latestUserPrompt, 700)
+    : "No additional workflow description was captured yet.";
+}
+
+function isIntegrationConnectionBlocked(
+  access: WorkflowAccessRequirement
+): boolean {
+  return (
+    access.type === "integration" &&
+    (access.status === "missing" || access.status === "blocked")
+  );
+}
+
+function isConnectionIssueText(value?: string | null): value is string {
+  if (!value) {
+    return false;
+  }
+
+  return /(auth expired|reconnect in connections|no active .* connection|connection test failed|invalid credentials|oauth|unauthorized|forbidden)/i.test(
+    value
+  );
+}
+
+function inferProviderSlugFromText(
+  value: string,
+  providerHints: string[]
+): string | undefined {
+  const normalized = value.toLowerCase();
+  return providerHints.find((providerSlug) =>
+    normalized.includes(providerSlug.toLowerCase())
+  );
+}
+
+function createConnectionAccessBlockers(
+  accesses: WorkflowAccessRequirement[]
+): WorkflowConnectionBlocker[] {
+  return accesses.filter(isIntegrationConnectionBlocked).map((access) => ({
+    key: `access:${access.id}`,
+    label: access.providerSlug || access.label,
+    detail: access.statusMessage || access.status,
+    status: access.status === "missing" ? "missing" : "blocked",
+    providerSlug: access.providerSlug,
+    purpose: access.purpose,
+  }));
+}
+
+function createConnectionWarningBlockers(
+  messages: string[],
+  providerHints: string[]
+): WorkflowConnectionBlocker[] {
+  return messages
+    .filter(isConnectionIssueText)
+    .map((message, index) => {
+      const label = message.includes(" returned ")
+        ? message.split(" returned ")[0]?.trim() || "Connection issue"
+        : "Connection issue";
+
+      return {
+        key: `warning:${index}:${message}`,
+        label,
+        detail: message,
+        status: "attention" as const,
+        providerSlug: inferProviderSlugFromText(message, providerHints),
+      };
+    });
+}
+
+function dedupeConnectionBlockers(
+  blockers: WorkflowConnectionBlocker[]
+): WorkflowConnectionBlocker[] {
+  const seen = new Set<string>();
+
+  return blockers.filter((blocker) => {
+    const signature = [
+      blocker.providerSlug || blocker.label,
+      blocker.detail,
+      blocker.status,
+    ].join("::");
+
+    if (seen.has(signature)) {
+      return false;
+    }
+
+    seen.add(signature);
+    return true;
+  });
+}
+
+function formatConnectionBlockersForPrompt(
+  blockers: WorkflowConnectionBlocker[]
+): string[] {
+  return blockers.map((blocker) =>
+    [
+      `- ${blocker.providerSlug || blocker.label}: ${blocker.detail}`,
+      blocker.purpose ? `  Needed for: ${blocker.purpose}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
+function createConnectionsAgentPrompt(
+  artifact: WorkflowStudioArtifact,
+  messages: WorkflowStudioMessage[],
+  blockers: WorkflowConnectionBlocker[]
+): string {
+  const blockerLines = formatConnectionBlockersForPrompt(blockers);
+
+  return [
+    "Help me set up or repair the connections needed for a workflow I am building in GTMShip Workflow Studio.",
+    "",
+    `Workflow: ${artifact.title || artifact.slug}`,
+    `Goal: ${getWorkflowIntentSummary(artifact, messages)}`,
+    "",
+    "The workflow is currently blocked on these connection issues:",
+    ...blockerLines,
+    "",
+    "Please create or repair the required connection(s), verify them if useful, and tell me when I should return to Workflow Studio and click \"Recheck Connections\".",
+  ].join("\n");
+}
+
+function createConnectionRecheckPrompt(
+  artifact: WorkflowStudioArtifact,
+  messages: WorkflowStudioMessage[],
+  blockers: WorkflowConnectionBlocker[]
+): string {
+  const blockerLines = formatConnectionBlockersForPrompt(blockers);
+  const providerSlugs = Array.from(
+    new Set(
+      blockers
+        .map((blocker) => blocker.providerSlug)
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  return [
+    "Recheck the required workflow connections before changing any code.",
+    "",
+    `Workflow: ${artifact.title || artifact.slug}`,
+    `Goal: ${getWorkflowIntentSummary(artifact, messages)}`,
+    providerSlugs.length > 0
+      ? `Providers to recheck: ${providerSlugs.join(", ")}`
+      : "",
+    "",
+    "Please list the active connections first, test the relevant provider connections if they exist, and only continue the workflow after you verify the required access is now ready.",
+    "If the current blocker came from preview or build, rerun the relevant step after the connection check instead of just describing what to do next.",
+    "If any connection is still missing or blocked, stop and tell me exactly what is not ready yet.",
+    "",
+    "Current connection blockers:",
+    ...blockerLines,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function ConnectionBlockerCallout({
+  blockers,
+  connectionsChanged,
+  onUseConnectionsAgent,
+  onRecheckConnections,
+  recheckDisabled,
+  rechecking,
+}: {
+  blockers: WorkflowConnectionBlocker[];
+  connectionsChanged: boolean;
+  onUseConnectionsAgent: () => void;
+  onRecheckConnections: () => void;
+  recheckDisabled: boolean;
+  rechecking: boolean;
+}) {
+  if (blockers.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-900/40 bg-amber-950/20 px-4 py-4 text-xs text-amber-100">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 font-medium text-amber-50">
+            <AlertCircle size={14} className="shrink-0 text-amber-300" />
+            Connections need attention before the workflow can continue
+          </div>
+          <p className="mt-2 text-amber-200/90">
+            {connectionsChanged
+              ? "Connections were updated. Return to the workflow agent and recheck them before you continue."
+              : "Use the Connections Agent to create or repair the missing integration setup, then come back here and recheck."}
+          </p>
+          <div className="mt-3 space-y-1.5">
+            {blockers.slice(0, 4).map((blocker) => (
+              <p key={blocker.key} className="text-amber-200/85">
+                <span className="font-medium text-amber-50">
+                  {blocker.providerSlug || blocker.label}
+                </span>
+                {": "}
+                {blocker.detail}
+              </p>
+            ))}
+            {blockers.length > 4 ? (
+              <p className="text-amber-200/70">
+                +{blockers.length - 4} more connection issue
+                {blockers.length - 4 === 1 ? "" : "s"}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2">
+          <button
+            onClick={onUseConnectionsAgent}
+            className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+          >
+            <Sparkles size={12} />
+            Use Connections Agent
+          </button>
+          <button
+            onClick={onRecheckConnections}
+            disabled={recheckDisabled}
+            className="flex items-center gap-2 rounded-md border border-amber-400/30 px-3 py-2 text-xs font-medium text-amber-50 transition-colors hover:bg-amber-400/10 disabled:opacity-50"
+          >
+            {rechecking ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            Recheck Connections
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function CollapsibleSection(input: {
@@ -556,8 +1094,10 @@ function MarkdownContent({
 
 function ChatMessage({
   message,
+  streamData,
 }: {
   message: WorkflowStudioMessage;
+  streamData?: unknown[];
 }) {
   if (message.role === "user") {
     return (
@@ -629,7 +1169,9 @@ function ChatMessage({
                   args: invocation.args || {},
                   state: invocation.state,
                   result: invocation.result,
+                  toolCallId: invocation.toolCallId,
                 }}
+                streamData={streamData}
               />
             </div>
           );
@@ -654,17 +1196,48 @@ const WorkflowConversationPanel = forwardRef<
   onError,
 }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const compactionRef = useRef<WorkflowTranscriptCompaction | undefined>(
+    getArtifactTranscriptCompaction(artifact)
+  );
+  const compactingRef = useRef(false);
   const [composer, setComposer] = useState("");
 
-  const { messages, append, isLoading } = useChat({
+  const { messages, append, data, isLoading, setMessages, stop } = useChat({
     id: `workflow-studio-${sessionKey}`,
     api: "/api/workflows/agent",
     initialMessages: initialMessages as unknown as UIMessage[],
     maxSteps: 30,
+    experimental_prepareRequestBody({
+      messages: requestMessages,
+      requestBody,
+    }) {
+      const currentArtifactBody =
+        requestBody &&
+        typeof requestBody === "object" &&
+        "currentArtifact" in requestBody
+          ? (
+              requestBody as {
+                currentArtifact?: WorkflowStudioArtifact | null;
+              }
+            ).currentArtifact
+          : undefined;
+
+      return {
+        ...(requestBody || {}),
+        messages: requestMessages,
+        currentArtifact: stripArchivedMessagesFromCompaction(
+          currentArtifactBody ?? null
+        ),
+      };
+    },
     onError(error) {
       onError(error.message);
     },
   });
+
+  useEffect(() => {
+    compactionRef.current = getArtifactTranscriptCompaction(artifact);
+  }, [artifact, sessionKey]);
 
   useEffect(() => {
     onBusyChange(isLoading);
@@ -674,12 +1247,206 @@ const WorkflowConversationPanel = forwardRef<
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [messages, isLoading]);
 
+  const cancelRun = useCallback(() => {
+    if (!isLoading) {
+      return;
+    }
+
+    onError(null);
+    stop();
+  }, [isLoading, onError, stop]);
+
+  useEffect(() => {
+    if (!isLoading) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+
+      event.preventDefault();
+      cancelRun();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [cancelRun, isLoading]);
+
+  const applyCompactedMessages = useCallback(
+    (nextMessages: WorkflowStudioMessage[], sync = false) => {
+      const update = () => {
+        setMessages(nextMessages as unknown as UIMessage[]);
+      };
+
+      if (sync) {
+        flushSync(update);
+        return;
+      }
+
+      update();
+    },
+    [setMessages]
+  );
+
+  const compactTranscriptIfNeeded = useCallback(
+    async (
+      inputMessages: WorkflowStudioMessage[],
+      options?: { additionalText?: string; sync?: boolean }
+    ) => {
+      const additionalText = options?.additionalText?.trim() || "";
+      const pendingTokens = estimateTextTokens(additionalText);
+
+      if (pendingTokens > WORKFLOW_TRANSCRIPT_MAX_PENDING_MESSAGE_TOKENS) {
+        throw createTranscriptTooLargeError(pendingTokens, true);
+      }
+
+      if (compactingRef.current) {
+        return {
+          messages: inputMessages,
+          transcriptCompaction: compactionRef.current,
+          changed: false,
+        };
+      }
+
+      compactingRef.current = true;
+
+      try {
+        let nextMessages = inputMessages;
+        let nextCompaction = compactionRef.current;
+        let changed = false;
+
+        for (let iteration = 0; iteration < 8; iteration += 1) {
+          const plan = buildTranscriptCompactionPlan({
+            messages: nextMessages,
+            compaction: nextCompaction,
+            additionalText,
+          });
+
+          if (!plan) {
+            break;
+          }
+
+          let summary = "";
+          try {
+            const artifactForCompaction =
+              artifact && !isPlaceholderArtifact(artifact)
+                ? stripArchivedMessagesFromCompaction({
+                    ...artifact,
+                    transcriptCompaction: nextCompaction,
+                  })
+                : null;
+            const response = await fetch("/api/workflows/compact", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                previousSummary: plan.existingSummary,
+                messagesToCompact: plan.messagesToArchive,
+                currentArtifact: artifactForCompaction,
+              }),
+            });
+            const result = await parseResponse<{ summary: string }>(response);
+            summary = result.summary?.trim();
+          } catch {
+            summary = buildFallbackTranscriptSummary({
+              previousSummary: plan.existingSummary,
+              messages: plan.messagesToArchive,
+            });
+          }
+
+          if (!summary) {
+            summary = buildFallbackTranscriptSummary({
+              previousSummary: plan.existingSummary,
+              messages: plan.messagesToArchive,
+            });
+          }
+
+          const applied = applyTranscriptCompaction({
+            messages: nextMessages,
+            compaction: nextCompaction,
+            summary,
+            messagesToArchive: plan.messagesToArchive,
+            recentMessages: plan.recentMessages,
+          });
+
+          nextMessages = applied.messages;
+          nextCompaction = applied.transcriptCompaction;
+          changed = true;
+        }
+
+        const finalEstimate = estimateVisibleTranscriptTokens({
+          messages: nextMessages,
+          compaction: nextCompaction,
+          additionalText,
+        });
+
+        if (finalEstimate > WORKFLOW_TRANSCRIPT_HARD_LIMIT_TOKENS) {
+          throw createTranscriptTooLargeError(
+            pendingTokens || finalEstimate,
+            pendingTokens > WORKFLOW_TRANSCRIPT_MAX_PENDING_MESSAGE_TOKENS
+          );
+        }
+
+        if (changed) {
+          compactionRef.current = nextCompaction;
+          applyCompactedMessages(nextMessages, options?.sync);
+        }
+
+        return {
+          messages: nextMessages,
+          transcriptCompaction: nextCompaction,
+          changed,
+        };
+      } finally {
+        compactingRef.current = false;
+      }
+    },
+    [applyCompactedMessages, artifact]
+  );
+
   useEffect(() => {
     const nextMessages = messages as unknown as WorkflowStudioMessage[];
     onTranscriptChange(nextMessages);
-    const state = deriveWorkflowStudioState(nextMessages, artifact);
+    const state = deriveWorkflowStudioState(
+      nextMessages,
+      artifact
+        ? {
+            ...artifact,
+            transcriptCompaction: compactionRef.current,
+          }
+        : artifact
+    );
     onArtifactSync(state.artifact, state.blockedAccesses);
   }, [messages, onArtifactSync, onTranscriptChange]);
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const transcript = messages as unknown as WorkflowStudioMessage[];
+    if (transcript.length === 0) {
+      return;
+    }
+
+    const estimate = estimateVisibleTranscriptTokens({
+      messages: transcript,
+      compaction: compactionRef.current,
+    });
+
+    if (estimate <= WORKFLOW_TRANSCRIPT_TRIGGER_TOKENS) {
+      return;
+    }
+
+    void compactTranscriptIfNeeded(transcript).catch((error) => {
+      onError(
+        error instanceof Error
+          ? error.message
+          : "Workflow transcript compaction failed."
+      );
+    });
+  }, [compactTranscriptIfNeeded, isLoading, messages, onError]);
 
   const sendPrompt = useCallback(
     async (rawContent: string) => {
@@ -689,24 +1456,36 @@ const WorkflowConversationPanel = forwardRef<
       }
 
       onError(null);
+      const currentTranscript = messages as unknown as WorkflowStudioMessage[];
+      await compactTranscriptIfNeeded(currentTranscript, {
+        additionalText: content,
+        sync: true,
+      });
+
       await append(
         { role: "user", content },
         {
           body: {
-            currentArtifact: isPlaceholderArtifact(artifact) ? null : artifact,
+            currentArtifact: isPlaceholderArtifact(artifact)
+              ? null
+              : {
+                  ...artifact,
+                  transcriptCompaction: compactionRef.current,
+                },
           },
         }
       );
     },
-    [append, artifact, onError]
+    [append, artifact, compactTranscriptIfNeeded, messages, onError]
   );
 
   useImperativeHandle(
     ref,
     () => ({
       sendPrompt,
+      cancelRun,
     }),
-    [sendPrompt]
+    [cancelRun, sendPrompt]
   );
 
   async function handleSend(event: FormEvent) {
@@ -760,7 +1539,11 @@ const WorkflowConversationPanel = forwardRef<
         ) : (
           <div className="space-y-4">
             {transcript.map((message) => (
-              <ChatMessage key={message.id} message={message} />
+              <ChatMessage
+                key={message.id}
+                message={message}
+                streamData={data as unknown[] | undefined}
+              />
             ))}
             {isLoading && !hasActiveTool ? (
               <div className="flex gap-3">
@@ -787,6 +1570,12 @@ const WorkflowConversationPanel = forwardRef<
             value={composer}
             onChange={(event) => setComposer(event.target.value)}
             onKeyDown={(event) => {
+              if (event.key === "Escape" && isLoading) {
+                event.preventDefault();
+                cancelRun();
+                return;
+              }
+
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
                 void handleSend(event);
@@ -803,19 +1592,32 @@ const WorkflowConversationPanel = forwardRef<
                 ? "\u2318"
                 : "Ctrl"}
               +Enter to send
+              {isLoading ? " • Esc to cancel" : ""}
             </p>
-            <button
-              type="submit"
-              disabled={isLoading || !composer.trim()}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-            >
+            <div className="flex items-center gap-2">
               {isLoading ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Sparkles size={12} />
-              )}
-              Send
-            </button>
+                <button
+                  type="button"
+                  onClick={cancelRun}
+                  className="flex items-center gap-2 rounded-lg border border-rose-500/40 px-4 py-2 text-xs font-medium text-rose-200 transition-colors hover:bg-rose-500/10"
+                >
+                  <X size={12} />
+                  Cancel
+                </button>
+              ) : null}
+              <button
+                type="submit"
+                disabled={isLoading || !composer.trim()}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Sparkles size={12} />
+                )}
+                Send
+              </button>
+            </div>
           </div>
         </div>
       </form>
@@ -836,6 +1638,7 @@ export function WorkflowStudio() {
   const [previewing, setPreviewing] = useState(false);
   const [building, setBuilding] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  const [deletingWorkflow, setDeletingWorkflow] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [liveDeploymentOverview, setLiveDeploymentOverview] =
@@ -860,6 +1663,8 @@ export function WorkflowStudio() {
   const [blockedAccesses, setBlockedAccesses] = useState<
     WorkflowAccessRequirement[]
   >([]);
+  const [connectionsChangedSinceBlocker, setConnectionsChangedSinceBlocker] =
+    useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [editorSessionKey, setEditorSessionKey] = useState(() =>
     `workflow-studio-${Date.now()}`
@@ -871,10 +1676,49 @@ export function WorkflowStudio() {
   const manualPreviewRef = useRef<WorkflowPreviewResult | null>(null);
   const manualValidationRef = useRef<WorkflowValidationReport | null>(null);
   const manualBuildRef = useRef<WorkflowBuildResult | null>(null);
+  const approvalDraftSignatureRef = useRef<string | null>(null);
   const deploymentDefaults = listing?.deploymentDefaults;
 
   const showEditor = artifact !== null;
   const currentArtifact = artifact || emptyArtifact(deploymentDefaults);
+  const previewPendingApproval = currentArtifact.preview?.pendingApproval;
+  const buildPendingApproval = currentArtifact.build?.preview?.pendingApproval;
+  const previewCheckpointProgress = useMemo(
+    () =>
+      buildCheckpointProgress(
+        currentArtifact.writeCheckpoints,
+        approvedCheckpoints,
+        previewPendingApproval
+      ),
+    [
+      approvedCheckpoints,
+      currentArtifact.writeCheckpoints,
+      previewPendingApproval,
+    ]
+  );
+  const buildCheckpointApprovalProgress = useMemo(
+    () =>
+      buildCheckpointProgress(
+        currentArtifact.writeCheckpoints,
+        approvedCheckpoints,
+        buildPendingApproval
+      ),
+    [approvedCheckpoints, buildPendingApproval, currentArtifact.writeCheckpoints]
+  );
+  const previewRemainingCheckpointIds = useMemo(
+    () =>
+      previewCheckpointProgress
+        .filter((checkpoint) => checkpoint.status !== "approved")
+        .map((checkpoint) => checkpoint.id),
+    [previewCheckpointProgress]
+  );
+  const buildRemainingCheckpointIds = useMemo(
+    () =>
+      buildCheckpointApprovalProgress
+        .filter((checkpoint) => checkpoint.status !== "approved")
+        .map((checkpoint) => checkpoint.id),
+    [buildCheckpointApprovalProgress]
+  );
   const effectiveDeployTarget = resolveWorkflowDeployTarget({
     workflowDeploy: currentArtifact.deploy,
     cloudSettings,
@@ -888,6 +1732,8 @@ export function WorkflowStudio() {
   const deployErrorMessage = deploymentRun?.error || "";
   const deployOutput = deploymentRun?.output || "";
   const deployResult = deploymentRun?.status === "success" ? deploymentRun : null;
+  const hasSavedDeploymentRecord = deploymentRun?.status === "success";
+  const hasLiveDeploymentRecord = liveDeploymentOverview !== null;
   const deploymentPlan = buildWorkflowPlanFromArtifact(
     currentArtifact,
     effectiveDeployTarget
@@ -920,6 +1766,7 @@ export function WorkflowStudio() {
     building ||
     saving ||
     deploying ||
+    deletingWorkflow ||
     agentBusy ||
     missingGcpProject;
   const fixWithAiDisabled =
@@ -930,6 +1777,26 @@ export function WorkflowStudio() {
     previewing ||
     building ||
     deploying ||
+    deletingWorkflow ||
+    agentBusy;
+  const recheckConnectionsDisabled =
+    loadingWorkflow ||
+    saving ||
+    validating ||
+    previewing ||
+    building ||
+    deploying ||
+    deletingWorkflow ||
+    agentBusy;
+  const deleteWorkflowDisabled =
+    !selectedSlug ||
+    loadingWorkflow ||
+    saving ||
+    validating ||
+    previewing ||
+    building ||
+    deploying ||
+    deletingWorkflow ||
     agentBusy;
   const bindingProviderSlugs = useMemo(() => {
     const providers = new Set<string>();
@@ -950,6 +1817,62 @@ export function WorkflowStudio() {
         : currentArtifact.requiredAccesses || [],
     [blockedAccesses, currentArtifact.requiredAccesses]
   );
+  const accessConnectionBlockers = useMemo(
+    () => createConnectionAccessBlockers(visibleAccesses),
+    [visibleAccesses]
+  );
+  const connectionIssueMessages = useMemo(() => {
+    const nextMessages = new Set<string>();
+
+    for (const value of currentArtifact.preview?.warnings || []) {
+      if (isConnectionIssueText(value)) {
+        nextMessages.add(value);
+      }
+    }
+
+    if (isConnectionIssueText(currentArtifact.preview?.error)) {
+      nextMessages.add(currentArtifact.preview.error);
+    }
+
+    for (const value of currentArtifact.build?.preview?.warnings || []) {
+      if (isConnectionIssueText(value)) {
+        nextMessages.add(value);
+      }
+    }
+
+    if (isConnectionIssueText(currentArtifact.build?.preview?.error)) {
+      nextMessages.add(currentArtifact.build.preview.error);
+    }
+
+    if (isConnectionIssueText(currentArtifact.build?.error)) {
+      nextMessages.add(currentArtifact.build.error);
+    }
+
+    return Array.from(nextMessages);
+  }, [
+    currentArtifact.build?.error,
+    currentArtifact.build?.preview?.error,
+    currentArtifact.build?.preview?.warnings,
+    currentArtifact.preview?.error,
+    currentArtifact.preview?.warnings,
+  ]);
+  const connectionWarningBlockers = useMemo(
+    () =>
+      createConnectionWarningBlockers(
+        connectionIssueMessages,
+        bindingProviderSlugs
+      ),
+    [bindingProviderSlugs, connectionIssueMessages]
+  );
+  const connectionBlockers = useMemo(
+    () =>
+      dedupeConnectionBlockers([
+        ...accessConnectionBlockers,
+        ...connectionWarningBlockers,
+      ]),
+    [accessConnectionBlockers, connectionWarningBlockers]
+  );
+  const hasConnectionBlockers = connectionBlockers.length > 0;
 
   function resetLiveDeploymentState() {
     setLiveDeploymentOverview(null);
@@ -971,7 +1894,9 @@ export function WorkflowStudio() {
     setLiveDeploymentError("");
     try {
       const fetchDeployments = async () => {
-        const deployments = await api.getWorkflowDeployments({
+        const deployments = await api.getWorkflowDeploymentsForWorkflow({
+          workflowId: selectedWorkflowId || undefined,
+          workflowSlug: selectedSlug || undefined,
           provider: "gcp",
           includeLive: true,
           executionLimit: 5,
@@ -990,27 +1915,14 @@ export function WorkflowStudio() {
         matches = await fetchDeployments();
       }
 
-      const normalizedProject = effectiveGcpProject.trim();
       const bestMatch =
-        matches.find((deployment) => {
-          if (
-            deployment.workflowId !== selectedWorkflowId &&
-            deployment.workflowId !== selectedSlug
-          ) {
-            return false;
-          }
-          if (deployment.region && deployment.region !== effectiveRegion) {
-            return false;
-          }
-          if (
-            normalizedProject &&
-            deployment.gcpProject &&
-            deployment.gcpProject !== normalizedProject
-          ) {
-            return false;
-          }
-          return deployment.provider === "gcp";
-        }) || matches[0] || null;
+        getScopedWorkflowDeployments(matches, {
+          provider: "gcp",
+          workflowId: selectedWorkflowId,
+          workflowSlug: selectedSlug,
+          region: effectiveRegion,
+          gcpProject: effectiveGcpProject,
+        })[0] || null;
 
       setLiveDeploymentOverview(bestMatch);
     } catch (liveError) {
@@ -1050,6 +1962,69 @@ export function WorkflowStudio() {
     },
     []
   );
+
+  const cancelAgentRun = useCallback(() => {
+    conversationRef.current?.cancelRun();
+  }, []);
+
+  const openConnectionsAgent = useCallback(() => {
+    const initialMessage = createConnectionsAgentPrompt(
+      currentArtifact,
+      messages,
+      connectionBlockers
+    );
+
+    window.dispatchEvent(
+      new CustomEvent("open-agent", { detail: { initialMessage } })
+    );
+  }, [connectionBlockers, currentArtifact, messages]);
+
+  const recheckConnections = useCallback(async () => {
+    if (connectionBlockers.length === 0) {
+      return;
+    }
+
+    setConnectionsChangedSinceBlocker(false);
+    await sendIssueToChat(
+      createConnectionRecheckPrompt(currentArtifact, messages, connectionBlockers)
+    );
+  }, [connectionBlockers, currentArtifact, messages, sendIssueToChat]);
+
+  useEffect(() => {
+    if (!hasConnectionBlockers) {
+      setConnectionsChangedSinceBlocker(false);
+      return;
+    }
+
+    const handleConnectionsChanged = () => {
+      setConnectionsChangedSinceBlocker(true);
+    };
+
+    window.addEventListener("connections-changed", handleConnectionsChanged);
+    return () =>
+      window.removeEventListener("connections-changed", handleConnectionsChanged);
+  }, [hasConnectionBlockers]);
+
+  useEffect(() => {
+    setConnectionsChangedSinceBlocker(false);
+  }, [selectedSlug]);
+
+  useEffect(() => {
+    if (!artifact) {
+      approvalDraftSignatureRef.current = null;
+      return;
+    }
+
+    const nextSignature = `${artifact.slug}:${artifact.code}`;
+    if (
+      approvalDraftSignatureRef.current &&
+      approvalDraftSignatureRef.current !== nextSignature &&
+      approvedCheckpoints.length > 0
+    ) {
+      setApprovedCheckpoints([]);
+    }
+    approvalDraftSignatureRef.current = nextSignature;
+  }, [approvedCheckpoints.length, artifact?.code, artifact?.slug]);
 
   async function loadListing() {
     setLoadingList(true);
@@ -1159,6 +2134,45 @@ export function WorkflowStudio() {
     setEditingTitle(false);
     setAgentBusy(false);
     setError(null);
+  }
+
+  async function deleteWorkflow() {
+    if (!selectedSlug) {
+      return;
+    }
+
+    const workflowTitle = currentArtifact.title || selectedSlug;
+    const confirmed = window.confirm(
+      `Delete "${workflowTitle}"? This removes the workflow file, studio metadata, and any unsaved edits from this project.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const removeDeployment =
+      hasSavedDeploymentRecord || hasLiveDeploymentRecord
+        ? window.confirm(
+            `"${workflowTitle}" has deployment history. Click OK to also remove GTMShip deployment records and run history. Click Cancel to keep deployment records and delete only the local workflow. Cloud resources will not be undeployed.`
+          )
+        : false;
+
+    setDeletingWorkflow(true);
+    setError(null);
+    try {
+      await api.deleteWorkflow(selectedSlug, {
+        removeDeployment,
+      });
+      goBackToList();
+      await loadListing();
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete workflow."
+      );
+    } finally {
+      setDeletingWorkflow(false);
+    }
   }
 
   function updateArtifact(
@@ -1291,6 +2305,9 @@ export function WorkflowStudio() {
               nextArtifact.deploymentRun || current?.deploymentRun,
             triggerConfig: nextArtifact.triggerConfig || current?.triggerConfig,
             bindings: nextArtifact.bindings || current?.bindings,
+            transcriptCompaction:
+              nextArtifact.transcriptCompaction ||
+              current?.transcriptCompaction,
           };
           if (manualBuildRef.current) {
             merged = { ...merged, build: manualBuildRef.current };
@@ -1884,10 +2901,25 @@ export function WorkflowStudio() {
                   agent running
                 </span>
               ) : null}
+              {agentBusy ? (
+                <button
+                  onClick={cancelAgentRun}
+                  className="flex items-center gap-2 rounded-lg border border-rose-500/40 px-3 py-2 text-xs text-rose-200 transition-colors hover:bg-rose-500/10"
+                  title="Stop the current workflow agent run (Esc)"
+                >
+                  <X size={12} />
+                  Cancel
+                </button>
+              ) : null}
               <button
                 onClick={() => void runValidation()}
                 disabled={
-                  !artifact || validating || building || deploying || agentBusy
+                  !artifact ||
+                  validating ||
+                  building ||
+                  deploying ||
+                  deletingWorkflow ||
+                  agentBusy
                 }
                 className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
               >
@@ -1901,7 +2933,12 @@ export function WorkflowStudio() {
               <button
                 onClick={() => void runPreview()}
                 disabled={
-                  !artifact || previewing || building || deploying || agentBusy
+                  !artifact ||
+                  previewing ||
+                  building ||
+                  deploying ||
+                  deletingWorkflow ||
+                  agentBusy
                 }
                 className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
               >
@@ -1921,6 +2958,7 @@ export function WorkflowStudio() {
                   building ||
                   saving ||
                   deploying ||
+                  deletingWorkflow ||
                   agentBusy
                 }
                 className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
@@ -1952,7 +2990,14 @@ export function WorkflowStudio() {
               </button>
               <button
                 onClick={() => void saveWorkflow()}
-                disabled={!artifact || saving || building || deploying || agentBusy}
+                disabled={
+                  !artifact ||
+                  saving ||
+                  building ||
+                  deploying ||
+                  deletingWorkflow ||
+                  agentBusy
+                }
                 className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
               >
                 {saving ? (
@@ -1962,6 +3007,20 @@ export function WorkflowStudio() {
                 )}
                 Save
               </button>
+              {selectedSlug ? (
+                <button
+                  onClick={() => void deleteWorkflow()}
+                  disabled={deleteWorkflowDisabled}
+                  className="flex items-center gap-2 rounded-lg border border-rose-500/40 px-3 py-2 text-xs font-medium text-rose-200 transition-colors hover:bg-rose-500/10 disabled:opacity-50"
+                >
+                  {deletingWorkflow ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={12} />
+                  )}
+                  {deletingWorkflow ? "Deleting..." : "Delete"}
+                </button>
+              ) : null}
             </div>
           </header>
 
@@ -2049,6 +3108,20 @@ export function WorkflowStudio() {
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
                         Required Access
                       </h4>
+                      {hasConnectionBlockers ? (
+                        <div className="mt-3">
+                          <ConnectionBlockerCallout
+                            blockers={connectionBlockers}
+                            connectionsChanged={connectionsChangedSinceBlocker}
+                            onUseConnectionsAgent={openConnectionsAgent}
+                            onRecheckConnections={() => {
+                              void recheckConnections();
+                            }}
+                            recheckDisabled={recheckConnectionsDisabled}
+                            rechecking={agentBusy}
+                          />
+                        </div>
+                      ) : null}
                       {visibleAccesses.length === 0 ? (
                         <p className="mt-3 text-xs text-zinc-600">
                           Access requirements will appear after generation.
@@ -2333,10 +3406,13 @@ export function WorkflowStudio() {
                                             {(execution.status || "unknown").toUpperCase()}
                                           </span>
                                           <a
-                                            href={buildLogsHref(
-                                              liveDeploymentOverview.id,
-                                              execution.executionName || undefined
-                                            )}
+                                            href={buildDeploymentLogsHref({
+                                              deploymentId: liveDeploymentOverview.id,
+                                              workflowId: selectedWorkflowId,
+                                              workflowSlug: selectedSlug,
+                                              executionName:
+                                                execution.executionName || undefined,
+                                            })}
                                             className="text-[11px] text-blue-300 hover:text-blue-200"
                                           >
                                             Logs
@@ -2959,7 +4035,12 @@ export function WorkflowStudio() {
                         </div>
                         <button
                           onClick={() => void runValidation()}
-                          disabled={validating || building || agentBusy}
+                          disabled={
+                            validating ||
+                            building ||
+                            deletingWorkflow ||
+                            agentBusy
+                          }
                           className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
                         >
                           {validating ? (
@@ -3057,7 +4138,12 @@ export function WorkflowStudio() {
                         </div>
                         <button
                           onClick={() => void runPreview()}
-                          disabled={previewing || building || agentBusy}
+                          disabled={
+                            previewing ||
+                            building ||
+                            deletingWorkflow ||
+                            agentBusy
+                          }
                           className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
                         >
                           {previewing ? (
@@ -3095,46 +4181,41 @@ export function WorkflowStudio() {
                                 : currentArtifact.preview.status ===
                                     "needs_approval"
                                   ? "Approval required"
-                                  : "Preview failed"}
+                              : "Preview failed"}
                             </p>
                           </div>
 
-                          {currentArtifact.preview.pendingApproval ? (
-                            <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
-                              <p className="font-medium">
-                                {
-                                  currentArtifact.preview.pendingApproval
-                                    .checkpoint
-                                }
-                              </p>
-                              <p className="mt-1">
-                                {currentArtifact.preview.pendingApproval
-                                  .description ||
-                                  "This step wants to perform an external write."}
-                              </p>
-                              <p className="mt-1 text-amber-200/80">
-                                {currentArtifact.preview.pendingApproval.method}{" "}
-                                &middot;{" "}
-                                {currentArtifact.preview.pendingApproval.target}
-                              </p>
-                              <button
-                                onClick={() =>
-                                  void runPreview([
-                                    currentArtifact.preview?.pendingApproval
-                                      ?.checkpoint || "",
-                                  ])
-                                }
-                                disabled={previewing || building}
-                                className="mt-3 flex items-center gap-2 rounded-md bg-amber-400 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
-                              >
-                                {previewing ? (
-                                  <Loader2 size={12} className="animate-spin" />
-                                ) : null}
-                                {previewing
-                                  ? "Running..."
-                                  : "Approve And Continue"}
-                              </button>
+                          {hasConnectionBlockers ? (
+                            <div className="mt-4">
+                              <ConnectionBlockerCallout
+                                blockers={connectionBlockers}
+                                connectionsChanged={connectionsChangedSinceBlocker}
+                                onUseConnectionsAgent={openConnectionsAgent}
+                                onRecheckConnections={() => {
+                                  void recheckConnections();
+                                }}
+                                recheckDisabled={recheckConnectionsDisabled}
+                                rechecking={agentBusy}
+                              />
                             </div>
+                          ) : null}
+
+                          {previewPendingApproval ? (
+                            <CheckpointApprovalCallout
+                              title="Preview is waiting for write approval"
+                              pendingApproval={previewPendingApproval}
+                              progress={previewCheckpointProgress}
+                              running={previewing}
+                              disabled={previewing || building}
+                              primaryLabel="Approve Next And Continue"
+                              runningLabel="Running..."
+                              onApproveNext={() => {
+                                void runPreview([previewPendingApproval.checkpoint]);
+                              }}
+                              onApproveAllRemaining={() => {
+                                void runPreview(previewRemainingCheckpointIds);
+                              }}
+                            />
                           ) : null}
 
                           {currentArtifact.preview.warnings?.length ? (
@@ -3166,6 +4247,63 @@ export function WorkflowStudio() {
                               )}
                             </pre>
                           ) : null}
+
+                          <div className="mt-5">
+                            <div className="flex items-center justify-between gap-3">
+                              <h5 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                                Execution Logs
+                              </h5>
+                              <button
+                                onClick={() =>
+                                  void sendIssueToChat(
+                                    createPreviewFixPrompt(
+                                      currentArtifact,
+                                      currentArtifact.preview!
+                                    )
+                                  )
+                                }
+                                disabled={fixWithAiDisabled}
+                                className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1 text-[11px] font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+                              >
+                                Send To AI
+                              </button>
+                            </div>
+                            <div className="mt-2 max-h-80 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950">
+                              {currentArtifact.preview.logs?.length ? (
+                                <div className="divide-y divide-zinc-900">
+                                  {currentArtifact.preview.logs.map((entry) => (
+                                    <div
+                                      key={entry.id}
+                                      className="px-3 py-3 text-xs"
+                                    >
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span
+                                          className={cn(
+                                            "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                            getPreviewLogLevelClassName(
+                                              entry.level
+                                            )
+                                          )}
+                                        >
+                                          {entry.level}
+                                        </span>
+                                        <span className="text-[11px] text-zinc-500">
+                                          {formatDateTime(entry.timestamp)}
+                                        </span>
+                                      </div>
+                                      <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-zinc-200">
+                                        {entry.message}
+                                      </pre>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="px-3 py-3 text-xs text-zinc-600">
+                                  No console output captured yet.
+                                </p>
+                              )}
+                            </div>
+                          </div>
 
                           <div className="mt-5">
                             <h5 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
@@ -3279,6 +4417,7 @@ export function WorkflowStudio() {
                               previewing ||
                               validating ||
                               deploying ||
+                              deletingWorkflow ||
                               agentBusy
                             }
                             className="flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
@@ -3313,6 +4452,21 @@ export function WorkflowStudio() {
                                 : "Build failed"}
                             </p>
                           </div>
+
+                          {hasConnectionBlockers ? (
+                            <div className="mt-4">
+                              <ConnectionBlockerCallout
+                                blockers={connectionBlockers}
+                                connectionsChanged={connectionsChangedSinceBlocker}
+                                onUseConnectionsAgent={openConnectionsAgent}
+                                onRecheckConnections={() => {
+                                  void recheckConnections();
+                                }}
+                                recheckDisabled={recheckConnectionsDisabled}
+                                rechecking={agentBusy}
+                              />
+                            </div>
+                          ) : null}
 
                           <div className="mt-4 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
                             <p>
@@ -3361,37 +4515,22 @@ export function WorkflowStudio() {
                             </div>
                           ) : null}
 
-                          {currentArtifact.build.preview?.pendingApproval ? (
-                            <div className="mt-4 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-3 text-xs text-amber-100">
-                              <p className="font-medium">
-                                Build reached checkpoint{" "}
-                                {
-                                  currentArtifact.build.preview.pendingApproval
-                                    .checkpoint
-                                }
-                              </p>
-                              <p className="mt-1">
-                                Approve the write step and rerun build if you
-                                want preview to continue past the checkpoint.
-                              </p>
-                              <button
-                                onClick={() =>
-                                  void runBuild([
-                                    currentArtifact.build?.preview
-                                      ?.pendingApproval?.checkpoint || "",
-                                  ])
-                                }
-                                disabled={building}
-                                className="mt-3 flex items-center gap-2 rounded-md bg-amber-400 px-3 py-2 text-xs font-medium text-zinc-950 disabled:opacity-50"
-                              >
-                                {building ? (
-                                  <Loader2 size={12} className="animate-spin" />
-                                ) : null}
-                                {building
-                                  ? "Running..."
-                                  : "Approve And Build Again"}
-                              </button>
-                            </div>
+                          {buildPendingApproval ? (
+                            <CheckpointApprovalCallout
+                              title="Build preview is waiting for write approval"
+                              pendingApproval={buildPendingApproval}
+                              progress={buildCheckpointApprovalProgress}
+                              running={building}
+                              disabled={building || deletingWorkflow}
+                              primaryLabel="Approve Next And Build Again"
+                              runningLabel="Running..."
+                              onApproveNext={() => {
+                                void runBuild([buildPendingApproval.checkpoint]);
+                              }}
+                              onApproveAllRemaining={() => {
+                                void runBuild(buildRemainingCheckpointIds);
+                              }}
+                            />
                           ) : null}
 
                           <div className="mt-5">

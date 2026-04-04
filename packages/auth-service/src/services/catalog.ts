@@ -1,6 +1,25 @@
 // Integration catalog powered by Activepieces (MIT license)
 // Extracts auth config, display info, and categories from piece packages
 
+export interface CatalogActionProp {
+  type: string;
+  required: boolean;
+  displayName: string;
+  description?: string;
+}
+
+export interface CatalogAction {
+  name: string;
+  displayName: string;
+  description: string;
+  props: Record<string, CatalogActionProp>;
+}
+
+export interface CatalogApiSchema {
+  customApiBaseUrl?: string;
+  actions: CatalogAction[];
+}
+
 export interface CatalogProvider {
   slug: string;
   name: string;
@@ -15,6 +34,22 @@ export interface CatalogProvider {
   headerName?: string;
   docsUrl?: string;
   oauthProviderKey?: string;
+  apiSchema?: CatalogApiSchema | null;
+}
+
+interface ActivepiecesAction {
+  name: string;
+  displayName: string;
+  description?: string;
+  props: Record<
+    string,
+    {
+      type: string;
+      required?: boolean;
+      displayName?: string;
+      description?: string;
+    }
+  >;
 }
 
 interface ActivepiecesDef {
@@ -22,6 +57,7 @@ interface ActivepiecesDef {
   description?: string;
   logoUrl?: string;
   categories?: string[];
+  actions?: (() => Record<string, ActivepiecesAction>) | Record<string, ActivepiecesAction>;
   auth?:
     | { type?: string; authUrl?: string; tokenUrl?: string; scope?: string[] }
     | Array<{ type?: string; authUrl?: string; tokenUrl?: string; scope?: string[] }>;
@@ -115,6 +151,53 @@ export async function getCatalog(): Promise<CatalogProvider[]> {
   return _catalog;
 }
 
+function extractApiSchema(
+  piece: ActivepiecesDef,
+  baseUrl: string
+): CatalogApiSchema | null {
+  try {
+    const rawActions =
+      typeof piece.actions === "function" ? piece.actions() : piece.actions;
+    if (!rawActions) return null;
+
+    const actions: CatalogAction[] = [];
+    let customApiBaseUrl: string | undefined;
+
+    for (const action of Object.values(rawActions)) {
+      if (!action.name) continue;
+
+      const props: Record<string, CatalogActionProp> = {};
+      if (action.props) {
+        for (const [key, prop] of Object.entries(action.props)) {
+          props[key] = {
+            type: prop.type || "UNKNOWN",
+            required: prop.required ?? false,
+            displayName: prop.displayName || key,
+            ...(prop.description ? { description: prop.description } : {}),
+          };
+        }
+      }
+
+      actions.push({
+        name: action.name,
+        displayName: action.displayName || action.name,
+        description: action.description || "",
+        props,
+      });
+
+      if (action.name === "custom_api_call") {
+        customApiBaseUrl = baseUrl;
+      }
+    }
+
+    if (actions.length === 0) return null;
+
+    return { customApiBaseUrl, actions };
+  } catch {
+    return null;
+  }
+}
+
 async function loadCatalog(): Promise<CatalogProvider[]> {
   const catalog: CatalogProvider[] = [];
 
@@ -125,6 +208,7 @@ async function loadCatalog(): Promise<CatalogProvider[]> {
       if (!piece) continue;
 
       const auth = extractAuth(piece.auth);
+      const apiSchema = extractApiSchema(piece, entry.baseUrl);
       catalog.push({
         slug: entry.slug,
         name: piece.displayName || entry.slug,
@@ -139,6 +223,7 @@ async function loadCatalog(): Promise<CatalogProvider[]> {
         headerName: entry.headerName,
         docsUrl: entry.docsUrl,
         oauthProviderKey: entry.oauthProviderKey,
+        apiSchema,
       });
     } catch {
       // Skip pieces that fail to load
@@ -169,4 +254,70 @@ export async function getCatalogCategories(): Promise<string[]> {
   const all = await getCatalog();
   const cats = new Set(all.map((p) => p.category));
   return ["All", ...Array.from(cats).sort()];
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic piece loader: resolves any installed @activepieces/piece-* package
+// by provider slug, without requiring a PIECE_REGISTRY entry.
+// ---------------------------------------------------------------------------
+
+const _pieceSchemaCache = new Map<string, CatalogApiSchema | null>();
+
+function findPieceExport(
+  mod: Record<string, unknown>
+): ActivepiecesDef | null {
+  for (const val of Object.values(mod)) {
+    if (
+      val &&
+      typeof val === "object" &&
+      "actions" in val &&
+      typeof (val as ActivepiecesDef).actions === "function" &&
+      "displayName" in val
+    ) {
+      return val as ActivepiecesDef;
+    }
+  }
+  return null;
+}
+
+/**
+ * Attempt to load an Activepieces piece by provider slug and extract its
+ * API schema. Works for any installed `@activepieces/piece-{slug}` package
+ * regardless of whether it appears in PIECE_REGISTRY.
+ *
+ * Results are cached so repeated calls for the same slug are free.
+ */
+export async function getApiSchemaForSlug(
+  slug: string,
+  baseUrl?: string
+): Promise<CatalogApiSchema | null> {
+  if (_pieceSchemaCache.has(slug)) {
+    return _pieceSchemaCache.get(slug)!;
+  }
+
+  // Check the catalog first (pieces already loaded via PIECE_REGISTRY)
+  const catalogEntry = await getCatalogProvider(slug);
+  if (catalogEntry?.apiSchema) {
+    _pieceSchemaCache.set(slug, catalogEntry.apiSchema);
+    return catalogEntry.apiSchema;
+  }
+
+  // Try dynamic import of @activepieces/piece-{slug}
+  const pkgName = `@activepieces/piece-${slug}`;
+  try {
+    const mod = await import(pkgName);
+    const piece = findPieceExport(mod);
+    if (!piece) {
+      _pieceSchemaCache.set(slug, null);
+      return null;
+    }
+
+    const schema = extractApiSchema(piece, baseUrl || "");
+    _pieceSchemaCache.set(slug, schema);
+    return schema;
+  } catch {
+    // Package not installed — that's fine
+    _pieceSchemaCache.set(slug, null);
+    return null;
+  }
 }

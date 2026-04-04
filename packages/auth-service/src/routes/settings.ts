@@ -1,6 +1,14 @@
 import { Router } from "express";
 import { prisma } from "../services/db.js";
 import { encrypt, decrypt } from "../services/crypto.js";
+import {
+  getConnectionAuthStrategyStatus,
+  normalizeConnectionAuthMode,
+  setConnectionAuthMode,
+  syncAllActiveConnectionsToSecretManagers,
+  validateSecretManagerReadiness,
+} from "../services/auth-strategy.js";
+import { enforceAuthModeOnExistingDeployments } from "../services/workflow-deployment-auth.js";
 
 export const settingsRoutes: Router = Router();
 
@@ -16,6 +24,57 @@ settingsRoutes.get("/", async (_req, res) => {
       : s.value,
   }));
   res.json(safe);
+});
+
+settingsRoutes.get("/auth-strategy", async (_req, res) => {
+  const status = await getConnectionAuthStrategyStatus();
+  res.json(status);
+});
+
+settingsRoutes.put("/auth-strategy", async (req, res) => {
+  if (req.body?.mode !== "proxy" && req.body?.mode !== "secret_manager") {
+    res.status(400).json({
+      error: "mode must be either \"proxy\" or \"secret_manager\".",
+    });
+    return;
+  }
+
+  const mode = normalizeConnectionAuthMode(req.body.mode);
+
+  try {
+    if (mode === "secret_manager") {
+      await validateSecretManagerReadiness();
+    }
+
+    await setConnectionAuthMode(mode);
+
+    const connectionBackfill =
+      mode === "secret_manager"
+        ? await syncAllActiveConnectionsToSecretManagers()
+        : {
+            activeConnections: 0,
+            syncedReplicas: 0,
+            errorReplicas: 0,
+          };
+    const deploymentBackfill = await enforceAuthModeOnExistingDeployments(mode);
+    const strategy = await getConnectionAuthStrategyStatus();
+
+    res.json({
+      ...strategy,
+      updated: true,
+      backfill: {
+        connections: connectionBackfill,
+        deployments: deploymentBackfill,
+      },
+    });
+  } catch (error) {
+    res.status(400).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to update connection auth strategy.",
+    });
+  }
 });
 
 // Get a specific setting

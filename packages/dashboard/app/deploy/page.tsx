@@ -12,12 +12,14 @@ import {
 import Link from "next/link";
 import { api } from "@/lib/api";
 import {
-  type GcpComputeType,
   type DashboardDeployInfraKey,
   type DashboardDeploySuccess,
+  type GcpComputeType,
   type WorkflowDeploymentOverview,
   type WorkflowExecutionHistoryEntry,
+  buildDeploymentLogsHref,
   getDeploymentInfra,
+  getScopedWorkflowDeployments,
   isDashboardDeploySuccess,
   loadCloudDeploySettings,
 } from "@/lib/deploy";
@@ -81,17 +83,6 @@ function formatDateTime(value?: string | null): string {
   return date.toLocaleString();
 }
 
-function buildLogsHref(deploymentId: string, executionName?: string | null): string {
-  const params = new URLSearchParams({
-    provider: "gcp",
-    deploymentId,
-  });
-  if (executionName) {
-    params.set("executionName", executionName);
-  }
-  return `/deploy/logs?${params.toString()}`;
-}
-
 export default function DeployPage() {
   const [provider, setProvider] = useState<WorkflowDeployProvider>("aws");
   const [region, setRegion] = useState("us-east-1");
@@ -141,30 +132,13 @@ export default function DeployPage() {
       return [];
     }
 
-    const normalizedProject = gcpProject.trim();
-    return deploymentOverviews
-      .filter((entry) => {
-        if (entry.provider !== "gcp") {
-          return false;
-        }
-        if (
-          selectedWorkflowId &&
-          entry.workflowId !== selectedWorkflowId &&
-          entry.workflowId !== selectedWorkflow
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .sort((left, right) => {
-        const leftScore =
-          (left.region === region ? 1 : 0) +
-          (normalizedProject && left.gcpProject === normalizedProject ? 1 : 0);
-        const rightScore =
-          (right.region === region ? 1 : 0) +
-          (normalizedProject && right.gcpProject === normalizedProject ? 1 : 0);
-        return rightScore - leftScore;
-      });
+    return getScopedWorkflowDeployments(deploymentOverviews, {
+      provider: "gcp",
+      workflowId: selectedWorkflowId,
+      workflowSlug: selectedWorkflow,
+      region,
+      gcpProject,
+    });
   }, [
     deploymentOverviews,
     gcpProject,
@@ -266,7 +240,9 @@ export default function DeployPage() {
     setDeploymentOverviewError("");
     try {
       const fetchOverviews = async () => {
-        const overviews = await api.getWorkflowDeployments({
+        const overviews = await api.getWorkflowDeploymentsForWorkflow({
+          workflowId: selectedWorkflowId || undefined,
+          workflowSlug: selectedWorkflow || undefined,
           provider: "gcp",
           includeLive: true,
           executionLimit: 5,
@@ -296,7 +272,7 @@ export default function DeployPage() {
     } finally {
       setDeploymentOverviewLoading(false);
     }
-  }, [gcpProject, provider, region, selectedWorkflow]);
+  }, [gcpProject, provider, region, selectedWorkflow, selectedWorkflowId]);
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -630,10 +606,13 @@ export default function DeployPage() {
                               {(execution.status || "unknown").toUpperCase()}
                             </span>
                             <Link
-                              href={buildLogsHref(
-                                deployment.id,
-                                execution.executionName || undefined
-                              )}
+                              href={buildDeploymentLogsHref({
+                                deploymentId: deployment.id,
+                                workflowId: deployment.workflowId,
+                                workflowSlug: selectedWorkflow || undefined,
+                                executionName:
+                                  execution.executionName || undefined,
+                              })}
                               className="text-[11px] text-blue-300 hover:text-blue-200"
                             >
                               Logs
@@ -771,11 +750,14 @@ export default function DeployPage() {
         <Link
           href={
             provider === "gcp" && primaryDeploymentOverview
-              ? buildLogsHref(
-                  primaryDeploymentOverview.id,
-                  primaryDeploymentOverview.recentExecutions?.[0]
-                    ?.executionName || undefined
-                )
+              ? buildDeploymentLogsHref({
+                  deploymentId: primaryDeploymentOverview.id,
+                  workflowId: primaryDeploymentOverview.workflowId,
+                  workflowSlug: selectedWorkflow || undefined,
+                  executionName:
+                    primaryDeploymentOverview.recentExecutions?.[0]
+                      ?.executionName || undefined,
+                })
               : "/deploy/logs"
           }
           className="flex items-center gap-2 text-sm text-zinc-400 transition-colors hover:text-white"

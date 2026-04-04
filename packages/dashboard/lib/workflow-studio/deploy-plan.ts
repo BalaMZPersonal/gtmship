@@ -1,4 +1,5 @@
 import type {
+  ConnectionAuthStrategyStatus,
   WorkflowAccessRequirement,
   WorkflowBinding,
   WorkflowDeployAuthMode,
@@ -13,6 +14,7 @@ import type {
   WorkflowTriggerType,
   WorkflowRuntimeAuthManifest,
 } from "./types";
+import { applyGlobalAuthStrategyToPlan } from "./auth-strategy";
 
 export interface WorkflowTriggerDescriptor {
   type: WorkflowTriggerType;
@@ -35,6 +37,7 @@ export interface DeploymentDefaults {
   provider?: WorkflowDeployProvider;
   region?: string;
   gcpProject?: string;
+  authStrategy?: ConnectionAuthStrategyStatus | null;
 }
 
 function defaultRegion(provider: WorkflowDeployProvider): string {
@@ -479,7 +482,7 @@ export function buildWorkflowDeploymentPlan(
     );
   }
 
-  return {
+  return applyGlobalAuthStrategyToPlan({
     workflowId: input.workflowId,
     workflowName: input.workflowTitle,
     trigger: buildTriggerSummary(trigger, input.triggerConfig, executionKind),
@@ -499,7 +502,7 @@ export function buildWorkflowDeploymentPlan(
     ),
     bindings: plannedBindings,
     warnings,
-  };
+  }, defaults.authStrategy);
 }
 
 export function buildWorkflowPlanFromArtifact(

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../services/db.js";
 import { encrypt } from "../services/crypto.js";
 import { resolveSharedOAuthProviderKey } from "../services/shared-oauth.js";
+import { getApiSchemaForSlug } from "../services/catalog.js";
 
 export const providerRoutes: Router = Router();
 
@@ -108,8 +109,19 @@ providerRoutes.get("/:slug", async (req, res) => {
   ]);
   // Strip sensitive fields
   const { clientId, clientSecret, ...safe } = provider;
+
+  // Enrich with Activepieces-derived apiSchema when DB has none
+  let apiSchema = safe.apiSchema as Record<string, unknown> | null;
+  if (!apiSchema) {
+    const pieceSchema = await getApiSchemaForSlug(safe.slug, safe.baseUrl);
+    if (pieceSchema) {
+      apiSchema = pieceSchema as unknown as Record<string, unknown>;
+    }
+  }
+
   res.json({
     ...safe,
+    apiSchema,
     hasCredentials:
       !!clientId ||
       (resolveSharedOAuthProviderKey({

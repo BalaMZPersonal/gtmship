@@ -130,6 +130,17 @@ export interface WorkflowDeploymentLogsResponse {
   liveError?: string | null;
 }
 
+export interface WorkflowDeploymentScope {
+  workflowId?: string | null;
+  workflowSlug?: string | null;
+}
+
+export interface WorkflowDeploymentTargeting {
+  provider?: string | null;
+  region?: string | null;
+  gcpProject?: string | null;
+}
+
 export function isDashboardDeploySuccess(
   value: DashboardDeployResponse
 ): value is DashboardDeploySuccess {
@@ -170,6 +181,157 @@ export function getDeploymentInfra(
   }
 
   return infra;
+}
+
+function normalizeDeploymentRef(value?: string | null): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseDeploymentTimestamp(
+  deployment: WorkflowDeploymentOverview
+): number {
+  const candidate =
+    deployment.deployedAt || deployment.updatedAt || deployment.createdAt || "";
+  const parsed = Date.parse(candidate);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function scoreWorkflowDeploymentTarget(
+  deployment: WorkflowDeploymentOverview,
+  target: WorkflowDeploymentTargeting
+): number {
+  let score = 0;
+  const normalizedRegion = normalizeDeploymentRef(target.region);
+  const normalizedProject = normalizeDeploymentRef(target.gcpProject);
+  const deploymentRegion = normalizeDeploymentRef(
+    deployment.platform?.region || deployment.region
+  );
+  const deploymentProject = normalizeDeploymentRef(
+    deployment.platform?.gcpProject || deployment.gcpProject
+  );
+
+  if (normalizedRegion && deploymentRegion === normalizedRegion) {
+    score += 2;
+  }
+  if (normalizedProject && deploymentProject === normalizedProject) {
+    score += 1;
+  }
+
+  return score;
+}
+
+export function getWorkflowDeploymentRefs(
+  scope: WorkflowDeploymentScope = {}
+): string[] {
+  return Array.from(
+    new Set(
+      [scope.workflowId, scope.workflowSlug]
+        .map((value) => normalizeDeploymentRef(value))
+        .filter(Boolean)
+    )
+  );
+}
+
+export function dedupeWorkflowDeploymentsById(
+  deployments: WorkflowDeploymentOverview[]
+): WorkflowDeploymentOverview[] {
+  const byId = new Map<string, WorkflowDeploymentOverview>();
+
+  for (const deployment of deployments) {
+    const normalizedId = normalizeDeploymentRef(deployment.id);
+    if (!normalizedId || byId.has(normalizedId)) {
+      continue;
+    }
+    byId.set(normalizedId, deployment);
+  }
+
+  return Array.from(byId.values());
+}
+
+export function getScopedWorkflowDeployments(
+  deployments: WorkflowDeploymentOverview[],
+  target: WorkflowDeploymentScope & WorkflowDeploymentTargeting = {}
+): WorkflowDeploymentOverview[] {
+  const workflowRefs = getWorkflowDeploymentRefs(target);
+
+  return deployments
+    .filter((deployment) => {
+      if (target.provider && deployment.provider !== target.provider) {
+        return false;
+      }
+      if (workflowRefs.length === 0) {
+        return true;
+      }
+      return workflowRefs.includes(normalizeDeploymentRef(deployment.workflowId));
+    })
+    .sort((left, right) => {
+      const scoreDiff =
+        scoreWorkflowDeploymentTarget(right, target) -
+        scoreWorkflowDeploymentTarget(left, target);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+
+      return parseDeploymentTimestamp(right) - parseDeploymentTimestamp(left);
+    });
+}
+
+export function resolveSelectedWorkflowDeploymentId(
+  deployments: WorkflowDeploymentOverview[],
+  currentDeploymentId?: string | null,
+  preferredDeploymentId?: string | null
+): string {
+  const availableIds = new Set(deployments.map((deployment) => deployment.id));
+
+  if (currentDeploymentId && availableIds.has(currentDeploymentId)) {
+    return currentDeploymentId;
+  }
+  if (preferredDeploymentId && availableIds.has(preferredDeploymentId)) {
+    return preferredDeploymentId;
+  }
+
+  return deployments[0]?.id || "";
+}
+
+export function resolveSelectedExecutionName(
+  executions: WorkflowExecutionHistoryEntry[],
+  currentExecutionName?: string | null
+): string {
+  if (!currentExecutionName) {
+    return "";
+  }
+
+  return executions.some(
+    (execution) => execution.executionName === currentExecutionName
+  )
+    ? currentExecutionName
+    : "";
+}
+
+export function buildDeploymentLogsHref(input: {
+  deploymentId: string;
+  workflowId?: string | null;
+  workflowSlug?: string | null;
+  executionName?: string | null;
+}): string {
+  const params = new URLSearchParams({
+    provider: "gcp",
+    deploymentId: input.deploymentId,
+  });
+  const workflowRefs = getWorkflowDeploymentRefs(input);
+  const normalizedSlug = normalizeDeploymentRef(input.workflowSlug);
+
+  if (workflowRefs[0]) {
+    params.set("workflow", workflowRefs[0]);
+  }
+  if (normalizedSlug && normalizedSlug !== workflowRefs[0]) {
+    params.set("workflowSlug", normalizedSlug);
+  }
+  if (input.executionName) {
+    params.set("executionName", input.executionName);
+  }
+
+  return `/deploy/logs?${params.toString()}`;
 }
 
 function defaultRegion(provider: CloudProvider): string {

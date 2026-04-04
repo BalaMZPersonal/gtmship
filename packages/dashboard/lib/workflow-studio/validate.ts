@@ -56,14 +56,37 @@ function detectWriteCheckpoints(source: string): string[] {
   ).map((match) => match[1]);
 }
 
-function detectMissingWriteCheckpointErrors(source: string): string[] {
-  const snippets = Array.from(
-    source.matchAll(/\.write\s*\(\s*[\s\S]*?\)/g)
-  ).map((match) => match[0]);
+function extractBalancedWriteCall(source: string, startIndex: number): string | null {
+  // Find the opening paren after .write
+  let i = startIndex;
+  while (i < source.length && source[i] !== "(") i++;
+  if (i >= source.length) return null;
 
-  return snippets
-    .filter((snippet) => !/checkpoint\s*:/.test(snippet))
-    .map(() => "Every ctx.*.write(...) call must include a checkpoint.");
+  let depth = 0;
+  const begin = startIndex;
+  for (; i < source.length; i++) {
+    if (source[i] === "(") depth++;
+    else if (source[i] === ")") {
+      depth--;
+      if (depth === 0) return source.slice(begin, i + 1);
+    }
+  }
+  return null;
+}
+
+function detectMissingWriteCheckpointErrors(source: string): string[] {
+  const errors: string[] = [];
+  const writeCallPattern = /\.write\s*\(/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = writeCallPattern.exec(source)) !== null) {
+    const snippet = extractBalancedWriteCall(source, match.index);
+    if (snippet && !/checkpoint\s*:/.test(snippet)) {
+      errors.push("Every ctx.*.write(...) call must include a checkpoint.");
+    }
+  }
+
+  return errors;
 }
 
 function detectAbsoluteIntegrationUrlErrors(source: string): string[] {

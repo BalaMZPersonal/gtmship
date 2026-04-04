@@ -10,7 +10,8 @@ import {
   getSharedOAuthProviderConfig,
   resolveSharedOAuthProviderKey,
 } from "../services/shared-oauth.js";
-import { syncConnectionSecretReplicasById } from "../services/connection-secret-replicas.js";
+import { scheduleConnectionSecretSync } from "../services/auth-strategy.js";
+import { selectConnectKeyTarget } from "../services/connect-key-target.js";
 
 export const authRoutes: Router = Router();
 
@@ -380,7 +381,7 @@ async function syncSecretReplicasForConnections(
   const connectionIds = Array.from(new Set(connections.map((item) => item.id)));
   for (const connectionId of connectionIds) {
     try {
-      await syncConnectionSecretReplicasById(connectionId);
+      await scheduleConnectionSecretSync(connectionId);
     } catch (error) {
       console.warn(
         `[auth] Failed to sync secret replicas for ${connectionId}: ${
@@ -730,6 +731,11 @@ authRoutes.get("/:slug/callback", async (req, res) => {
 // API Key auth — create connection directly
 authRoutes.post("/:slug/connect-key", async (req, res) => {
   const { api_key, label } = req.body;
+  const requestedConnectionId =
+    typeof req.body?.connection_id === "string" &&
+    req.body.connection_id.trim().length > 0
+      ? req.body.connection_id.trim()
+      : null;
   const provider = await prisma.provider.findUnique({
     where: { slug: req.params.slug },
   });
@@ -739,21 +745,111 @@ authRoutes.post("/:slug/connect-key", async (req, res) => {
     return;
   }
 
-  if (provider.authType !== "api_key") {
+  if (provider.authType !== "api_key" && provider.authType !== "basic") {
     res.status(400).json({ error: `Provider uses ${provider.authType}, not api_key` });
     return;
   }
 
-  const connection = await prisma.connection.create({
-    data: {
-      providerId: provider.id,
-      label: label || `${provider.slug}-${Date.now()}`,
-      accessToken: encrypt(api_key),
-    },
-  });
+  const normalizedLabel =
+    typeof label === "string" && label.trim().length > 0 ? label.trim() : null;
+  let targetConnectionId: string | null = null;
+  let existingLabel: string | null = null;
+
+  if (requestedConnectionId) {
+    const requestedConnection = await prisma.connection.findUnique({
+      where: { id: requestedConnectionId },
+      select: {
+        id: true,
+        providerId: true,
+        label: true,
+      },
+    });
+
+    if (!requestedConnection) {
+      res.status(404).json({ error: "Connection not found" });
+      return;
+    }
+
+    if (requestedConnection.providerId !== provider.id) {
+      res.status(409).json({
+        error: `Connection ${requestedConnectionId} does not belong to provider ${provider.slug}.`,
+      });
+      return;
+    }
+
+    targetConnectionId = requestedConnection.id;
+    existingLabel = requestedConnection.label;
+  } else {
+    const activeConnections = await prisma.connection.findMany({
+      where: {
+        providerId: provider.id,
+        status: "active",
+      },
+      select: {
+        id: true,
+        label: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const selection = selectConnectKeyTarget({
+      label: normalizedLabel,
+      activeConnections,
+    });
+
+    if (selection.action === "conflict") {
+      res.status(409).json({
+        error:
+          "Multiple active connections match this reconnect request. Pass connection_id to update the intended connection instead of creating a duplicate.",
+        candidates: selection.candidates.map((candidate) => ({
+          id: candidate.id,
+          label: candidate.label,
+          createdAt: candidate.createdAt.toISOString(),
+        })),
+      });
+      return;
+    }
+
+    if (selection.action === "update") {
+      targetConnectionId = selection.connectionId;
+      existingLabel =
+        activeConnections.find(
+          (connection) => connection.id === selection.connectionId
+        )?.label || null;
+    }
+  }
+
+  const nextLabel =
+    normalizedLabel || existingLabel || `${provider.slug}-${Date.now()}`;
+  const encryptedApiKey = encrypt(api_key);
+  const connection = targetConnectionId
+    ? await prisma.connection.update({
+        where: { id: targetConnectionId },
+        data: {
+          label: nextLabel,
+          accessToken: encryptedApiKey,
+          oauthCredentialId: null,
+          refreshToken: null,
+          tokenExpiresAt: null,
+          instanceUrl: null,
+          status: "active",
+        },
+      })
+    : await prisma.connection.create({
+        data: {
+          providerId: provider.id,
+          label: nextLabel,
+          accessToken: encryptedApiKey,
+        },
+      });
   await syncSecretReplicasForConnections([{ id: connection.id }]);
 
-  res.status(201).json({ id: connection.id, provider: provider.slug, status: "active" });
+  res.status(targetConnectionId ? 200 : 201).json({
+    id: connection.id,
+    provider: provider.slug,
+    status: "active",
+    updatedExisting: Boolean(targetConnectionId),
+  });
 });
 
 interface ExtractedTokens {

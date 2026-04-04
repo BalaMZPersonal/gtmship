@@ -3,16 +3,269 @@ import { z } from "zod";
 import { executeCommand } from "@/lib/sandbox";
 import { fetchUrl } from "@/lib/url-fetcher";
 import { searchDocumentation } from "@/lib/doc-search";
+import { researchWeb, researchWebInputSchema } from "@/lib/research";
 import { createConfiguredLanguageModel } from "@/lib/ai-settings";
 
 const AUTH_URL = process.env.AUTH_SERVICE_URL || "http://localhost:4000";
+const MAX_PROVIDER_SAVE_PAYLOAD_BYTES = 250_000;
+const MAX_PROVIDER_SCHEMA_ENDPOINTS = 24;
+const MAX_PROVIDER_SCHEMA_PARAMETERS = 12;
+const MAX_PROVIDER_TEXT_CHARS = 500;
+const MAX_PROVIDER_RESPONSE_TEXT_CHARS = 300;
+const MAX_PROVIDER_CURL_CHARS = 1_200;
+const MAX_PROVIDER_JSON_KEYS = 16;
+const MAX_PROVIDER_JSON_ARRAY_ITEMS = 12;
+const MAX_PROVIDER_JSON_DEPTH = 4;
+
+function trimText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars)}... (truncated)`;
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+function compactJsonValue(value: unknown, depth = 0): unknown {
+  if (
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return trimText(value, MAX_PROVIDER_RESPONSE_TEXT_CHARS);
+  }
+
+  if (depth >= MAX_PROVIDER_JSON_DEPTH) {
+    return Array.isArray(value) ? ["... (truncated)"] : "... (truncated)";
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, MAX_PROVIDER_JSON_ARRAY_ITEMS)
+      .map((entry) => compactJsonValue(entry, depth + 1));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).slice(
+    0,
+    MAX_PROVIDER_JSON_KEYS
+  );
+
+  return Object.fromEntries(
+    entries.map(([key, entryValue]) => [
+      key,
+      compactJsonValue(entryValue, depth + 1),
+    ])
+  );
+}
+
+function compactProviderParameter(parameter: unknown): Record<string, unknown> | null {
+  if (!parameter || typeof parameter !== "object" || Array.isArray(parameter)) {
+    return null;
+  }
+
+  const typedParameter = parameter as Record<string, unknown>;
+
+  return {
+    name:
+      typeof typedParameter.name === "string"
+        ? trimText(typedParameter.name, 80)
+        : typedParameter.name,
+    type:
+      typeof typedParameter.type === "string"
+        ? trimText(typedParameter.type, 60)
+        : typedParameter.type,
+    required:
+      typeof typedParameter.required === "boolean"
+        ? typedParameter.required
+        : undefined,
+    in:
+      typeof typedParameter.in === "string"
+        ? trimText(typedParameter.in, 40)
+        : typedParameter.in,
+    description:
+      typeof typedParameter.description === "string"
+        ? trimText(typedParameter.description, 200)
+        : typedParameter.description,
+  };
+}
+
+function compactProviderEndpoint(endpoint: unknown): Record<string, unknown> | null {
+  if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) {
+    return null;
+  }
+
+  const typedEndpoint = endpoint as Record<string, unknown>;
+
+  return {
+    method:
+      typeof typedEndpoint.method === "string"
+        ? trimText(typedEndpoint.method, 24)
+        : typedEndpoint.method,
+    path:
+      typeof typedEndpoint.path === "string"
+        ? trimText(typedEndpoint.path, 240)
+        : typedEndpoint.path,
+    description:
+      typeof typedEndpoint.description === "string"
+        ? trimText(typedEndpoint.description, 240)
+        : typedEndpoint.description,
+    parameters: Array.isArray(typedEndpoint.parameters)
+      ? typedEndpoint.parameters
+          .slice(0, MAX_PROVIDER_SCHEMA_PARAMETERS)
+          .map(compactProviderParameter)
+          .filter(
+            (
+              parameter
+            ): parameter is Record<string, unknown> => parameter !== null
+          )
+      : undefined,
+    response: compactJsonValue(typedEndpoint.response),
+  };
+}
+
+function compactProviderApiSchema(apiSchema: unknown): Record<string, unknown> | undefined {
+  if (!apiSchema || typeof apiSchema !== "object" || Array.isArray(apiSchema)) {
+    return undefined;
+  }
+
+  const typedSchema = apiSchema as Record<string, unknown>;
+  const compactedSchema: Record<string, unknown> = {};
+
+  if (Array.isArray(typedSchema.endpoints)) {
+    compactedSchema.endpoints = typedSchema.endpoints
+      .slice(0, MAX_PROVIDER_SCHEMA_ENDPOINTS)
+      .map(compactProviderEndpoint)
+      .filter(
+        (endpoint): endpoint is Record<string, unknown> => endpoint !== null
+      );
+  }
+
+  if (
+    typedSchema.auth &&
+    typeof typedSchema.auth === "object" &&
+    !Array.isArray(typedSchema.auth)
+  ) {
+    const auth = typedSchema.auth as Record<string, unknown>;
+    compactedSchema.auth = {
+      type: typeof auth.type === "string" ? trimText(auth.type, 40) : auth.type,
+      header:
+        typeof auth.header === "string"
+          ? trimText(auth.header, 80)
+          : auth.header,
+      format:
+        typeof auth.format === "string"
+          ? trimText(auth.format, 160)
+          : auth.format,
+    };
+  }
+
+  if (
+    typedSchema.test &&
+    typeof typedSchema.test === "object" &&
+    !Array.isArray(typedSchema.test)
+  ) {
+    const test = typedSchema.test as Record<string, unknown>;
+    compactedSchema.test = {
+      curl:
+        typeof test.curl === "string"
+          ? trimText(test.curl, MAX_PROVIDER_CURL_CHARS)
+          : test.curl,
+      expected_status:
+        typeof test.expected_status === "number"
+          ? test.expected_status
+          : test.expected_status,
+    };
+  }
+
+  return compactedSchema;
+}
+
+function buildCompactProviderSavePayload(
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  const compactedPayload: Record<string, unknown> = {
+    ...config,
+    description:
+      typeof config.description === "string"
+        ? trimText(config.description, MAX_PROVIDER_TEXT_CHARS)
+        : config.description,
+    notes:
+      typeof config.notes === "string"
+        ? trimText(config.notes, 1_500)
+        : config.notes,
+  };
+
+  if ("api_schema" in config) {
+    compactedPayload.api_schema = compactProviderApiSchema(config.api_schema);
+  }
+
+  const compactedJson = JSON.stringify(compactedPayload);
+  if (byteLength(compactedJson) <= MAX_PROVIDER_SAVE_PAYLOAD_BYTES) {
+    return compactedPayload;
+  }
+
+  const schema =
+    compactedPayload.api_schema &&
+    typeof compactedPayload.api_schema === "object" &&
+    !Array.isArray(compactedPayload.api_schema)
+      ? (compactedPayload.api_schema as Record<string, unknown>)
+      : null;
+
+  if (!schema) {
+    return compactedPayload;
+  }
+
+  const reducedEndpoints = Array.isArray(schema.endpoints)
+    ? schema.endpoints.slice(0, 10).map((endpoint) => {
+        if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) {
+          return endpoint;
+        }
+
+        const typedEndpoint = endpoint as Record<string, unknown>;
+        return {
+          method: typedEndpoint.method,
+          path: typedEndpoint.path,
+          description: typedEndpoint.description,
+          parameters: Array.isArray(typedEndpoint.parameters)
+            ? typedEndpoint.parameters
+                .slice(0, 6)
+                .map(compactProviderParameter)
+                .filter(
+                  (
+                    parameter
+                  ): parameter is Record<string, unknown> => parameter !== null
+                )
+            : undefined,
+        };
+      })
+    : undefined;
+
+  return {
+    ...compactedPayload,
+    api_schema: {
+      auth: schema.auth,
+      test: schema.test,
+      endpoints: reducedEndpoints,
+    },
+  };
+}
 
 const SYSTEM_PROMPT = `You are GTMShip's Integration Agent — an expert at setting up API integrations.
-You have access to bash, curl, python, and can fetch documentation URLs.
+You have access to bash, curl, python, and a web research tool for documentation discovery.
 
 Your capabilities:
-- Search the web for API documentation (when no URL is provided)
-- Fetch and analyze API documentation from URLs
+- Research the web for API documentation and inspect public pages
 - Execute bash commands (curl, python3, node, jq, base64, pip3)
 - Build provider configurations (OAuth2, API key, basic auth)
 - Test API endpoints
@@ -20,11 +273,10 @@ Your capabilities:
 
 When a user wants to set up an integration:
 1. If it's a known provider, look it up in the catalog first (readCatalogProvider)
-2. If the catalog has a docs URL, fetch it with fetchUrl
+2. If the catalog has a docs URL, inspect it with researchWeb in scrape mode
 3. If the provider is NOT in the catalog:
-   a. Use searchDocumentation to find the API documentation
-   b. Pick the most relevant result and fetch it with fetchUrl
-   c. If search returns no useful results, ASK THE USER for the documentation URL
+   a. Use researchWeb in research mode to search for and inspect the API documentation
+   b. If researchWeb returns no useful results, ASK THE USER for the documentation URL
 4. Analyze the documentation to determine:
    - Auth type (OAuth2, API key, basic)
    - Base URL
@@ -34,6 +286,12 @@ When a user wants to set up an integration:
 6. Guide the user through providing credentials (client_id/secret or API key)
 7. Test the connection with curl
 8. Save the working configuration with full API schema
+
+When reconnecting an existing API key or basic-auth integration:
+- Call listConnections first and inspect any existing connections for that provider
+- Reuse the original connection row whenever the user is replacing credentials
+- Pass connectApiKey.connectionId for the specific connection you intend to update
+- Never create a duplicate connection when the user intends to reconnect or rotate credentials for an existing one
 
 When a catalog provider includes oauthProviderKey (for example Google-family services):
 - Explain that the OAuth app/callback can be shared across those services
@@ -53,6 +311,7 @@ CRITICAL — When saving a provider, ALWAYS include the api_schema field with:
 - endpoints: Every API endpoint you discovered from the docs (method, path, description, parameters with type/required/location, and a sample response or response schema)
 - auth: How authentication works (header format, token placement)
 - test: A curl command to verify the connection, with expected status code
+- Keep api_schema compact. Do not paste whole docs pages or huge sample payloads when a short schema or trimmed example will do.
 
 Example api_schema structure:
 {
@@ -97,8 +356,10 @@ Important:
 
 CRITICAL — Documentation Discovery Rules:
 - NEVER guess or fabricate documentation URLs. Do not try URLs like "https://docs.example.com/api" or "https://developer.example.com" on spec.
-- ALWAYS use searchDocumentation to find docs when you don't have a URL.
-- If searchDocumentation returns no useful results AND the catalog doesn't have the provider, ASK the user: "I couldn't find the API documentation automatically. Could you share the documentation URL?"
+- ALWAYS use researchWeb when you do not already have a trusted docs URL.
+- Use researchWeb with mode="research" when you only know the provider/query.
+- Use researchWeb with mode="scrape" when you already have a concrete public URL.
+- If researchWeb returns noUsefulResults AND the catalog doesn't have the provider, ASK the user: "I couldn't find the API documentation automatically. Could you share the documentation URL?"
 - Do not repeatedly try different guessed URLs. Search once, then ask.
 `;
 
@@ -126,9 +387,18 @@ export async function POST(req: Request) {
     system: SYSTEM_PROMPT,
     messages,
     tools: {
+      researchWeb: tool({
+        description:
+          "Search the web and optionally inspect a public page in one tool call. Use mode='research' when you only know the provider or query. Use mode='scrape' when you already have a docs URL. Prefer focus='documentation' for API research.",
+        parameters: researchWebInputSchema,
+        execute: async (input) => {
+          return await researchWeb(input);
+        },
+      }),
+
       searchDocumentation: tool({
         description:
-          "Search the web for API documentation pages. Use this when you need to find documentation for a service/platform but don't have the URL. Returns search results with titles, URLs, and snippets. After finding results, use fetchUrl to read the most promising documentation page.",
+          "Legacy wrapper around researchWeb search mode. Prefer researchWeb for new calls.",
         parameters: z.object({
           query: z.string().describe("Search query — typically the service/platform name"),
           maxResults: z
@@ -145,7 +415,7 @@ export async function POST(req: Request) {
 
       fetchUrl: tool({
         description:
-          "Fetch a URL to read API documentation, check endpoint responses, or download configuration. Returns the page content as text.",
+          "Legacy wrapper around the shared web scraping core. Prefer researchWeb in scrape mode for new calls.",
         parameters: z.object({
           url: z.string().describe("The URL to fetch"),
           method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().describe("HTTP method, defaults to GET"),
@@ -188,7 +458,7 @@ export async function POST(req: Request) {
               const data = await searchRes.json();
               if (data.items?.length > 0) return { found: true, ...data.items[0] };
             }
-            return { found: false, message: `"${slug}" not in catalog. Use fetchUrl to read API docs instead.` };
+            return { found: false, message: `"${slug}" not in catalog. Use researchWeb to inspect API docs instead.` };
           } catch {
             return { found: false, message: "Catalog service not reachable." };
           }
@@ -273,10 +543,13 @@ export async function POST(req: Request) {
         }),
         execute: async (config) => {
           try {
+            const compactConfig = buildCompactProviderSavePayload(
+              config as Record<string, unknown>
+            );
             const res = await fetch(`${AUTH_URL}/providers`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...config, source: "agent" }),
+              body: JSON.stringify({ ...compactConfig, source: "agent" }),
             });
             if (!res.ok) {
               const text = await res.text();
@@ -322,18 +595,27 @@ export async function POST(req: Request) {
       }),
 
       connectApiKey: tool({
-        description: "Create a connection using an API key for a registered provider.",
+        description:
+          "Create or update a connection using an API key for a registered provider. Provide connectionId when reconnecting an existing integration so GTMShip updates the original connection instead of creating a duplicate.",
         parameters: z.object({
           provider: z.string().describe("Provider slug"),
           api_key: z.string().describe("The API key"),
           label: z.string().optional(),
+          connectionId: z
+            .string()
+            .optional()
+            .describe("Existing connection id to update when reconnecting"),
         }),
-        execute: async ({ provider, api_key, label }) => {
+        execute: async ({ provider, api_key, label, connectionId }) => {
           try {
             const res = await fetch(`${AUTH_URL}/auth/${provider}/connect-key`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ api_key, label }),
+              body: JSON.stringify({
+                api_key,
+                label,
+                connection_id: connectionId,
+              }),
             });
             if (!res.ok) {
               const text = await res.text();

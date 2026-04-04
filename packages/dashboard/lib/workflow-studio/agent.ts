@@ -1,11 +1,18 @@
-import { streamText, tool } from "ai";
+import {
+  createDataStreamResponse,
+  streamText,
+  tool,
+  type DataStreamWriter,
+} from "ai";
 import { z } from "zod";
 import { createConfiguredLanguageModel } from "@/lib/ai-settings";
 import { executeCommand } from "@/lib/sandbox";
 import { fetchUrl } from "@/lib/url-fetcher";
 import { searchDocumentation } from "@/lib/doc-search";
+import { researchWeb, researchWebInputSchema } from "@/lib/research";
 import {
   generateWorkflowArtifact,
+  parseGroundedApiContext,
 } from "./ai";
 import { buildWorkflowArtifact } from "./build";
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
@@ -17,7 +24,19 @@ import {
 import { previewWorkflowArtifact } from "./preview";
 import { loadProjectDeploymentDefaults } from "./project-config";
 import { readProjectFile, searchProjectFiles, prepareWorkflowScratchWorkspace } from "./project-docs";
-import type { WorkflowStudioArtifact, WorkflowStudioMessage } from "./types";
+import {
+  ContextManager,
+  COORDINATOR_TOKEN_BUDGET,
+  truncateToolResult,
+} from "./context-manager";
+import { compactWorkflowTranscriptIfNeeded } from "./transcript-compaction-server";
+import { normalizeWorkflowMessagesForModel } from "./transcript-compaction";
+import type {
+  WorkflowDraftProgressEvent,
+  WorkflowStudioArtifact,
+  WorkflowStudioMessage,
+} from "./types";
+import { WORKFLOW_DRAFT_PROGRESS_LABELS } from "./types";
 import { validateWorkflowArtifact } from "./validate";
 
 const messageSchema = z.object({
@@ -34,42 +53,6 @@ const routeRequestSchema = z.object({
   messages: z.array(messageSchema).default([]),
   currentArtifact: z.any().nullable().optional(),
 });
-
-function getMessageText(message: WorkflowStudioMessage): string {
-  const content = message.content?.trim();
-  if (content) {
-    return content;
-  }
-
-  if (!message.parts?.length) {
-    return "";
-  }
-
-  return message.parts
-    .map((part) =>
-      part.type === "text" && typeof part.text === "string" ? part.text : ""
-    )
-    .join("\n")
-    .trim();
-}
-
-function normalizeConversationMessages(
-  messages: WorkflowStudioMessage[]
-): WorkflowStudioMessage[] {
-  return messages
-    .map((message) => ({
-      id: message.id,
-      role:
-        message.role === "user" ||
-        message.role === "assistant" ||
-        message.role === "system"
-          ? message.role
-          : "assistant",
-      content: getMessageText(message),
-      createdAt: message.createdAt,
-    }))
-    .filter((message) => message.content.trim().length > 0);
-}
 
 function createContextMessage(content: string): WorkflowStudioMessage {
   return {
@@ -118,6 +101,23 @@ function hasMeaningfulDraft(
   );
 }
 
+function writeWorkflowDraftProgress(
+  dataStream: DataStreamWriter,
+  toolCallId: string,
+  update: Omit<
+    WorkflowDraftProgressEvent,
+    "type" | "toolCallId" | "timestamp" | "label"
+  >
+) {
+  dataStream.writeData({
+    type: "workflow-draft-progress",
+    toolCallId,
+    label: WORKFLOW_DRAFT_PROGRESS_LABELS[update.stage],
+    timestamp: new Date().toISOString(),
+    ...update,
+  } satisfies WorkflowDraftProgressEvent);
+}
+
 function summarizeDraft(artifact: WorkflowStudioArtifact | null) {
   if (!artifact) {
     return {
@@ -152,8 +152,7 @@ You behave like an agentic workflow builder during design time: you can inspect 
 Your capabilities:
 - List and test active integrations.
 - Read provider schema, docs URLs, and test metadata for active integrations.
-- Search the web for documentation when needed.
-- Fetch and read documentation URLs.
+- Research the web for documentation when needed.
 - Execute sandboxed commands in a scratch workspace using curl, python3, node, jq, rg, grep, sed, head, tail, ls, pwd, cat, base64, and which.
 - Read and search files under the configured project root through dedicated tools.
 - Generate or revise the workflow draft.
@@ -163,19 +162,55 @@ Your capabilities:
 Critical behavior:
 1. Treat this as an agentic workflow design/debug session, not a one-shot generator.
 2. When integrations are involved, inspect active connections early and read the provider reference before searching the open web.
-3. Documentation handling should mirror the connection agent:
+3. API Grounding — Before calling generateWorkflowDraft, ground every API endpoint the workflow will use:
+   a. Call readIntegrationReference for each provider. Examine the apiSchema field for endpoint paths, methods, request bodies, and response shapes.
+   b. If apiSchema is missing or does not cover the specific endpoints needed:
+      - Call researchWeb with mode="research" and a targeted query like "<provider> <endpoint> API reference".
+      - If the auto-selected page is not useful, call researchWeb with mode="scrape" on a better result URL.
+      - Extract the exact endpoint path, HTTP method, required request fields, and expected response shape.
+   c. For READ endpoints: test them in isolation using a single executeCommand call with curl through the auth proxy:
+      curl -s http://localhost:4000/proxy/<provider-slug>/v1/endpoint --max-time 10
+      Do NOT use -o, pipes (|), chaining (&&), or redirection (>). The sandbox runs execFile, not a shell. Each curl must be a single standalone command. To process output, run a separate executeCommand with jq or python3 on the previous result.
+      Verify the status code and inspect the response shape (top-level keys, array vs object, pagination structure).
+   d. For WRITE endpoints: do NOT call them during grounding. Verify the request schema from documentation only.
+   e. Pass grounded findings in the instructions parameter of generateWorkflowDraft using this format:
+      GROUNDED API CONTEXT:
+      - <provider>: <METHOD> <path> — <purpose>
+        Request: <key fields>
+        Response: <key fields observed or documented>
+        Tested: <yes/no> Status: <code>
+        Docs: <source URL>
+   This prevents hallucinated endpoints, wrong field names, and incorrect request formats.
+4. If researchWeb returns noUsefulResults or weak matches, try alternative queries (e.g. "<provider> REST API endpoints", "<provider> developer documentation") before falling back to general knowledge. Never fabricate an endpoint path from memory alone when research tools are available.
+5. If the user says they configured connections, asks you to recheck connections, or returns from the Connections Agent, call listActiveConnections first, test the relevant providers when possible, and only continue generating/fixing/building after you verify the needed access is ready.
+6. Documentation handling should mirror the connection agent:
    - Prefer active integration/provider docs first.
-   - If you still need docs, use searchDocumentation, then fetchUrl on the best result.
+   - If you still need docs, use researchWeb with mode="research".
+   - If you already have a concrete public URL, use researchWeb with mode="scrape".
    - Do not guess documentation URLs.
-4. The command runner is a single-command sandbox in a scratch workspace. No shell pipes or redirection. If you need transformations, use jq, python3 -c, or node -e inline.
-5. The current draft, if any, is available in the scratch workspace as draft.ts and sample-payload.json.
-6. The saved workflow runtime itself MUST stay constrained to WorkflowContext helpers. Do not try to give the saved workflow shell access, child_process, fs, raw fetch, or external imports.
-7. Before your final answer, you must either:
-   - produce a ready draft by calling generateWorkflowDraft, validateWorkflowDraft, previewWorkflowDraft, and buildWorkflowDraft when the user asks to finish, ship, or build the workflow, or
-   - clearly explain the blocker after verifying it with tools.
-8. If validation, preview, or build exposes a code issue, analyze it and call generateWorkflowDraft again with repair instructions.
-9. If the issue is external, such as missing access or invalid credentials, explain that clearly and stop rewriting code.
-10. A preview result of needs_approval is considered ready if the only remaining step is the declared write checkpoint approval.
+7. The command runner is a single-command sandbox using execFile (NOT a shell). These will NOT work: pipes (|), redirection (> >>), chaining (&& ;), subshells ($(...)), globbing (*). Each executeCommand call runs exactly one command. To test an endpoint: executeCommand('curl -s http://localhost:4000/proxy/gmail/gmail/v1/users/me/profile --max-time 10'). To process output from a previous call, run a separate executeCommand with jq, python3 -c, or node -e.
+8. The current draft, if any, is available in the scratch workspace as draft.ts and sample-payload.json.
+9. The saved workflow runtime itself MUST stay constrained to WorkflowContext helpers. Do not try to give the saved workflow shell access, child_process, fs, raw fetch, or external imports.
+10. Before your final answer, you must either:
+    - produce a ready draft by calling generateWorkflowDraft, validateWorkflowDraft, previewWorkflowDraft, and buildWorkflowDraft when the user asks to finish, ship, or build the workflow, or
+    - clearly explain the blocker after verifying it with tools.
+11. If validation, preview, or build exposes a code issue, analyze it and call generateWorkflowDraft again with repair instructions.
+12. Intelligent Error Recovery — When preview, validation, or build fails with an API-related error:
+    a. Identify which specific API call failed. Check preview operations for non-2xx responseStatus values and error messages referencing endpoints or providers.
+    b. Test the failing endpoint in isolation using executeCommand with curl through the auth proxy:
+       curl http://localhost:4000/proxy/<provider-slug>/<the-failing-path>
+    c. If isolated test returns 404: the endpoint path is wrong. Use researchWeb mode="research" to find the correct path. Update repair instructions with the correct path.
+    d. If isolated test returns 401/403: auth expired or scopes insufficient. Report as external blocker — do not rewrite code.
+    e. If isolated test returns 400: request format is wrong. Use researchWeb mode="scrape" on the provider's API docs for that endpoint. Extract the correct request schema.
+    f. If isolated test succeeds but workflow still fails: the issue is in code logic (wrong field access, missing data transform). Include the actual response shape from the test in repair instructions.
+    g. Call generateWorkflowDraft with detailed repair instructions including test results and documentation findings.
+    Never retry generateWorkflowDraft with the same information. Always add new evidence from isolated testing or documentation research.
+13. If the issue is external, such as missing access or invalid credentials, explain that clearly and stop rewriting code.
+14. If connections are still missing or blocked after a recheck, stop and summarize exactly which providers are still not ready.
+15. A preview result of needs_approval is considered ready if the only remaining work is one or more declared write checkpoint approvals.
+16. Do not remove or weaken legitimate write checkpoints just to avoid preview-only approvals. Workflow Studio preview can require multiple sequential approvals in the UI.
+17. If any tool returns an error, treat that step as failed. Do not say the workflow is done or describe changes as completed unless a later tool result confirms success.
+18. A generateWorkflowDraft error means the draft was not updated. Retry with clearer repair instructions or explain the failure.
 
 Be concise, but show your work through tools and short reasoning updates in the chat.`;
 
@@ -184,8 +219,6 @@ export async function createWorkflowAgentResponse(
 ): Promise<Response> {
   const body = routeRequestSchema.parse(rawBody);
   const requestMessages = body.messages as WorkflowStudioMessage[];
-  const transcriptMessages = normalizeConversationMessages(requestMessages);
-  const model = await resolveModel();
 
   let draft =
     body.currentArtifact && typeof body.currentArtifact === "object"
@@ -196,12 +229,41 @@ export async function createWorkflowAgentResponse(
     draft = null;
   }
 
-  const result = streamText({
-    model,
-    maxSteps: 30,
-    system: SYSTEM_PROMPT,
-    messages: requestMessages as never,
-    tools: {
+  const model = await resolveModel();
+  const compactedTranscript = await compactWorkflowTranscriptIfNeeded({
+    messages: requestMessages,
+    currentArtifact: draft,
+    additionalText: SYSTEM_PROMPT,
+    resolvedModel: model,
+  });
+  const modelRequestMessages = normalizeWorkflowMessagesForModel(
+    compactedTranscript.messages
+  );
+  if (
+    modelRequestMessages.length === 0 ||
+    modelRequestMessages[modelRequestMessages.length - 1]?.role !== "user"
+  ) {
+    throw new Error(
+      "Workflow Studio needs a fresh user message before it can continue the AI chat."
+    );
+  }
+
+  const contextManager = new ContextManager({
+    tokenBudget: COORDINATOR_TOKEN_BUDGET,
+  });
+  const managed = contextManager.manage(modelRequestMessages);
+  const transcriptMessages = managed.messages;
+
+  return createDataStreamResponse({
+    execute(dataStream) {
+      dataStream.writeData({ ...managed.pressure });
+
+      const result = streamText({
+        model,
+        maxSteps: 30,
+        system: SYSTEM_PROMPT,
+        messages: managed.messages as never,
+        tools: {
       listActiveConnections: tool({
         description:
           "List the active integrations available right now. Use this early when the workflow depends on integrations.",
@@ -259,32 +321,49 @@ export async function createWorkflowAgentResponse(
         },
       }),
 
+      researchWeb: tool({
+        description:
+          "Search the web and optionally inspect a public page in one tool call. Use this only after checking active integration/provider references first. Prefer mode='research' for doc discovery and mode='scrape' for a known public URL.",
+        parameters: researchWebInputSchema,
+        execute: async (input) =>
+          truncateToolResult(
+            await researchWeb(input),
+            contextManager.getToolResultLimit()
+          ),
+      }),
+
       searchDocumentation: tool({
         description:
-          "Search the web for API documentation pages. Use this only after checking active integration/provider references first.",
+          "Legacy wrapper around researchWeb search mode. Prefer researchWeb for new calls.",
         parameters: z.object({
           query: z.string(),
           maxResults: z.number().min(1).max(10).optional(),
         }),
         execute: async ({ query, maxResults }) =>
-          searchDocumentation(query, maxResults),
+          truncateToolResult(
+            await searchDocumentation(query, maxResults),
+            contextManager.getToolResultLimit()
+          ),
       }),
 
       fetchUrl: tool({
         description:
-          "Fetch a public URL to read documentation or inspect a public HTTP endpoint.",
+          "Legacy wrapper around the shared web scraping core. Prefer researchWeb in scrape mode for new calls.",
         parameters: z.object({
           url: z.string(),
           method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
           headers: z.record(z.string()).optional(),
         }),
         execute: async ({ url, method, headers }) =>
-          fetchUrl(url, { method, headers }),
+          truncateToolResult(
+            await fetchUrl(url, { method, headers }),
+            contextManager.getToolResultLimit()
+          ),
       }),
 
       executeCommand: tool({
         description:
-          "Run a single sandboxed command in the scratch workspace. Use this for curl, rg, grep, jq, python3, node, and related debugging commands. No pipes or redirection.",
+          "Run a single sandboxed command in the scratch workspace. Use this for curl (including testing API endpoints through the auth proxy at localhost:4000/proxy/<provider>/<path>), rg, grep, jq, python3, node, and related debugging commands. No pipes or redirection.",
         parameters: z.object({
           command: z.string(),
         }),
@@ -294,10 +373,10 @@ export async function createWorkflowAgentResponse(
             cwd: workspace.workspacePath,
           });
 
-          return {
-            workspacePath: workspace.workspacePath,
-            ...execution,
-          };
+          return truncateToolResult(
+            { workspacePath: workspace.workspacePath, ...execution },
+            contextManager.getToolResultLimit()
+          );
         },
       }),
 
@@ -310,7 +389,10 @@ export async function createWorkflowAgentResponse(
           maxResults: z.number().min(1).max(20).optional(),
         }),
         execute: async ({ query, glob, maxResults }) =>
-          searchProjectFiles({ query, glob, maxResults }),
+          truncateToolResult(
+            await searchProjectFiles({ query, glob, maxResults }),
+            contextManager.getToolResultLimit()
+          ),
       }),
 
       readProjectFile: tool({
@@ -319,7 +401,11 @@ export async function createWorkflowAgentResponse(
         parameters: z.object({
           path: z.string(),
         }),
-        execute: async ({ path: targetPath }) => readProjectFile(targetPath),
+        execute: async ({ path: targetPath }) =>
+          truncateToolResult(
+            await readProjectFile(targetPath),
+            contextManager.getToolResultLimit()
+          ),
       }),
 
       getCurrentDraft: tool({
@@ -331,7 +417,7 @@ export async function createWorkflowAgentResponse(
 
       generateWorkflowDraft: tool({
         description:
-          "Generate or revise the workflow draft. Use this after you have enough context or after you diagnose a draft issue.",
+          "Generate or revise the workflow draft. Before calling this, ensure you have grounded all API endpoints by reading integration references, researching documentation, and testing READ endpoints. Pass grounded API findings in the instructions parameter using the GROUNDED API CONTEXT format.",
         parameters: z.object({
           instructions: z
             .string()
@@ -340,8 +426,12 @@ export async function createWorkflowAgentResponse(
               "Optional extra instructions, findings, or repair notes to incorporate."
             ),
         }),
-        execute: async ({ instructions }) => {
+        execute: async ({ instructions }, { toolCallId }) => {
           try {
+            const groundedApiContext = instructions
+              ? parseGroundedApiContext(instructions)
+              : undefined;
+
             const draftMessages = instructions?.trim()
               ? [
                   ...transcriptMessages,
@@ -355,6 +445,10 @@ export async function createWorkflowAgentResponse(
               messages: draftMessages,
               currentArtifact: draft,
               resolvedModel: model,
+              groundedApiContext,
+              onProgress(update) {
+                writeWorkflowDraftProgress(dataStream, toolCallId, update);
+              },
             });
 
             if (generated.artifact) {
@@ -370,15 +464,16 @@ export async function createWorkflowAgentResponse(
               blockedAccesses: generated.blockedAccesses || [],
             };
           } catch (error) {
+            const hasDraft = hasMeaningfulDraft(draft);
             return {
               error:
                 error instanceof Error
                   ? error.message
                   : "Workflow generation failed.",
-              artifact: withTranscript(
-                hasMeaningfulDraft(draft) ? draft : null,
-                requestMessages
-              ),
+              hasDraft,
+              message: hasDraft
+                ? "The previous draft is still available, but this generation attempt did not update it. Use getCurrentDraft if you need to inspect it before retrying."
+                : "No draft was created from this generation attempt.",
             };
           }
         },
@@ -527,10 +622,11 @@ export async function createWorkflowAgentResponse(
         },
       }),
     },
-  });
+      });
 
-  return result.toDataStreamResponse({
-    getErrorMessage(error) {
+      result.mergeIntoDataStream(dataStream);
+    },
+    onError(error) {
       return error instanceof Error
         ? error.message
         : "Workflow agent execution failed.";

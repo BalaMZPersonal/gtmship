@@ -8,12 +8,14 @@ import { AgentTerminal } from "@/components/agent-terminal";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [chatOpen, setChatOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [agentSessionKey, setAgentSessionKey] = useState(0);
   const [agentInitialMessage, setAgentInitialMessage] = useState<
     string | undefined
   >();
 
   const handleOpenAgent = useCallback((initialMessage?: string) => {
     setAgentInitialMessage(initialMessage);
+    setAgentSessionKey((current) => current + 1);
     setAgentOpen(true);
     setChatOpen(false);
   }, []);
@@ -42,6 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
       {agentOpen && (
         <AgentTerminal
+          key={agentSessionKey}
           onClose={() => {
             setAgentOpen(false);
             setAgentInitialMessage(undefined);

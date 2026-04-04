@@ -12,6 +12,7 @@ import {
   validateRuntimeKey,
 } from "../services/workflow-binding-resolver.js";
 import {
+  deleteConnectionSecretReplicasById,
   getConnectionSecretReplicas,
   normalizeSecretBackendKind,
   syncConnectionSecretReplicasById,
@@ -246,11 +247,19 @@ connectionRoutes.post("/:id/test", async (req, res) => {
 
     if (response.ok) {
       res.json({ success: true, status: response.status });
-    } else {
+    } else if (response.status === 401 || response.status === 403) {
       res.json({
         success: false,
         status: response.status,
-        error: await response.text(),
+        error: "Authentication failed — token may be expired or revoked.",
+      });
+    } else {
+      // Non-auth errors (404, 500, etc.) mean the API is reachable and
+      // credentials were accepted — the test endpoint is purely an auth check.
+      res.json({
+        success: true,
+        status: response.status,
+        message: "API reachable and credentials accepted.",
       });
     }
   } catch (error) {
@@ -314,6 +323,17 @@ connectionRoutes.post("/:id/refresh", async (req, res) => {
 
 // Delete a connection
 connectionRoutes.delete("/:id", async (req, res) => {
+  const connection = await prisma.connection.findUnique({
+    where: { id: req.params.id },
+    select: { id: true },
+  });
+
+  if (!connection) {
+    res.status(404).json({ error: "Connection not found" });
+    return;
+  }
+
+  await deleteConnectionSecretReplicasById(connection.id);
   await prisma.connection.delete({ where: { id: req.params.id } });
   res.status(204).end();
 });

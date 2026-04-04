@@ -17,6 +17,23 @@ interface DeployOptions {
   workflow?: string;
 }
 
+type ConnectionAuthMode = "proxy" | "secret_manager";
+type SecretBackendKind = "aws_secrets_manager" | "gcp_secret_manager";
+
+interface AuthStrategyBackend {
+  kind: SecretBackendKind;
+  region?: string;
+  projectId?: string;
+  secretPrefix?: string;
+}
+
+interface AuthStrategyStatus {
+  mode: ConnectionAuthMode;
+  configuredBackends: AuthStrategyBackend[];
+}
+
+const DEFAULT_SECRET_PREFIX = "gtmship-connections";
+
 /**
  * Resolve cloud credentials from auth service or environment.
  */
@@ -80,6 +97,198 @@ function cleanupCredentials(): void {
     }
     delete process.env._GTMSHIP_GCP_TEMP_KEY;
   }
+}
+
+function sanitizeSegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_/.]/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/-+/g, "-")
+    .replace(/^[-/.]+|[-/.]+$/g, "");
+}
+
+function sanitizeSecretId(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9-_]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const safe = normalized.length > 0 ? normalized : "connection-secret";
+  if (!/^[A-Za-z]/.test(safe)) {
+    return `s-${safe}`.slice(0, 255);
+  }
+  return safe.slice(0, 255);
+}
+
+function resolveSecretPrefix(secretPrefix?: string | null): string {
+  return secretPrefix?.trim()
+    ? sanitizeSegment(secretPrefix)
+    : DEFAULT_SECRET_PREFIX;
+}
+
+async function loadAuthStrategy(authUrl: string): Promise<AuthStrategyStatus | null> {
+  try {
+    const response = await fetch(`${authUrl}/settings/auth-strategy`);
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as AuthStrategyStatus;
+  } catch {
+    return null;
+  }
+}
+
+function resolveBackendForPlan(
+  strategy: AuthStrategyStatus,
+  plan: WorkflowPlanRecord["plan"]
+): AuthStrategyBackend | null {
+  const requestedKind = plan.auth?.backend?.kind;
+  const configured =
+    requestedKind
+      ? strategy.configuredBackends.find((backend) => backend.kind === requestedKind)
+      : plan.provider === "aws"
+        ? strategy.configuredBackends.find(
+            (backend) => backend.kind === "aws_secrets_manager"
+          )
+        : strategy.configuredBackends.find(
+            (backend) => backend.kind === "gcp_secret_manager"
+          );
+
+  const kind =
+    requestedKind ||
+    configured?.kind ||
+    (plan.provider === "aws"
+      ? "aws_secrets_manager"
+      : "gcp_secret_manager");
+
+  if (kind === "aws_secrets_manager") {
+    const region =
+      plan.auth?.backend?.region || plan.region || configured?.region || null;
+    if (!region) {
+      return null;
+    }
+
+    return {
+      kind,
+      region,
+      secretPrefix:
+        plan.auth?.backend?.secretPrefix || configured?.secretPrefix || undefined,
+    };
+  }
+
+  const projectId =
+    plan.auth?.backend?.projectId ||
+    plan.gcpProject ||
+    configured?.projectId ||
+    null;
+  if (!projectId) {
+    return null;
+  }
+
+  return {
+    kind,
+    projectId,
+    secretPrefix:
+      plan.auth?.backend?.secretPrefix || configured?.secretPrefix || undefined,
+  };
+}
+
+function buildSecretRef(
+  backend: AuthStrategyBackend,
+  providerSlug: string,
+  connectionId?: string
+): string | undefined {
+  if (!connectionId) {
+    return undefined;
+  }
+
+  const secretPrefix = resolveSecretPrefix(backend.secretPrefix);
+  if (backend.kind === "aws_secrets_manager") {
+    return `${secretPrefix}/${sanitizeSegment(providerSlug)}/${sanitizeSegment(
+      connectionId
+    )}/runtime`;
+  }
+
+  if (!backend.projectId) {
+    return undefined;
+  }
+
+  const secretId = sanitizeSecretId(
+    `${secretPrefix}-${providerSlug}-${connectionId}`
+  );
+  return `projects/${backend.projectId}/secrets/${secretId}-runtime`;
+}
+
+function applyAuthStrategyToWorkflowPlans(
+  workflowPlans: WorkflowPlanRecord[],
+  strategy: AuthStrategyStatus | null
+): WorkflowPlanRecord[] {
+  if (!strategy) {
+    return workflowPlans;
+  }
+
+  return workflowPlans.map((workflowPlan) => {
+    const plan = workflowPlan.plan;
+
+    if (strategy.mode === "proxy") {
+      return {
+        ...workflowPlan,
+        plan: {
+          ...plan,
+          authMode: "proxy",
+          auth: {
+            ...(plan.auth || {}),
+            mode: "proxy",
+          },
+        },
+      };
+    }
+
+    const backend = resolveBackendForPlan(strategy, plan);
+    const existingProviders = plan.auth?.manifest?.providers || [];
+    const manifest =
+      backend && plan.bindings.length > 0
+        ? {
+            version: plan.auth?.manifest?.version || "1",
+            generatedAt: new Date().toISOString(),
+            providers: plan.bindings.map((binding) => {
+              const existing = existingProviders.find(
+                (provider) => provider.providerSlug === binding.providerSlug
+              );
+
+              return {
+                ...(existing || {}),
+                providerSlug: binding.providerSlug,
+                connectionId:
+                  binding.resolvedConnectionId || existing?.connectionId,
+                secretRef: buildSecretRef(
+                  backend,
+                  binding.providerSlug,
+                  binding.resolvedConnectionId
+                ),
+              };
+            }),
+          }
+        : plan.auth?.manifest;
+
+    return {
+      ...workflowPlan,
+      plan: {
+        ...plan,
+        authMode: "secret_manager",
+        auth: {
+          ...(plan.auth || {}),
+          mode: "secret_manager",
+          backend: backend || plan.auth?.backend,
+          runtimeAccess: plan.auth?.runtimeAccess || "direct",
+          manifest,
+        },
+      },
+    };
+  });
 }
 
 async function syncWorkflowControlPlane(
@@ -170,7 +379,7 @@ async function syncWorkflowControlPlane(
               plannedResources: plan.resources,
               trigger: plan.trigger,
               auth: plan.auth,
-              authManifest: plan.auth.manifest,
+              authManifest: plan.auth?.manifest,
               runtimeTarget,
               platformOutputs: context.rawOutputs,
             },
@@ -240,13 +449,17 @@ export async function deployCommand(options: DeployOptions) {
     console.log(chalk.yellow("  Could not fetch connections from auth service. Bindings may be unresolved."));
   }
 
-  const workflowPlans = loadWorkflowPlans(process.cwd(), {
-    providerOverride: provider,
-    regionOverride: region,
-    gcpProjectOverride: gcpProject,
-    workflowId: options.workflow,
-    connections,
-  });
+  const authStrategy = await loadAuthStrategy(authUrl);
+  const workflowPlans = applyAuthStrategyToWorkflowPlans(
+    loadWorkflowPlans(process.cwd(), {
+      providerOverride: provider,
+      regionOverride: region,
+      gcpProjectOverride: gcpProject,
+      workflowId: options.workflow,
+      connections,
+    }),
+    authStrategy
+  );
 
   if (workflowPlans.length === 0) {
     if (options.workflow) {
@@ -260,6 +473,18 @@ export async function deployCommand(options: DeployOptions) {
       ),
     );
     return;
+  }
+
+  if (
+    authStrategy?.mode === "secret_manager" &&
+    workflowPlans.some((workflowPlan) => !workflowPlan.plan.auth?.backend?.kind)
+  ) {
+    console.log(
+      chalk.red(
+        "  Secret manager auth is enabled globally, but at least one workflow has no matching configured secret backend for this deployment target.",
+      ),
+    );
+    process.exit(1);
   }
 
   console.log(
@@ -355,6 +580,8 @@ export async function deployCommand(options: DeployOptions) {
   // -------------------------------------------------------------------------
 
   const executionKind = gcpNeeds?.executionKind || "service";
+  const runtimeAuthPlan = workflowPlans[0]?.plan;
+  const runtimeBackend = runtimeAuthPlan?.auth?.backend;
   const runtimeEnvVars: Record<string, string> = {
     GTMSHIP_RUNTIME_MODE:
       provider === "aws"
@@ -363,16 +590,22 @@ export async function deployCommand(options: DeployOptions) {
           ? "cloud-run-job"
           : "cloud-run-service",
     GTMSHIP_WORKFLOW_ID: workflowPlans[0]?.workflowId || "",
-    GTMSHIP_RUNTIME_AUTH_MODE: "secret_manager",
-    GTMSHIP_SECRET_BACKEND_KIND:
-      provider === "aws" ? "aws_secrets_manager" : "gcp_secret_manager",
-    GTMSHIP_SECRET_BACKEND_REGION: region,
-    ...(provider === "gcp" && gcpProject
-      ? { GTMSHIP_SECRET_BACKEND_PROJECT_ID: gcpProject }
+    GTMSHIP_RUNTIME_AUTH_MODE: runtimeAuthPlan?.authMode || "proxy",
+    ...(runtimeAuthPlan?.authMode === "secret_manager" &&
+    runtimeBackend?.kind
+      ? {
+          GTMSHIP_SECRET_BACKEND_KIND: runtimeBackend.kind,
+          ...(runtimeBackend.region
+            ? { GTMSHIP_SECRET_BACKEND_REGION: runtimeBackend.region }
+            : {}),
+          ...(runtimeBackend.projectId
+            ? { GTMSHIP_SECRET_BACKEND_PROJECT_ID: runtimeBackend.projectId }
+            : {}),
+          GTMSHIP_RUNTIME_AUTH_MANIFEST: JSON.stringify(
+            runtimeAuthPlan?.auth?.manifest || { providers: [] },
+          ),
+        }
       : {}),
-    GTMSHIP_RUNTIME_AUTH_MANIFEST: JSON.stringify(
-      workflowPlans[0]?.plan.auth?.manifest || { providers: [] },
-    ),
   };
 
   // Ensure Pulumi local backend doesn't prompt for a passphrase
@@ -422,21 +655,24 @@ export async function deployCommand(options: DeployOptions) {
     console.log(
       chalk.white(`  Storage:        ${chalk.gray(result.storageBucket)}`),
     );
-	    console.log("");
+    console.log("");
 
-	    try {
-	      const deployedWorkflowPlans = loadWorkflowPlans(process.cwd(), {
-	        providerOverride: provider,
-	        regionOverride: region,
-	        gcpProjectOverride: gcpProject,
-	        workflowId: options.workflow,
-	        baseUrl: result.apiEndpoint,
-	        connections,
-	      });
-	      const syncedCount = await syncWorkflowControlPlane(
-	        authUrl,
-	        deployedWorkflowPlans,
-	        {
+    try {
+      const deployedWorkflowPlans = applyAuthStrategyToWorkflowPlans(
+          loadWorkflowPlans(process.cwd(), {
+            providerOverride: provider,
+            regionOverride: region,
+            gcpProjectOverride: gcpProject,
+            workflowId: options.workflow,
+            baseUrl: result.apiEndpoint,
+            connections,
+          }),
+          authStrategy
+        );
+      const syncedCount = await syncWorkflowControlPlane(
+        authUrl,
+        deployedWorkflowPlans,
+        {
             rawOutputs: result.rawOutputs,
             provider,
             region,
@@ -446,7 +682,7 @@ export async function deployCommand(options: DeployOptions) {
             schedulerJobId: result.schedulerJobId || undefined,
             gcpTarget: result.gcpTarget,
           },
-	      );
+      );
       console.log(
         chalk.gray(
           `  Control Plane: synced ${syncedCount} workflow deployment record${syncedCount === 1 ? "" : "s"}`,
@@ -462,27 +698,30 @@ export async function deployCommand(options: DeployOptions) {
       console.log("");
     }
 
-	    console.log(chalk.green("  Workflow Triggers"));
-	    console.log(chalk.green("  " + "─".repeat(50)));
-	    for (const workflowPlan of loadWorkflowPlans(process.cwd(), {
-	      providerOverride: provider,
-	      regionOverride: region,
-	      gcpProjectOverride: gcpProject,
-	      workflowId: options.workflow,
-	      baseUrl: result.apiEndpoint,
-	      connections,
-	    })) {
-	      const triggerSummary =
-	        workflowPlan.plan.trigger.endpoint ||
-	        workflowPlan.plan.trigger.cron ||
-	        workflowPlan.plan.trigger.eventName ||
-	        workflowPlan.plan.trigger.description;
-	      console.log(
-	        chalk.white(
-	          `  ${workflowPlan.plan.workflowId}: ${chalk.cyan(triggerSummary)}`,
-	        ),
-	      );
-	    }
+    console.log(chalk.green("  Workflow Triggers"));
+    console.log(chalk.green("  " + "─".repeat(50)));
+    for (const workflowPlan of applyAuthStrategyToWorkflowPlans(
+        loadWorkflowPlans(process.cwd(), {
+          providerOverride: provider,
+          regionOverride: region,
+          gcpProjectOverride: gcpProject,
+          workflowId: options.workflow,
+          baseUrl: result.apiEndpoint,
+          connections,
+        }),
+        authStrategy
+      )) {
+      const triggerSummary =
+        workflowPlan.plan.trigger.endpoint ||
+        workflowPlan.plan.trigger.cron ||
+        workflowPlan.plan.trigger.eventName ||
+        workflowPlan.plan.trigger.description;
+      console.log(
+        chalk.white(
+          `  ${workflowPlan.plan.workflowId}: ${chalk.cyan(triggerSummary)}`,
+        ),
+      );
+    }
     console.log("");
 
     console.log(

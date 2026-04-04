@@ -4,9 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Loader2, Search } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
-import type {
-  WorkflowDeploymentLogEntry,
-  WorkflowDeploymentOverview,
+import {
+  getScopedWorkflowDeployments,
+  resolveSelectedExecutionName,
+  resolveSelectedWorkflowDeploymentId,
+  type WorkflowDeploymentLogEntry,
+  type WorkflowDeploymentOverview,
 } from "@/lib/deploy";
 
 const timeRanges = [
@@ -109,11 +112,13 @@ export default function LogsPage() {
   const queryProvider =
     searchParams.get("provider") === "gcp" ? "gcp" : "aws";
   const queryWorkflow = searchParams.get("workflow") || "";
+  const queryWorkflowSlug = searchParams.get("workflowSlug") || "";
+  const queryWorkflowValue = queryWorkflow || queryWorkflowSlug;
   const queryDeploymentId = searchParams.get("deploymentId") || "";
   const queryExecutionName = searchParams.get("executionName") || "";
 
   const [provider, setProvider] = useState<"aws" | "gcp">(queryProvider);
-  const [workflowId, setWorkflowId] = useState(queryWorkflow);
+  const [workflowId, setWorkflowId] = useState(queryWorkflowValue);
   const [since, setSince] = useState("1h");
   const [logs, setLogs] = useState<WorkflowDeploymentLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -133,16 +138,54 @@ export default function LogsPage() {
 
   useEffect(() => {
     setProvider(queryProvider);
-    setWorkflowId(queryWorkflow);
+    setWorkflowId(queryWorkflowValue);
     setSelectedDeploymentId(queryDeploymentId);
     setSelectedExecutionName(queryExecutionName);
-  }, [queryDeploymentId, queryExecutionName, queryProvider, queryWorkflow]);
+  }, [
+    queryDeploymentId,
+    queryExecutionName,
+    queryProvider,
+    queryWorkflowValue,
+  ]);
+
+  const workflowLookup = useMemo(() => {
+    const trimmedWorkflow = workflowId.trim();
+    if (!trimmedWorkflow) {
+      return {
+        workflowId: undefined,
+        workflowSlug: undefined,
+      };
+    }
+
+    return {
+      workflowId: trimmedWorkflow,
+      workflowSlug:
+        queryWorkflowSlug &&
+        (trimmedWorkflow === queryWorkflow ||
+          trimmedWorkflow === queryWorkflowSlug)
+          ? queryWorkflowSlug
+          : undefined,
+    };
+  }, [queryWorkflow, queryWorkflowSlug, workflowId]);
+
+  const visibleGcpDeployments = useMemo(() => {
+    if (provider !== "gcp") {
+      return [];
+    }
+
+    return getScopedWorkflowDeployments(gcpDeployments, {
+      provider: "gcp",
+      workflowId: workflowLookup.workflowId,
+      workflowSlug: workflowLookup.workflowSlug,
+    });
+  }, [gcpDeployments, provider, workflowLookup]);
 
   const selectedDeployment = useMemo(
     () =>
-      gcpDeployments.find((deployment) => deployment.id === selectedDeploymentId) ||
-      null,
-    [gcpDeployments, selectedDeploymentId]
+      visibleGcpDeployments.find(
+        (deployment) => deployment.id === selectedDeploymentId
+      ) || null,
+    [selectedDeploymentId, visibleGcpDeployments]
   );
 
   const executionOptions = selectedDeployment?.recentExecutions || [];
@@ -163,7 +206,9 @@ export default function LogsPage() {
     setDeploymentError("");
     try {
       const fetchDeployments = async () => {
-        const deployments = await api.getWorkflowDeployments({
+        const deployments = await api.getWorkflowDeploymentsForWorkflow({
+          workflowId: workflowLookup.workflowId,
+          workflowSlug: workflowLookup.workflowSlug,
           provider: "gcp",
           includeLive: true,
           executionLimit: 10,
@@ -175,24 +220,12 @@ export default function LogsPage() {
       if (nextDeployments.length === 0) {
         await api.reconcileWorkflowDeployments({
           provider: "gcp",
-          workflow: workflowId.trim() || undefined,
+          workflow: queryWorkflowSlug || workflowId.trim() || undefined,
         });
         nextDeployments = await fetchDeployments();
       }
 
       setGcpDeployments(nextDeployments);
-      setSelectedDeploymentId((current) => {
-        if (current && nextDeployments.some((deployment) => deployment.id === current)) {
-          return current;
-        }
-        if (
-          queryDeploymentId &&
-          nextDeployments.some((deployment) => deployment.id === queryDeploymentId)
-        ) {
-          return queryDeploymentId;
-        }
-        return nextDeployments[0]?.id || "";
-      });
     } catch (loadError) {
       setGcpDeployments([]);
       setDeploymentError(
@@ -203,7 +236,43 @@ export default function LogsPage() {
     } finally {
       setDeploymentsLoading(false);
     }
-  }, [provider, queryDeploymentId, workflowId]);
+  }, [provider, queryWorkflowSlug, workflowId, workflowLookup]);
+
+  useEffect(() => {
+    if (provider !== "gcp") {
+      return;
+    }
+
+    setSelectedDeploymentId((current) =>
+      resolveSelectedWorkflowDeploymentId(
+        visibleGcpDeployments,
+        current,
+        queryDeploymentId
+      )
+    );
+  }, [provider, queryDeploymentId, visibleGcpDeployments]);
+
+  useEffect(() => {
+    setSelectedExecutionName((current) => {
+      if (
+        current &&
+        current === queryExecutionName &&
+        selectedDeploymentId === queryDeploymentId
+      ) {
+        return current;
+      }
+
+      return resolveSelectedExecutionName(
+        selectedDeployment?.recentExecutions || [],
+        current
+      );
+    });
+  }, [
+    queryDeploymentId,
+    queryExecutionName,
+    selectedDeployment,
+    selectedDeploymentId,
+  ]);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -211,13 +280,13 @@ export default function LogsPage() {
     setLiveError("");
     try {
       if (provider === "gcp") {
-        if (!selectedDeploymentId) {
+        if (!selectedDeployment) {
           setLogs([]);
           return;
         }
 
         const response = await api.getWorkflowDeploymentLogs(
-          selectedDeploymentId,
+          selectedDeployment.id,
           {
             since,
             limit: 200,
@@ -246,7 +315,7 @@ export default function LogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [provider, selectedDeploymentId, selectedExecutionName, since, workflowId]);
+  }, [provider, selectedDeployment, selectedExecutionName, since, workflowId]);
 
   useEffect(() => {
     void loadDeployments();
@@ -334,12 +403,12 @@ export default function LogsPage() {
                 onChange={(event) => setSelectedDeploymentId(event.target.value)}
                 className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
               >
-                {gcpDeployments.length === 0 ? (
+                {visibleGcpDeployments.length === 0 ? (
                   <option value="">
                     {deploymentsLoading ? "Loading deployments..." : "No deployments"}
                   </option>
                 ) : null}
-                {gcpDeployments.map((deployment) => (
+                {visibleGcpDeployments.map((deployment) => (
                   <option key={deployment.id} value={deployment.id}>
                     {describeDeployment(deployment)}
                   </option>

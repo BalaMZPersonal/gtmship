@@ -14,6 +14,16 @@ import {
 
 export const proxyRoutes: Router = Router();
 
+export function buildProxyUpstreamUrl(
+  baseUrl: string,
+  path: string,
+  originalUrl?: string
+): string {
+  const queryStart = originalUrl?.indexOf("?") ?? -1;
+  const search = queryStart >= 0 ? originalUrl!.slice(queryStart) : "";
+  return `${baseUrl}${path}${search}`;
+}
+
 /**
  * Proxy requests to connected platforms with injected auth headers.
  *
@@ -74,27 +84,57 @@ proxyRoutes.all("/:slug/{*splat}", async (req, res) => {
     }
 
     const baseUrl = connection.instanceUrl || connection.provider.baseUrl;
-    const url = `${baseUrl}${path}`;
+    const url = buildProxyUpstreamUrl(baseUrl, path, req.originalUrl);
 
+    const incomingContentType = req.headers["content-type"] || "application/json";
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
+      "Content-Type": incomingContentType,
       ...buildAuthHeaders({
         accessToken: token,
         provider: connection.provider,
       }),
     };
 
+    // Forward the request body: use raw body for non-JSON, JSON.stringify for JSON
+    let requestBody: string | Buffer | undefined;
+    if (!["GET", "HEAD"].includes(req.method)) {
+      if (incomingContentType.includes("application/json")) {
+        requestBody = JSON.stringify(req.body);
+      } else if (Buffer.isBuffer(req.body)) {
+        requestBody = req.body;
+      } else if (typeof req.body === "string") {
+        requestBody = req.body;
+      } else {
+        requestBody = JSON.stringify(req.body);
+      }
+    }
+
     // Forward the request
     const response = await fetch(url, {
       method: req.method,
       headers,
-      body: ["GET", "HEAD"].includes(req.method)
-        ? undefined
-        : JSON.stringify(req.body),
+      body: requestBody,
     });
 
-    const data = await response.json().catch(() => null);
-    res.status(response.status).json(data);
+    // Handle response based on upstream content type
+    const responseContentType = response.headers.get("content-type") || "";
+    const isJsonResponse =
+      responseContentType.includes("application/json") ||
+      responseContentType.includes("text/json");
+
+    if (isJsonResponse) {
+      const data = await response.json().catch(() => null);
+      res.status(response.status).json(data);
+    } else {
+      // Binary or non-JSON response: return as base64 envelope
+      const buffer = Buffer.from(await response.arrayBuffer());
+      res.status(response.status).json({
+        _binary: true,
+        contentType: responseContentType,
+        data: buffer.toString("base64"),
+        size: buffer.length,
+      });
+    }
   } catch (error) {
     res.status(502).json({
       error: "Proxy request failed",

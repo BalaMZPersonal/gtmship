@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { listActiveConnections } from "@/lib/workflow-studio/auth-service";
+import {
+  getAuthStrategy,
+  listActiveConnections,
+} from "@/lib/workflow-studio/auth-service";
 import { buildWorkflowDeploymentPlanForArtifact } from "@/lib/workflow-studio/deployment";
 import {
   listStoredWorkflows,
@@ -132,13 +135,14 @@ export async function POST(request: Request) {
     const workflowSlugs = workflow
       ? [workflow]
       : listing.workflows.map((item) => item.slug);
-    const [connections, records] = await Promise.all([
+    const [connections, records, authStrategy] = await Promise.all([
       listActiveConnections(),
       Promise.all(
         workflowSlugs.map((slug) =>
           loadStoredWorkflow(slug).catch(() => null)
         )
       ),
+      getAuthStrategy(),
     ]);
 
     const deployments = [];
@@ -163,6 +167,7 @@ export async function POST(request: Request) {
         provider: "gcp",
         region: region || deploymentRun.region || undefined,
         gcpProject: gcpProject || deploymentRun.gcpProject || undefined,
+        authStrategy,
       });
 
       const platformOutputs = buildPlatformOutputs({

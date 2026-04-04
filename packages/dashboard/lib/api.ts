@@ -7,6 +7,11 @@ import type {
   WorkflowDeploymentLogsResponse,
   WorkflowDeploymentOverview,
 } from "@/lib/deploy";
+import {
+  dedupeWorkflowDeploymentsById,
+  getWorkflowDeploymentRefs,
+} from "@/lib/deploy";
+import type { ConnectionAuthStrategyStatus } from "@/lib/workflow-studio/types";
 
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
 
@@ -40,6 +45,36 @@ async function localRequest<T>(path: string, options?: RequestInit): Promise<T> 
   }
 
   return data;
+}
+
+type WorkflowDeploymentListParams = {
+  workflowId?: string;
+  provider?: string;
+  status?: string;
+  includeLive?: boolean;
+  executionLimit?: number;
+};
+
+type WorkflowScopedDeploymentListParams = WorkflowDeploymentListParams & {
+  workflowSlug?: string;
+};
+
+async function requestWorkflowDeployments(
+  params?: WorkflowDeploymentListParams
+): Promise<WorkflowDeploymentOverview[]> {
+  const query = new URLSearchParams();
+  if (params?.workflowId) query.set("workflowId", params.workflowId);
+  if (params?.provider) query.set("provider", params.provider);
+  if (params?.status) query.set("status", params.status);
+  if (params?.includeLive) query.set("includeLive", "true");
+  if (typeof params?.executionLimit === "number") {
+    query.set("executionLimit", String(params.executionLimit));
+  }
+
+  const suffix = query.toString();
+  return request(
+    `/workflow-control-plane/deployments${suffix ? `?${suffix}` : ""}`
+  ) as Promise<WorkflowDeploymentOverview[]>;
 }
 
 export const api = {
@@ -79,10 +114,19 @@ export const api = {
     const qs = params.toString();
     return request(`/auth/${slug}/connect${qs ? `?${qs}` : ""}`);
   },
-  connectApiKey: (slug: string, apiKey: string, label?: string) =>
+  connectApiKey: (
+    slug: string,
+    apiKey: string,
+    label?: string,
+    connectionId?: string
+  ) =>
     request(`/auth/${slug}/connect-key`, {
       method: "POST",
-      body: JSON.stringify({ api_key: apiKey, label }),
+      body: JSON.stringify({
+        api_key: apiKey,
+        label,
+        connection_id: connectionId,
+      }),
     }),
 
   // Catalog
@@ -97,12 +141,35 @@ export const api = {
 
   // Settings
   getSettings: () => request("/settings") as Promise<CloudSettingRecord[]>,
+  getAuthStrategy: () =>
+    request("/settings/auth-strategy") as Promise<ConnectionAuthStrategyStatus>,
   getSetting: (key: string) => request(`/settings/${key}`),
   setSetting: (key: string, value: string) =>
     request(`/settings/${key}`, {
       method: "PUT",
       body: JSON.stringify({ value }),
     }),
+  setAuthStrategy: (input: { mode: "proxy" | "secret_manager" }) =>
+    request("/settings/auth-strategy", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }) as Promise<
+      ConnectionAuthStrategyStatus & {
+        updated?: boolean;
+        backfill?: {
+          connections?: {
+            activeConnections: number;
+            syncedReplicas: number;
+            errorReplicas: number;
+          };
+          deployments?: {
+            total: number;
+            updated: number;
+            skipped: number;
+          };
+        };
+      }
+    >,
   deleteSetting: (key: string) =>
     request(`/settings/${key}`, { method: "DELETE" }),
   searchAiModels: (input: {
@@ -113,6 +180,18 @@ export const api = {
     localRequest<{ models: AiModelOption[] }>("/api/ai/models", {
       method: "POST",
       body: JSON.stringify(input),
+    }),
+  deleteWorkflow: (
+    slug: string,
+    input?: { removeDeployment?: boolean }
+  ) =>
+    localRequest<{
+      slug: string;
+      workflowId: string;
+      removedDeploymentCount: number;
+    }>(`/api/workflows/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+      body: JSON.stringify(input || {}),
     }),
 
   // Deploy
@@ -128,26 +207,25 @@ export const api = {
       cache: "no-store",
     }).then((r) => r.json());
   },
-  getWorkflowDeployments: async (params?: {
-    workflowId?: string;
-    provider?: string;
-    status?: string;
-    includeLive?: boolean;
-    executionLimit?: number;
-  }) => {
-    const query = new URLSearchParams();
-    if (params?.workflowId) query.set("workflowId", params.workflowId);
-    if (params?.provider) query.set("provider", params.provider);
-    if (params?.status) query.set("status", params.status);
-    if (params?.includeLive) query.set("includeLive", "true");
-    if (typeof params?.executionLimit === "number") {
-      query.set("executionLimit", String(params.executionLimit));
+  getWorkflowDeployments: requestWorkflowDeployments,
+  getWorkflowDeploymentsForWorkflow: async (
+    params?: WorkflowScopedDeploymentListParams
+  ) => {
+    const workflowRefs = getWorkflowDeploymentRefs(params);
+    if (workflowRefs.length === 0) {
+      return requestWorkflowDeployments(params);
     }
 
-    const suffix = query.toString();
-    return request(
-      `/workflow-control-plane/deployments${suffix ? `?${suffix}` : ""}`
-    ) as Promise<WorkflowDeploymentOverview[]>;
+    const deployments = await Promise.all(
+      workflowRefs.map((workflowId) =>
+        requestWorkflowDeployments({
+          ...params,
+          workflowId,
+        })
+      )
+    );
+
+    return dedupeWorkflowDeploymentsById(deployments.flat());
   },
   getWorkflowDeployment: (id: string, params?: {
     includeLive?: boolean;

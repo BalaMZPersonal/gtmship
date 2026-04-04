@@ -5,7 +5,7 @@ import type {
 } from "@prisma/client";
 import { prisma } from "./db.js";
 import { decrypt, encrypt } from "./crypto.js";
-import { syncConnectionSecretReplicasById } from "./connection-secret-replicas.js";
+import { scheduleConnectionSecretSync } from "./auth-strategy.js";
 import {
   getSharedOAuthProviderConfig,
   resolveSharedOAuthProviderKey,
@@ -162,7 +162,7 @@ export async function persistRefreshedTokens(
   }
 
   try {
-    await syncConnectionSecretReplicasById(connection.id);
+    await scheduleConnectionSecretSync(connection.id);
   } catch (error) {
     console.warn(
       `[connections] Failed to sync secret replicas after refresh for ${connection.id}: ${

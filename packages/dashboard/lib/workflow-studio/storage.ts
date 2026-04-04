@@ -3,6 +3,7 @@ import {
   readdir,
   readFile,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -65,6 +66,7 @@ function fallbackArtifactFromCode(
     writeCheckpoints: [],
     chatSummary: "Loaded from an existing workflow file.",
     messages: [],
+    transcriptCompaction: undefined,
     triggerConfig: {
       schedule:
         trigger.type === "schedule" ? { cron: trigger.cron } : undefined,
@@ -95,6 +97,15 @@ function buildWorkflowPaths(projectRoot: string, slug: string) {
   );
 
   return { workflowPath, metadataPath };
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
+  );
 }
 
 export function slugifyWorkflowTitle(value: string): string {
@@ -304,4 +315,36 @@ export async function saveStoredWorkflow(
     artifact: artifactWithPlan,
     updatedAt: workflowStats.mtime.toISOString(),
   };
+}
+
+export async function deleteStoredWorkflow(slug: string): Promise<void> {
+  const resolution = await resolveProjectRoot();
+  if (!resolution.configured || !resolution.projectRoot) {
+    throw new Error(
+      resolution.reason ||
+        "Project root is not configured for Workflow Studio."
+    );
+  }
+
+  const { workflowPath, metadataPath } = buildWorkflowPaths(
+    resolution.projectRoot,
+    slug
+  );
+
+  try {
+    await unlink(workflowPath);
+  } catch (error) {
+    if (isFileNotFoundError(error)) {
+      throw new Error(`Workflow "${slug}" not found.`);
+    }
+    throw error;
+  }
+
+  try {
+    await unlink(metadataPath);
+  } catch (error) {
+    if (!isFileNotFoundError(error)) {
+      throw error;
+    }
+  }
 }

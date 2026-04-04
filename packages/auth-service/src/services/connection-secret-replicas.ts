@@ -15,6 +15,7 @@ export interface SecretBackendTarget {
   kind: SecretBackendKind;
   region?: string | null;
   projectId?: string | null;
+  secretPrefix?: string | null;
 }
 
 export interface ConnectionSecretReplicaRow {
@@ -132,7 +133,26 @@ function sanitizeSecretId(value: string): string {
   return safe.slice(0, 255);
 }
 
-function getSecretPrefix(): string {
+async function getConfiguredSecretPrefix(): Promise<string | null> {
+  const configuredPrefix = normalizeText(await readSetting("connection_secret_prefix"));
+  if (configuredPrefix) {
+    return sanitizeSegment(configuredPrefix);
+  }
+
+  return null;
+}
+
+async function getSecretPrefix(explicitPrefix?: string | null): Promise<string> {
+  const normalizedExplicit = normalizeText(explicitPrefix);
+  if (normalizedExplicit) {
+    return sanitizeSegment(normalizedExplicit);
+  }
+
+  const configuredPrefix = await getConfiguredSecretPrefix();
+  if (configuredPrefix) {
+    return configuredPrefix;
+  }
+
   const envPrefix = process.env.GTMSHIP_CONNECTION_SECRET_PREFIX;
   if (envPrefix && envPrefix.trim()) {
     return sanitizeSegment(envPrefix);
@@ -141,13 +161,16 @@ function getSecretPrefix(): string {
   return DEFAULT_SECRET_PREFIX;
 }
 
-function buildSecretNames(connection: ConnectionForSecretSync): {
+async function buildSecretNames(
+  connection: ConnectionForSecretSync,
+  secretPrefix?: string | null
+): Promise<{
   awsRuntimeName: string;
   awsControlName: string;
   gcpRuntimeId: string;
   gcpControlId: string;
-} {
-  const prefix = getSecretPrefix();
+}> {
+  const prefix = await getSecretPrefix(secretPrefix);
   const providerSlug = sanitizeSegment(connection.provider.slug || "provider");
   const connectionId = sanitizeSegment(connection.id);
   const basePath = `${prefix}/${providerSlug}/${connectionId}`;
@@ -298,6 +321,38 @@ async function putAwsSecretValue(params: {
   return arn || params.secretName;
 }
 
+async function deleteAwsSecret(params: {
+  region: string;
+  secretId: string;
+}): Promise<void> {
+  const { client, commands } = await loadAwsClient(params.region);
+  const DeleteSecretCommand = commands.DeleteSecretCommand as new (
+    input: Record<string, unknown>
+  ) => unknown;
+
+  if (!DeleteSecretCommand) {
+    throw new Error("AWS Secrets Manager delete command is unavailable.");
+  }
+
+  try {
+    await (client as { send: (command: unknown) => Promise<unknown> }).send(
+      new DeleteSecretCommand({
+        SecretId: params.secretId,
+        ForceDeleteWithoutRecovery: true,
+      })
+    );
+  } catch (error) {
+    const errorName =
+      typeof error === "object" && error && "name" in error
+        ? String((error as { name?: unknown }).name)
+        : "UnknownError";
+    if (errorName === "ResourceNotFoundException") {
+      return;
+    }
+    throw error;
+  }
+}
+
 async function loadGcpClient(
   projectId: string
 ): Promise<{ client: unknown; projectId: string }> {
@@ -381,6 +436,35 @@ async function putGcpSecretValue(params: {
   return secretName;
 }
 
+function extractGcpProjectId(secretName: string): string | null {
+  const match = /^projects\/([^/]+)\/secrets\/[^/]+$/u.exec(secretName);
+  return match?.[1] || null;
+}
+
+async function deleteGcpSecret(params: {
+  projectId: string;
+  secretName: string;
+}): Promise<void> {
+  const { client } = await loadGcpClient(params.projectId);
+
+  try {
+    await (client as {
+      deleteSecret: (args: Record<string, unknown>) => Promise<unknown>;
+    }).deleteSecret({
+      name: params.secretName,
+    });
+  } catch (error) {
+    const errorCode =
+      typeof error === "object" && error && "code" in error
+        ? Number((error as { code?: unknown }).code)
+        : undefined;
+    if (errorCode === 5) {
+      return;
+    }
+    throw error;
+  }
+}
+
 function buildReplicaMetadata(connection: ConnectionForSecretSync): Record<string, unknown> {
   return {
     providerSlug: connection.provider.slug,
@@ -402,7 +486,7 @@ async function upsertReplicaRecord(params: {
   backend: SecretBackendTarget;
   runtimeSecretRef: string;
   controlSecretRef?: string | null;
-  status: "active" | "error";
+  status: "pending" | "active" | "error";
   lastError?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<ConnectionSecretReplicaRow> {
@@ -495,6 +579,7 @@ export async function loadConfiguredSecretBackendTargets(): Promise<
   SecretBackendTarget[]
 > {
   const targets: SecretBackendTarget[] = [];
+  const secretPrefix = await getConfiguredSecretPrefix();
 
   const awsRegion =
     normalizeText(await readSetting("aws_region")) ||
@@ -506,6 +591,7 @@ export async function loadConfiguredSecretBackendTargets(): Promise<
     targets.push({
       kind: "aws_secrets_manager",
       region: awsRegion,
+      secretPrefix,
     });
   }
 
@@ -528,6 +614,7 @@ export async function loadConfiguredSecretBackendTargets(): Promise<
       targets.push({
         kind: "gcp_secret_manager",
         projectId,
+        secretPrefix,
       });
     }
   }
@@ -545,13 +632,13 @@ export async function syncConnectionSecretReplicas(
   }
 
   const controlSecret = buildControlSecretPayload(connection);
-  const names = buildSecretNames(connection);
   const targets = explicitTarget
     ? [explicitTarget]
     : await loadConfiguredSecretBackendTargets();
   const replicas: ConnectionSecretReplicaRow[] = [];
 
   for (const target of targets) {
+    const names = await buildSecretNames(connection, target.secretPrefix);
     try {
       let runtimeSecretRef = "";
       let controlSecretRef: string | null = null;
@@ -633,6 +720,56 @@ export async function syncConnectionSecretReplicasById(
   return syncConnectionSecretReplicas(connection, explicitTarget);
 }
 
+export async function markConnectionSecretReplicasPending(
+  connection: ConnectionForSecretSync,
+  explicitTarget?: SecretBackendTarget
+): Promise<ConnectionSecretReplicaRow[]> {
+  const runtimeSecret = buildRuntimeSecretPayload(connection);
+  if (!runtimeSecret) {
+    return [];
+  }
+
+  const targets = explicitTarget
+    ? [explicitTarget]
+    : await loadConfiguredSecretBackendTargets();
+  const pending: ConnectionSecretReplicaRow[] = [];
+
+  for (const target of targets) {
+    const names = await buildSecretNames(connection, target.secretPrefix);
+    pending.push(
+      await upsertReplicaRecord({
+        connectionId: connection.id,
+        backend: target,
+        runtimeSecretRef:
+          target.kind === "aws_secrets_manager"
+            ? names.awsRuntimeName
+            : `projects/${target.projectId || "unknown"}/secrets/${names.gcpRuntimeId}`,
+        controlSecretRef:
+          target.kind === "aws_secrets_manager"
+            ? names.awsControlName
+            : `projects/${target.projectId || "unknown"}/secrets/${names.gcpControlId}`,
+        status: "pending",
+        lastError: null,
+        metadata: buildReplicaMetadata(connection),
+      })
+    );
+  }
+
+  return pending;
+}
+
+export async function markConnectionSecretReplicasPendingById(
+  connectionId: string,
+  explicitTarget?: SecretBackendTarget
+): Promise<ConnectionSecretReplicaRow[]> {
+  const connection = await loadConnectionForSecretSync(connectionId);
+  if (!connection) {
+    return [];
+  }
+
+  return markConnectionSecretReplicasPending(connection, explicitTarget);
+}
+
 export async function getConnectionSecretReplicas(
   connectionId: string
 ): Promise<ConnectionSecretReplicaRow[]> {
@@ -655,6 +792,55 @@ export async function getConnectionSecretReplicas(
     WHERE connection_id = ${connectionId}
     ORDER BY updated_at DESC
   `);
+}
+
+export async function deleteConnectionSecretReplicasById(
+  connectionId: string
+): Promise<{ deletedReplicas: number }> {
+  const replicas = await getConnectionSecretReplicas(connectionId);
+  const deletedSecrets = new Set<string>();
+
+  for (const replica of replicas) {
+    const secretRefs = [replica.runtimeSecretRef, replica.controlSecretRef].filter(
+      (value): value is string => typeof value === "string" && value.length > 0
+    );
+
+    for (const secretRef of secretRefs) {
+      const secretKey = `${replica.backendKind}:${secretRef}`;
+      if (deletedSecrets.has(secretKey)) {
+        continue;
+      }
+
+      if (replica.backendKind === "aws_secrets_manager") {
+        await deleteAwsSecret({
+          region: replica.backendRegion || "us-east-1",
+          secretId: secretRef,
+        });
+      } else {
+        const projectId =
+          replica.backendProjectId || extractGcpProjectId(secretRef);
+        if (!projectId) {
+          throw new Error(
+            `Cannot determine the GCP project for secret ${secretRef}.`
+          );
+        }
+
+        await deleteGcpSecret({
+          projectId,
+          secretName: secretRef,
+        });
+      }
+
+      deletedSecrets.add(secretKey);
+    }
+  }
+
+  await prisma.$executeRaw(Prisma.sql`
+    DELETE FROM connection_secret_replicas
+    WHERE connection_id = ${connectionId}
+  `);
+
+  return { deletedReplicas: replicas.length };
 }
 
 export async function syncDeploymentBindingSecretReplicas(params: {
@@ -695,19 +881,37 @@ export async function syncDeploymentBindingSecretReplicas(params: {
     backendProjectId?: string;
   }> = [];
 
-  for (const binding of bindingRows) {
-    const replicas = await syncConnectionSecretReplicasById(
-      binding.connectionId,
-      params.backend
-    );
-    const replica = replicas.find(
-      (item) =>
-        item.backendKind === params.backend.kind &&
-        item.backendRegion === (params.backend.region || "") &&
-        item.backendProjectId === (params.backend.projectId || "")
-    );
+  const connectionIds = Array.from(
+    new Set(bindingRows.map((binding) => binding.connectionId))
+  );
+  if (connectionIds.length === 0) {
+    return descriptors;
+  }
 
-    if (!replica || replica.status !== "active") {
+  const replicas = await prisma.connectionSecretReplica.findMany({
+    where: {
+      connectionId: { in: connectionIds },
+      backendKind: params.backend.kind,
+      backendRegion: params.backend.region || "",
+      backendProjectId: params.backend.projectId || "",
+      status: "active",
+    },
+    select: {
+      connectionId: true,
+      runtimeSecretRef: true,
+      controlSecretRef: true,
+      backendKind: true,
+      backendRegion: true,
+      backendProjectId: true,
+    },
+  });
+  const replicaByConnectionId = new Map(
+    replicas.map((replica) => [replica.connectionId, replica])
+  );
+
+  for (const binding of bindingRows) {
+    const replica = replicaByConnectionId.get(binding.connectionId);
+    if (!replica) {
       continue;
     }
 
@@ -716,7 +920,8 @@ export async function syncDeploymentBindingSecretReplicas(params: {
       connectionId: binding.connectionId,
       runtimeSecretRef: replica.runtimeSecretRef,
       controlSecretRef: replica.controlSecretRef,
-      backendKind: replica.backendKind,
+      backendKind:
+        normalizeSecretBackendKind(replica.backendKind) || params.backend.kind,
       backendRegion: replica.backendRegion || undefined,
       backendProjectId: replica.backendProjectId || undefined,
     });

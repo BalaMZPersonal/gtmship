@@ -21,6 +21,8 @@ import {
   extractTriggerFromSource,
   type DeploymentDefaults,
 } from "@/lib/workflow-studio/deploy-plan";
+import { applyGlobalAuthStrategyToPlan } from "@/lib/workflow-studio/auth-strategy";
+import { getAuthStrategy } from "@/lib/workflow-studio/auth-service";
 import {
   listStoredWorkflows,
   loadStoredWorkflow,
@@ -447,6 +449,11 @@ export async function GET(request: Request) {
       );
     }
 
+    const authStrategy = await getAuthStrategy();
+    const planDefaults: DeploymentDefaults = {
+      ...defaults,
+      authStrategy,
+    };
     const sharedPlanner = await resolveSharedPlanner();
     const records = await Promise.all(
       listing.workflows.map((workflow) => loadStoredWorkflow(workflow.slug))
@@ -458,7 +465,7 @@ export async function GET(request: Request) {
       records.map(async (record) => {
         const fallbackPlan = buildWorkflowPlanFromArtifact(
           record.artifact,
-          defaults
+          planDefaults
         );
 
         if (!sharedPlanner) {
@@ -488,7 +495,7 @@ export async function GET(request: Request) {
           const normalized = normalizeSharedPlan(sharedPlan, fallbackPlan);
           if (normalized) {
             usedSharedPlanner = true;
-            return normalized;
+            return applyGlobalAuthStrategyToPlan(normalized, authStrategy);
           }
         } catch {
           // Shared planner failed for this workflow; fallback planner is safe.

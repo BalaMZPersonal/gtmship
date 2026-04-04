@@ -18,6 +18,8 @@ interface ConnectModalProps {
   provider: ConnectableProvider;
   catalog: ConnectableProvider[];
   connectedSlugs: Set<string>;
+  targetConnectionId?: string;
+  targetConnectionLabel?: string | null;
   onClose: () => void;
   onConnected: () => void;
   onUseAgent: (provider: ConnectableProvider) => void;
@@ -35,6 +37,8 @@ export function ConnectModal({
   provider,
   catalog,
   connectedSlugs,
+  targetConnectionId,
+  targetConnectionLabel,
   onClose,
   onConnected,
   onUseAgent,
@@ -61,6 +65,7 @@ export function ConnectModal({
     oauthProviderKey: provider.oauthProviderKey,
   });
   const isSharedOAuth = isOAuth && !!effectiveOAuthProviderKey;
+  const isTargetedReconnect = Boolean(targetConnectionId);
   const authServiceUrl = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
   const providerSource = provider.source && provider.source !== "catalog" ? "custom" : "catalog";
   const savedProviderCredentials = !!provider.existingProvider && !!provider.hasCredentials;
@@ -126,7 +131,7 @@ export function ConnectModal({
     setApiKey("");
     setLabel("");
     setSelectedServiceSlugs([provider.slug]);
-  }, [provider.slug]);
+  }, [provider.slug, targetConnectionId]);
 
   useEffect(() => {
     if (!isSharedOAuth || !effectiveOAuthProviderKey) {
@@ -441,7 +446,8 @@ export function ConnectModal({
         await api.connectApiKey(
           provider.slug,
           apiKey,
-          label || `${provider.slug}-${Date.now()}`
+          label || undefined,
+          targetConnectionId || undefined
         );
         setStep("done");
         onConnected();
@@ -493,7 +499,9 @@ export function ConnectModal({
                 {connectedSlugs.has(provider.slug) ? "Reconnect" : "Connect"} {provider.name}
               </h3>
               <p className="mt-1 text-sm text-zinc-500">
-                {provider.existingProvider
+                {isTargetedReconnect
+                  ? `Update the saved connection${targetConnectionLabel ? ` "${targetConnectionLabel}"` : ""} without creating a second connection row.`
+                  : provider.existingProvider
                   ? "Use the provider config you already saved, then authorize cleanly without re-creating the integration."
                   : "Start from the catalog defaults and save everything GTMShip needs for future reconnects."}
               </p>
@@ -702,7 +710,9 @@ export function ConnectModal({
                         value={label}
                         onChange={(e) => setLabel(e.target.value)}
                         className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-3 text-sm text-white outline-none transition-colors focus:border-blue-500"
-                        placeholder={`${provider.slug}-production`}
+                        placeholder={
+                          targetConnectionLabel || `${provider.slug}-production`
+                        }
                       />
                     </div>
                   </div>

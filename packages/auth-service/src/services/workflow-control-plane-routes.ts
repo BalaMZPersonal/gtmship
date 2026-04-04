@@ -5,10 +5,16 @@ import { prisma } from "./db.js";
 import { decrypt } from "./crypto.js";
 import {
   normalizeSecretBackendKind,
-  syncDeploymentBindingSecretReplicas,
   type SecretBackendKind,
-  type SecretBackendTarget,
 } from "./connection-secret-replicas.js";
+import { getConnectionAuthMode } from "./auth-strategy.js";
+import {
+  assertHealthySecretReplicasForBindings,
+  resolveSecretBackendForDeployment,
+  syncDeploymentRuntimeManifests,
+  type DeploymentSecretSyncTask,
+  type WorkflowBindingReplicaCheck,
+} from "./workflow-deployment-auth.js";
 
 export const workflowControlPlaneRoutes: Router = Router();
 
@@ -249,6 +255,20 @@ function mapSeverityToLevel(value: unknown): "info" | "warn" | "error" {
     return "warn";
   }
   return "info";
+}
+
+export async function deleteWorkflowDeploymentsByWorkflowId(
+  workflowId: string
+): Promise<{ deletedDeploymentCount: number }> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    DELETE FROM workflow_deployments
+    WHERE workflow_id = ${workflowId}
+    RETURNING id
+  `);
+
+  return {
+    deletedDeploymentCount: rows.length,
+  };
 }
 
 function stripCloudRunName(value: string | null): string | null {
@@ -649,13 +669,6 @@ interface WorkflowBindingInput {
   metadata?: unknown;
 }
 
-interface DeploymentSecretSyncTask {
-  deploymentId: string;
-  authMode: string;
-  backend: SecretBackendTarget | null;
-  existingManifest: unknown;
-}
-
 function normalizeBindingInput(value: unknown): WorkflowBindingInput | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -688,6 +701,27 @@ function normalizeBindingInput(value: unknown): WorkflowBindingInput | null {
     connectionId,
     metadata: record.metadata ?? null,
   };
+}
+
+function normalizeBindingsInput(value: unknown): WorkflowBindingInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((binding) => {
+    const normalized = normalizeBindingInput(binding);
+    return normalized ? [normalized] : [];
+  });
+}
+
+function toReplicaChecks(
+  bindings: WorkflowBindingInput[]
+): WorkflowBindingReplicaCheck[] {
+  return bindings.map((binding) => ({
+    providerSlug: binding.providerSlug,
+    connectionId: binding.connectionId || null,
+    selectorType: binding.selectorType || "latest_active",
+  }));
 }
 
 function normalizeRuntimeAccess(value: unknown): "direct" | "local_cache" | null {
@@ -736,47 +770,7 @@ function readAuthBackendConfig(record: Record<string, unknown>): {
 async function updateRuntimeManifest(
   syncTasks: DeploymentSecretSyncTask[]
 ): Promise<void> {
-  for (const task of syncTasks) {
-    if (task.authMode !== "secret_manager" || !task.backend) {
-      continue;
-    }
-
-    try {
-      const replicas = await syncDeploymentBindingSecretReplicas({
-        deploymentId: task.deploymentId,
-        backend: task.backend,
-      });
-      const manifestRecord = asRecord(task.existingManifest);
-      const providers = replicas.map((replica) => ({
-        providerSlug: replica.providerSlug,
-        connectionId: replica.connectionId,
-        secretRef: replica.runtimeSecretRef,
-      }));
-      const mergedManifest = {
-        ...manifestRecord,
-        version:
-          typeof manifestRecord.version === "string"
-            ? manifestRecord.version
-            : "1",
-        generatedAt: new Date().toISOString(),
-        providers,
-      };
-
-      await prisma.$executeRaw(Prisma.sql`
-        UPDATE workflow_deployments
-        SET
-          runtime_auth_manifest = ${jsonValueToSql(mergedManifest)},
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${task.deploymentId}
-      `);
-    } catch (error) {
-      console.warn(
-        `[workflow-control] Failed to sync deployment secret replicas for ${task.deploymentId}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    }
-  }
+  await syncDeploymentRuntimeManifests(syncTasks);
 }
 
 workflowControlPlaneRoutes.get("/deployments", async (req, res) => {
@@ -862,6 +856,17 @@ workflowControlPlaneRoutes.get("/deployments", async (req, res) => {
   );
 
   res.json(deploymentsWithLive);
+});
+
+workflowControlPlaneRoutes.delete("/deployments", async (req, res) => {
+  const workflowId = toQueryString(req.query.workflowId);
+  if (!workflowId) {
+    res.status(400).json({ error: "workflowId query parameter is required." });
+    return;
+  }
+
+  const result = await deleteWorkflowDeploymentsByWorkflowId(workflowId);
+  res.json(result);
 });
 
 workflowControlPlaneRoutes.get("/deployments/:id", async (req, res) => {
@@ -1109,12 +1114,8 @@ workflowControlPlaneRoutes.post("/deployments", async (req, res) => {
   const workflowId = toNullableString(body.workflowId);
   const provider = toNullableString(body.provider);
   const executionKind = toNullableString(body.executionKind);
-  const authBackend = readAuthBackendConfig(body);
-  const runtimeAuthManifest =
-    body.runtimeAuthManifest ??
-    asRecord(body.authConfig).manifest ??
-    asRecord(body.resourceInventory).authManifest ??
-    null;
+  const requestedAuthBackend = readAuthBackendConfig(body);
+  const bindings = normalizeBindingsInput(body.bindings);
 
   if (!workflowId || !provider || !executionKind) {
     res.status(400).json({
@@ -1124,82 +1125,207 @@ workflowControlPlaneRoutes.post("/deployments", async (req, res) => {
     return;
   }
 
-  const deploymentId = generateEntityId("wd");
-  const rows = await prisma.$queryRaw<WorkflowDeploymentRow[]>(Prisma.sql`
-    INSERT INTO workflow_deployments (
-      id,
-      workflow_id,
-      workflow_version,
-      provider,
-      region,
-      gcp_project,
-      execution_kind,
-      auth_mode,
-      auth_backend_kind,
-      auth_backend_region,
-      auth_backend_project_id,
-      auth_runtime_access,
-      runtime_auth_manifest,
-      trigger_type,
-      trigger_config,
-      resource_inventory,
-      endpoint_url,
-      scheduler_id,
-      event_trigger_id,
-      status,
-      deployed_at,
-      updated_at
-    ) VALUES (
-      ${deploymentId},
-      ${workflowId},
-      ${toNullableString(body.workflowVersion)},
-      ${provider},
-      ${toNullableString(body.region)},
-      ${toNullableString(body.gcpProject)},
-      ${executionKind},
-      ${toNullableString(body.authMode) || "proxy"},
-      ${authBackend.kind},
-      ${authBackend.region},
-      ${authBackend.projectId},
-      ${authBackend.runtimeAccess},
-      ${jsonValueToSql(runtimeAuthManifest)},
-      ${toNullableString(body.triggerType)},
-      ${jsonValueToSql(body.triggerConfig)},
-      ${jsonValueToSql(body.resourceInventory)},
-      ${toNullableString(body.endpointUrl)},
-      ${toNullableString(body.schedulerId)},
-      ${toNullableString(body.eventTriggerId)},
-      ${toNullableString(body.status) || "active"},
-      ${toDate(body.deployedAt)},
-      CURRENT_TIMESTAMP
-    )
-    RETURNING
-      id,
-      workflow_id AS "workflowId",
-      workflow_version AS "workflowVersion",
-      provider,
-      region,
-      gcp_project AS "gcpProject",
-      execution_kind AS "executionKind",
-      auth_mode AS "authMode",
-      auth_backend_kind AS "authBackendKind",
-      auth_backend_region AS "authBackendRegion",
-      auth_backend_project_id AS "authBackendProjectId",
-      auth_runtime_access AS "authRuntimeAccess",
-      runtime_auth_manifest AS "runtimeAuthManifest",
-      trigger_type AS "triggerType",
-      trigger_config AS "triggerConfig",
-      resource_inventory AS "resourceInventory",
-      endpoint_url AS "endpointUrl",
-      scheduler_id AS "schedulerId",
-      event_trigger_id AS "eventTriggerId",
-      status,
-      deployed_at AS "deployedAt",
-      created_at AS "createdAt",
-      updated_at AS "updatedAt"
-  `);
+  try {
+    const authMode = await getConnectionAuthMode();
+    const authBackend =
+      authMode === "secret_manager"
+        ? await resolveSecretBackendForDeployment({
+            provider,
+            region: toNullableString(body.region),
+            gcpProject: toNullableString(body.gcpProject),
+            requested: requestedAuthBackend.kind
+              ? {
+                  kind: requestedAuthBackend.kind,
+                  region: requestedAuthBackend.region,
+                  projectId: requestedAuthBackend.projectId,
+                }
+              : null,
+          })
+        : null;
 
-  res.status(201).json(rows[0]);
+    if (authMode === "secret_manager" && !authBackend) {
+      res.status(400).json({
+        error:
+          "Secret manager auth is enabled globally, but no matching secret backend is configured for this deployment target.",
+      });
+      return;
+    }
+
+    if (authMode === "secret_manager" && authBackend) {
+      await assertHealthySecretReplicasForBindings({
+        bindings: toReplicaChecks(bindings),
+        backend: authBackend,
+      });
+    }
+
+    const runtimeAuthManifest =
+      authMode === "secret_manager"
+        ? body.runtimeAuthManifest ??
+          asRecord(body.authConfig).manifest ??
+          asRecord(body.resourceInventory).authManifest ??
+          null
+        : null;
+
+    const deploymentId = generateEntityId("wd");
+    const rows = await prisma.$transaction(async (tx) => {
+      const createdRows = await tx.$queryRaw<WorkflowDeploymentRow[]>(Prisma.sql`
+        INSERT INTO workflow_deployments (
+          id,
+          workflow_id,
+          workflow_version,
+          provider,
+          region,
+          gcp_project,
+          execution_kind,
+          auth_mode,
+          auth_backend_kind,
+          auth_backend_region,
+          auth_backend_project_id,
+          auth_runtime_access,
+          runtime_auth_manifest,
+          trigger_type,
+          trigger_config,
+          resource_inventory,
+          endpoint_url,
+          scheduler_id,
+          event_trigger_id,
+          status,
+          deployed_at,
+          updated_at
+        ) VALUES (
+          ${deploymentId},
+          ${workflowId},
+          ${toNullableString(body.workflowVersion)},
+          ${provider},
+          ${toNullableString(body.region)},
+          ${toNullableString(body.gcpProject)},
+          ${executionKind},
+          ${authMode},
+          ${authBackend?.kind || null},
+          ${authBackend?.region || null},
+          ${authBackend?.projectId || null},
+          ${
+            authMode === "secret_manager"
+              ? requestedAuthBackend.runtimeAccess || "direct"
+              : null
+          },
+          ${jsonValueToSql(runtimeAuthManifest)},
+          ${toNullableString(body.triggerType)},
+          ${jsonValueToSql(body.triggerConfig)},
+          ${jsonValueToSql(body.resourceInventory)},
+          ${toNullableString(body.endpointUrl)},
+          ${toNullableString(body.schedulerId)},
+          ${toNullableString(body.eventTriggerId)},
+          ${toNullableString(body.status) || "active"},
+          ${toDate(body.deployedAt)},
+          CURRENT_TIMESTAMP
+        )
+        RETURNING
+          id,
+          workflow_id AS "workflowId",
+          workflow_version AS "workflowVersion",
+          provider,
+          region,
+          gcp_project AS "gcpProject",
+          execution_kind AS "executionKind",
+          auth_mode AS "authMode",
+          auth_backend_kind AS "authBackendKind",
+          auth_backend_region AS "authBackendRegion",
+          auth_backend_project_id AS "authBackendProjectId",
+          auth_runtime_access AS "authRuntimeAccess",
+          runtime_auth_manifest AS "runtimeAuthManifest",
+          trigger_type AS "triggerType",
+          trigger_config AS "triggerConfig",
+          resource_inventory AS "resourceInventory",
+          endpoint_url AS "endpointUrl",
+          scheduler_id AS "schedulerId",
+          event_trigger_id AS "eventTriggerId",
+          status,
+          deployed_at AS "deployedAt",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+      `);
+
+      for (const binding of bindings) {
+        const bindingId = generateEntityId("wb");
+        await tx.$queryRaw<WorkflowBindingRow[]>(Prisma.sql`
+          INSERT INTO workflow_bindings (
+            id,
+            deployment_id,
+            provider_slug,
+            selector_type,
+            selector_value,
+            connection_id,
+            metadata,
+            updated_at
+          ) VALUES (
+            ${bindingId},
+            ${deploymentId},
+            ${binding.providerSlug},
+            ${binding.selectorType || "latest_active"},
+            ${toNullableString(binding.selectorValue)},
+            ${toNullableString(binding.connectionId)},
+            ${jsonValueToSql(binding.metadata)},
+            CURRENT_TIMESTAMP
+          )
+        `);
+      }
+
+      return createdRows;
+    });
+
+    if (authMode === "secret_manager" && authBackend) {
+      await updateRuntimeManifest([
+        {
+          deploymentId,
+          authMode,
+          backend: authBackend,
+          existingManifest: runtimeAuthManifest,
+        },
+      ]);
+
+      const updatedRows = await prisma.$queryRaw<WorkflowDeploymentRow[]>(Prisma.sql`
+        SELECT
+          id,
+          workflow_id AS "workflowId",
+          workflow_version AS "workflowVersion",
+          provider,
+          region,
+          gcp_project AS "gcpProject",
+          execution_kind AS "executionKind",
+          auth_mode AS "authMode",
+          auth_backend_kind AS "authBackendKind",
+          auth_backend_region AS "authBackendRegion",
+          auth_backend_project_id AS "authBackendProjectId",
+          auth_runtime_access AS "authRuntimeAccess",
+          runtime_auth_manifest AS "runtimeAuthManifest",
+          trigger_type AS "triggerType",
+          trigger_config AS "triggerConfig",
+          resource_inventory AS "resourceInventory",
+          endpoint_url AS "endpointUrl",
+          scheduler_id AS "schedulerId",
+          event_trigger_id AS "eventTriggerId",
+          status,
+          deployed_at AS "deployedAt",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+        FROM workflow_deployments
+        WHERE id = ${deploymentId}
+      `);
+
+      res.status(201).json(updatedRows[0]);
+      return;
+    }
+
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    res.status(400).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to create workflow deployment.",
+    });
+  }
 });
 
 workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
@@ -1214,6 +1340,7 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
   }
 
   try {
+    const authMode = await getConnectionAuthMode();
     const syncTasks: DeploymentSecretSyncTask[] = [];
     const synced = await prisma.$transaction(async (tx) => {
       const deployments: WorkflowDeploymentRow[] = [];
@@ -1224,18 +1351,49 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
         const provider = toNullableString(record.provider);
         const executionKind = toNullableString(record.executionKind);
         const region = toNullableString(record.region);
-        const authBackend = readAuthBackendConfig(record);
-        const authMode = toNullableString(record.authMode) || "proxy";
-        const runtimeAuthManifest =
-          record.runtimeAuthManifest ??
-          asRecord(record.authConfig).manifest ??
-          asRecord(record.resourceInventory).authManifest ??
-          null;
+        const requestedAuthBackend = readAuthBackendConfig(record);
+        const bindings = normalizeBindingsInput(record.bindings);
 
         if (!workflowId || !provider || !executionKind) {
           throw new Error(
             "Each deployment requires workflowId, provider, and executionKind."
           );
+        }
+
+        const authBackend =
+          authMode === "secret_manager"
+            ? await resolveSecretBackendForDeployment({
+                provider,
+                region,
+                gcpProject: toNullableString(record.gcpProject),
+                requested: requestedAuthBackend.kind
+                  ? {
+                      kind: requestedAuthBackend.kind,
+                      region: requestedAuthBackend.region,
+                      projectId: requestedAuthBackend.projectId,
+                    }
+                  : null,
+              })
+            : null;
+        const runtimeAuthManifest =
+          authMode === "secret_manager"
+            ? record.runtimeAuthManifest ??
+              asRecord(record.authConfig).manifest ??
+              asRecord(record.resourceInventory).authManifest ??
+              null
+            : null;
+
+        if (authMode === "secret_manager" && !authBackend) {
+          throw new Error(
+            `Secret manager auth is enabled globally, but no matching secret backend is configured for workflow ${workflowId}.`
+          );
+        }
+
+        if (authMode === "secret_manager" && authBackend) {
+          await assertHealthySecretReplicasForBindings({
+            bindings: toReplicaChecks(bindings),
+            backend: authBackend,
+          });
         }
 
         const existingRows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -1259,10 +1417,14 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
               gcp_project = ${toNullableString(record.gcpProject)},
               execution_kind = ${executionKind},
               auth_mode = ${authMode},
-              auth_backend_kind = ${authBackend.kind},
-              auth_backend_region = ${authBackend.region},
-              auth_backend_project_id = ${authBackend.projectId},
-              auth_runtime_access = ${authBackend.runtimeAccess},
+              auth_backend_kind = ${authBackend?.kind || null},
+              auth_backend_region = ${authBackend?.region || null},
+              auth_backend_project_id = ${authBackend?.projectId || null},
+              auth_runtime_access = ${
+                authMode === "secret_manager"
+                  ? requestedAuthBackend.runtimeAccess || "direct"
+                  : null
+              },
               runtime_auth_manifest = ${jsonValueToSql(runtimeAuthManifest)},
               trigger_type = ${toNullableString(record.triggerType)},
               trigger_config = ${jsonValueToSql(record.triggerConfig)},
@@ -1338,10 +1500,14 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
               ${toNullableString(record.gcpProject)},
               ${executionKind},
               ${authMode},
-              ${authBackend.kind},
-              ${authBackend.region},
-              ${authBackend.projectId},
-              ${authBackend.runtimeAccess},
+              ${authBackend?.kind || null},
+              ${authBackend?.region || null},
+              ${authBackend?.projectId || null},
+              ${
+                authMode === "secret_manager"
+                  ? requestedAuthBackend.runtimeAccess || "direct"
+                  : null
+              },
               ${jsonValueToSql(runtimeAuthManifest)},
               ${toNullableString(record.triggerType)},
               ${jsonValueToSql(record.triggerConfig)},
@@ -1388,12 +1554,7 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
             WHERE deployment_id = ${deployment.id}
           `);
 
-          for (const bindingValue of record.bindings) {
-            const binding = normalizeBindingInput(bindingValue);
-            if (!binding) {
-              continue;
-            }
-
+          for (const binding of bindings) {
             const bindingId = generateEntityId("wb");
             await tx.$queryRaw<WorkflowBindingRow[]>(Prisma.sql`
               INSERT INTO workflow_bindings (
@@ -1421,14 +1582,8 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
 
         syncTasks.push({
           deploymentId: deployment.id,
-          authMode: deployment.authMode,
-          backend: authBackend.kind
-            ? {
-                kind: authBackend.kind,
-                region: authBackend.region,
-                projectId: authBackend.projectId,
-              }
-            : null,
+          authMode,
+          backend: authBackend,
           existingManifest: runtimeAuthManifest,
         });
         deployments.push(deployment);

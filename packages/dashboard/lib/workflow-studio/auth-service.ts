@@ -1,3 +1,5 @@
+import type { ConnectionAuthStrategyStatus } from "./types";
+
 const AUTH_URL = process.env.AUTH_SERVICE_URL || "http://localhost:4000";
 
 export interface ActiveConnectionRecord {
@@ -61,6 +63,22 @@ export async function getSetting(
 
     const data = await parseJson<{ value?: string }>(response);
     return data.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAuthStrategy(): Promise<ConnectionAuthStrategyStatus | null> {
+  try {
+    const response = await fetch(`${AUTH_URL}/settings/auth-strategy`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return parseJson<ConnectionAuthStrategyStatus>(response);
   } catch {
     return null;
   }
@@ -132,6 +150,55 @@ export async function testConnection(
       success: false,
       error: error instanceof Error ? error.message : "Connection test failed",
     };
+  }
+}
+
+export async function deleteWorkflowDeploymentRecords(
+  workflowId: string
+): Promise<{ deletedDeploymentCount: number }> {
+  try {
+    const response = await fetch(
+      `${AUTH_URL}/workflow-control-plane/deployments?workflowId=${encodeURIComponent(
+        workflowId
+      )}`,
+      {
+        method: "DELETE",
+        cache: "no-store",
+      }
+    );
+
+    const text = await response.text();
+    let data: {
+      deletedDeploymentCount?: number;
+      error?: string;
+    } | null = null;
+
+    if (text) {
+      try {
+        data = JSON.parse(text) as {
+          deletedDeploymentCount?: number;
+          error?: string;
+        };
+      } catch {
+        data = { error: text };
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        data?.error || "Failed to remove workflow deployment records."
+      );
+    }
+
+    return {
+      deletedDeploymentCount: data?.deletedDeploymentCount || 0,
+    };
+  } catch (error) {
+    throw new Error(
+      error instanceof Error
+        ? error.message
+        : "Failed to remove workflow deployment records."
+    );
   }
 }
 

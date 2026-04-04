@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { listActiveConnections } from "@/lib/workflow-studio/auth-service";
+import {
+  getAuthStrategy,
+  listActiveConnections,
+} from "@/lib/workflow-studio/auth-service";
 import { buildWorkflowDeploymentPlanForArtifact } from "@/lib/workflow-studio/deployment";
 import type {
   WorkflowDeployProvider,
@@ -22,13 +25,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const connections = await listActiveConnections();
+    const [connections, authStrategy] = await Promise.all([
+      listActiveConnections(),
+      getAuthStrategy(),
+    ]);
     const plan = buildWorkflowDeploymentPlanForArtifact({
       artifact: body.artifact,
       connections,
       provider: body.provider,
       region: body.region,
       gcpProject: body.gcpProject,
+      authStrategy,
     });
 
     return NextResponse.json(plan);

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import type { ConnectionAuthStrategyStatus } from "@/lib/workflow-studio/types";
 import {
   AI_DEFAULT_MODELS,
   AI_MODEL_SETTING_KEYS,
@@ -501,6 +502,22 @@ function SetupGuide({
 export default function SettingsPage() {
   const [aiProvider, setAiProvider] = useState<AiProvider>("claude");
   const [cloudProvider, setCloudProvider] = useState<CloudProvider>("aws");
+  const [authStrategyMode, setAuthStrategyMode] =
+    useState<"proxy" | "secret_manager">("proxy");
+  const [authStrategyStatus, setAuthStrategyStatus] =
+    useState<ConnectionAuthStrategyStatus | null>(null);
+  const [authStrategyBackfill, setAuthStrategyBackfill] = useState<{
+    connections?: {
+      activeConnections: number;
+      syncedReplicas: number;
+      errorReplicas: number;
+    };
+    deployments?: {
+      total: number;
+      updated: number;
+      skipped: number;
+    };
+  } | null>(null);
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [selectedModels, setSelectedModels] =
@@ -535,7 +552,10 @@ export default function SettingsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const settings: Array<{ key: string; value: string }> = await api.getSettings();
+        const [settings, strategy] = await Promise.all([
+          api.getSettings(),
+          api.getAuthStrategy().catch(() => null),
+        ]);
         const nextStoredSecrets = { ...defaultStoredSecrets };
         const nextSelectedModels = { ...defaultSelectedModels };
         let nextCloudProvider: CloudProvider | null = null;
@@ -582,6 +602,10 @@ export default function SettingsPage() {
                 ? "aws"
                 : "aws")
         );
+        if (strategy) {
+          setAuthStrategyMode(strategy.mode);
+          setAuthStrategyStatus(strategy);
+        }
       } catch {
         // auth-service may not be running
       }
@@ -686,6 +710,7 @@ export default function SettingsPage() {
     setSaved(false);
     setSaveError("");
     setCredentialTestResult(null);
+    setAuthStrategyBackfill(null);
 
     const nextAnthropicKey = anthropicKey.trim();
     const nextOpenAiKey = openaiKey.trim();
@@ -722,6 +747,9 @@ export default function SettingsPage() {
       if (nextProjectRoot) updates.push(api.setSetting("project_root", nextProjectRoot));
 
       await Promise.all(updates);
+      const nextAuthStrategy = await api.setAuthStrategy({
+        mode: authStrategyMode,
+      });
 
       setStoredSecrets((current) => ({
         anthropic_api_key: current.anthropic_api_key || Boolean(nextAnthropicKey),
@@ -735,6 +763,8 @@ export default function SettingsPage() {
       setOpenaiKey("");
       setAwsSecretKey("");
       setGcpServiceAccountKey("");
+      setAuthStrategyStatus(nextAuthStrategy);
+      setAuthStrategyBackfill(nextAuthStrategy.backfill || null);
 
       setSaved(true);
       window.setTimeout(() => setSaved(false), 3000);
@@ -777,6 +807,13 @@ export default function SettingsPage() {
   const activeModel = selectedModels[aiProvider];
   const activeProviderKeyInput = aiProvider === "claude" ? anthropicKey : openaiKey;
   const alternateCloudProvider: CloudProvider = cloudProvider === "aws" ? "gcp" : "aws";
+  const authStrategyHealthTone =
+    authStrategyStatus?.status === "healthy"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+      : authStrategyStatus?.status === "migrating"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+        : "border-red-500/30 bg-red-500/10 text-red-300";
+  const configuredBackends = authStrategyStatus?.configuredBackends || [];
 
   const renderCloudSetupGuide = (provider: CloudProvider) => {
     if (provider === "aws") {
@@ -1127,6 +1164,133 @@ export default function SettingsPage() {
             </div>
           </section>
         </div>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
+          <div className="flex items-start gap-3">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-3 text-zinc-300">
+              <ShieldCheck size={18} />
+            </div>
+            <div className="max-w-3xl">
+              <h2 className="text-lg font-semibold text-white">
+                Connection auth source of truth
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-zinc-500">
+                GTMShip always writes credentials into local encrypted storage first.
+                In secret-manager mode we replicate to the configured backend in the
+                background, and deployments wait for healthy replicas before they sync.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
+            <div>
+              <FieldLabel>Auth routing mode</FieldLabel>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                {[
+                  {
+                    value: "proxy" as const,
+                    title: "Proxy server",
+                    body:
+                      "Connections and refreshes resolve locally through auth-service. Local storage remains authoritative.",
+                  },
+                  {
+                    value: "secret_manager" as const,
+                    title: "Secret manager",
+                    body:
+                      "Connections still write locally first, then sync to Secret Manager. Deploys only proceed once replicas are healthy.",
+                  },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setAuthStrategyMode(option.value)}
+                    className={`rounded-2xl border px-5 py-4 text-left transition-colors ${
+                      authStrategyMode === option.value
+                        ? "border-blue-500 bg-blue-500/10 text-white"
+                        : "border-zinc-800 bg-zinc-950/70 text-zinc-400 hover:border-zinc-700 hover:text-white"
+                    }`}
+                  >
+                    <p className="text-sm font-medium">{option.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-zinc-500">
+                      {option.body}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-white">Current health</p>
+                <span
+                  className={`rounded-full border px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] ${
+                    authStrategyHealthTone
+                  }`}
+                >
+                  {authStrategyStatus?.status || "unknown"}
+                </span>
+              </div>
+
+              <div className="mt-4 space-y-2 text-sm text-zinc-400">
+                <p>
+                  <span className="text-zinc-500">Saved mode:</span>{" "}
+                  {authStrategyStatus?.mode || "proxy"}
+                </p>
+                <p>
+                  <span className="text-zinc-500">Configured backends:</span>{" "}
+                  {configuredBackends.length}
+                </p>
+                <p>
+                  <span className="text-zinc-500">Replica coverage:</span>{" "}
+                  {authStrategyStatus?.replicaSummary.active || 0}/
+                  {authStrategyStatus?.replicaSummary.expectedReplicas || 0} active
+                </p>
+              </div>
+
+              {configuredBackends.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                  {configuredBackends.map((backend) => (
+                    <div
+                      key={`${backend.kind}-${backend.region || backend.projectId || "default"}`}
+                      className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs text-zinc-400"
+                    >
+                      <p className="font-medium text-zinc-200">{backend.kind}</p>
+                      <p className="mt-1 text-zinc-500">
+                        {backend.region
+                          ? `Region: ${backend.region}`
+                          : backend.projectId
+                            ? `Project: ${backend.projectId}`
+                            : "Default target"}
+                        {backend.secretPrefix
+                          ? ` • Prefix: ${backend.secretPrefix}`
+                          : ""}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-xs leading-5 text-zinc-500">
+                  Configure AWS or GCP credentials above before enabling secret
+                  manager mode.
+                </p>
+              )}
+
+              {authStrategyBackfill ? (
+                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900/70 px-3 py-3 text-xs text-zinc-400">
+                  <p className="font-medium text-zinc-200">Last save backfill</p>
+                  <p className="mt-2">
+                    Connections: {authStrategyBackfill.connections?.syncedReplicas || 0} replicas synced across{" "}
+                    {authStrategyBackfill.connections?.activeConnections || 0} active connections.
+                  </p>
+                  <p className="mt-1">
+                    Deployments: {authStrategyBackfill.deployments?.updated || 0} updated,{" "}
+                    {authStrategyBackfill.deployments?.skipped || 0} skipped.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
 
         <section className="rounded-[28px] border border-zinc-800 bg-zinc-950/70 p-6 sm:p-8">
           <div className="max-w-3xl">

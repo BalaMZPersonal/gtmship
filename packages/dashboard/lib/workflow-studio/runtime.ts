@@ -27,6 +27,11 @@ export interface RuntimeSdkExports {
   createWorkflowContext?: (...args: unknown[]) => unknown;
 }
 
+export interface WorkflowRuntimeOptions {
+  console?: typeof console;
+  timeoutMs?: number;
+}
+
 interface WorkflowDefinitionWithId {
   id?: string;
 }
@@ -67,7 +72,8 @@ export function compileWorkflowSource(
 export function loadWorkflowDefinitionFromSource<T>(
   source: string,
   sdkExports: RuntimeSdkExports,
-  fileName = "workflow.ts"
+  fileName = "workflow.ts",
+  options?: WorkflowRuntimeOptions
 ): T {
   const compiled = compileWorkflowSource(source, fileName);
 
@@ -88,7 +94,7 @@ export function loadWorkflowDefinitionFromSource<T>(
         `Workflow Studio runtime blocks external module imports: ${specifier}`
       );
     },
-    console,
+    console: options?.console ?? console,
     Buffer,
     URL,
     fetch,
@@ -99,7 +105,7 @@ export function loadWorkflowDefinitionFromSource<T>(
 
   vm.runInNewContext(compiled.outputText, sandbox, {
     filename: fileName,
-    timeout: 2_000,
+    timeout: options?.timeoutMs ?? 2_000,
   });
 
   const exported =

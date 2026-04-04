@@ -1,7 +1,10 @@
 import { AUTH_URL } from "./auth-service";
 import { loadWorkflowDefinitionFromSource } from "./runtime";
+import { inspect } from "node:util";
 import type {
   WorkflowPendingApproval,
+  WorkflowPreviewLogEntry,
+  WorkflowPreviewLogLevel,
   WorkflowPreviewOperation,
   WorkflowPreviewResult,
   WorkflowStudioArtifact,
@@ -44,6 +47,10 @@ const BLOCKED_HOSTS = [
   /^\[::1\]/,
 ];
 
+const MAX_PREVIEW_LOG_ENTRIES = 120;
+const MAX_PREVIEW_LOG_TOTAL_CHARS = 16_000;
+const MAX_PREVIEW_LOG_MESSAGE_CHARS = 2_000;
+
 class PreviewApprovalError extends Error {
   pendingApproval: WorkflowPendingApproval;
 
@@ -55,6 +62,102 @@ class PreviewApprovalError extends Error {
 
 function isBlockedHost(hostname: string): boolean {
   return BLOCKED_HOSTS.some((pattern) => pattern.test(hostname));
+}
+
+function trimPreviewLogMessage(
+  value: string,
+  maxChars = MAX_PREVIEW_LOG_MESSAGE_CHARS
+): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return `${value.slice(0, maxChars)}\n... (log truncated)`;
+}
+
+function formatPreviewLogValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value instanceof Error) {
+    return value.stack || value.message;
+  }
+
+  return inspect(value, {
+    depth: 5,
+    breakLength: 100,
+    maxArrayLength: 40,
+    maxStringLength: 2_000,
+  });
+}
+
+function createPreviewLogCapture(): {
+  logs: WorkflowPreviewLogEntry[];
+  console: typeof console;
+  appendLog: (level: WorkflowPreviewLogLevel, ...args: unknown[]) => void;
+} {
+  const logs: WorkflowPreviewLogEntry[] = [];
+  let nextLogId = 1;
+  let totalChars = 0;
+  let limitReached = false;
+
+  const appendNotice = () => {
+    if (logs.some((entry) => entry.message.includes("Additional preview logs were truncated"))) {
+      return;
+    }
+
+    logs.push({
+      id: `preview_log_${nextLogId++}`,
+      level: "warn",
+      timestamp: new Date().toISOString(),
+      message: "Additional preview logs were truncated to keep preview responsive.",
+    });
+  };
+
+  const appendLog = (level: WorkflowPreviewLogLevel, ...args: unknown[]) => {
+    if (limitReached) {
+      return;
+    }
+
+    const message = trimPreviewLogMessage(
+      args.length > 0
+        ? args.map((value) => formatPreviewLogValue(value)).join(" ")
+        : "(empty log entry)"
+    );
+
+    const nextTotalChars = totalChars + message.length;
+    if (
+      logs.length >= MAX_PREVIEW_LOG_ENTRIES ||
+      nextTotalChars > MAX_PREVIEW_LOG_TOTAL_CHARS
+    ) {
+      limitReached = true;
+      appendNotice();
+      return;
+    }
+
+    logs.push({
+      id: `preview_log_${nextLogId++}`,
+      level,
+      timestamp: new Date().toISOString(),
+      message,
+    });
+    totalChars = nextTotalChars;
+  };
+
+  const previewConsole = Object.create(console) as typeof console;
+  previewConsole.log = (...args: unknown[]) => appendLog("log", ...args);
+  previewConsole.info = (...args: unknown[]) => appendLog("info", ...args);
+  previewConsole.warn = (...args: unknown[]) => appendLog("warn", ...args);
+  previewConsole.error = (...args: unknown[]) => appendLog("error", ...args);
+  previewConsole.debug = (...args: unknown[]) => appendLog("debug", ...args);
+  previewConsole.trace = (...args: unknown[]) => appendLog("debug", ...args);
+
+  return {
+    logs,
+    console: previewConsole,
+    appendLog,
+  };
 }
 
 async function parseResponseData(response: Response): Promise<unknown> {
@@ -197,15 +300,21 @@ function createTrackedContext(
       body:
         config.body === undefined || method === "GET" || method === "HEAD"
           ? undefined
-          : JSON.stringify(config.body),
+          : typeof config.body === "string"
+            ? config.body
+            : Buffer.isBuffer(config.body)
+              ? new Uint8Array(config.body)
+              : JSON.stringify(config.body),
     });
 
     operation.responseStatus = response.status;
 
-    return {
-      data: (await parseResponseData(response)) as T,
-      status: response.status,
-    };
+    const data = (await parseResponseData(response)) as T;
+    try {
+      operation.responseBodySnippet = JSON.stringify(data)?.slice(0, 500);
+    } catch { /* non-serializable — skip */ }
+
+    return { data, status: response.status };
   };
 
   return {
@@ -236,10 +345,12 @@ function createTrackedContext(
 
         operation.responseStatus = response.status;
 
-        return {
-          data: (await parseResponseData(response)) as T,
-          status: response.status,
-        };
+        const data = (await parseResponseData(response)) as T;
+        try {
+          operation.responseBodySnippet = JSON.stringify(data)?.slice(0, 500);
+        } catch { /* non-serializable — skip */ }
+
+        return { data, status: response.status };
       };
 
       return {
@@ -277,15 +388,23 @@ function createTrackedContext(
               ...config.headers,
             },
             body:
-              config.body === undefined ? undefined : JSON.stringify(config.body),
+              config.body === undefined
+                ? undefined
+                : typeof config.body === "string"
+                  ? config.body
+                  : Buffer.isBuffer(config.body)
+                    ? new Uint8Array(config.body)
+                    : JSON.stringify(config.body),
           });
 
           operation.responseStatus = response.status;
 
-          return {
-            data: (await parseResponseData(response)) as T,
-            status: response.status,
-          };
+          const data = (await parseResponseData(response)) as T;
+          try {
+            operation.responseBodySnippet = JSON.stringify(data)?.slice(0, 500);
+          } catch { /* non-serializable — skip */ }
+
+          return { data, status: response.status };
         },
       };
     },
@@ -402,6 +521,7 @@ export async function previewWorkflowArtifact(
 ): Promise<WorkflowPreviewResult> {
   const operations: WorkflowPreviewOperation[] = [];
   const approved = new Set(approvedCheckpoints);
+  const previewLogs = createPreviewLogCapture();
 
   let payload: unknown = {};
   try {
@@ -420,10 +540,29 @@ export async function previewWorkflowArtifact(
     const workflow = loadWorkflowDefinitionFromSource<{
       deploy?: Record<string, unknown>;
       run: (payload: unknown, ctx: unknown) => Promise<unknown>;
-    }>(artifact.code, buildRuntimeSdk(operations, approved), `${artifact.slug}.ts`);
+    }>(
+      artifact.code,
+      buildRuntimeSdk(operations, approved),
+      `${artifact.slug}.ts`,
+      { console: previewLogs.console }
+    );
 
+    const PREVIEW_TIMEOUT_MS = 30_000;
     const ctx = createTrackedContext(operations, approved);
-    const result = await workflow.run(payload, ctx);
+    const result = await Promise.race([
+      workflow.run(payload, ctx),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Preview timed out after ${PREVIEW_TIMEOUT_MS / 1000}s. Check for slow API calls or infinite loops.`
+              )
+            ),
+          PREVIEW_TIMEOUT_MS
+        )
+      ),
+    ]);
 
     // Detect API failures that the workflow code didn't throw on
     const failedOps = operations.filter(
@@ -436,6 +575,7 @@ export async function previewWorkflowArtifact(
     return {
       status: "success",
       operations,
+      ...(previewLogs.logs.length > 0 ? { logs: previewLogs.logs } : {}),
       result,
       ...(warnings.length > 0 ? { warnings } : {}),
     };
@@ -444,12 +584,17 @@ export async function previewWorkflowArtifact(
       return {
         status: "needs_approval",
         operations,
+        ...(previewLogs.logs.length > 0 ? { logs: previewLogs.logs } : {}),
         pendingApproval: error.pendingApproval,
       };
     }
 
     const errorMessage = error instanceof Error ? error.message : "Preview run failed.";
     const errorStack = error instanceof Error ? error.stack : undefined;
+    previewLogs.appendLog("error", "[workflow-studio] Preview failed", {
+      error: errorMessage,
+      ...(errorStack ? { stack: errorStack } : {}),
+    });
     console.error("[preview] Workflow execution error:", errorMessage);
     if (errorStack) {
       console.error("[preview] Stack:", errorStack);
@@ -457,7 +602,9 @@ export async function previewWorkflowArtifact(
     return {
       status: "error",
       operations,
+      ...(previewLogs.logs.length > 0 ? { logs: previewLogs.logs } : {}),
       error: errorMessage,
+      ...(errorStack ? { stack: errorStack } : {}),
     };
   }
 }

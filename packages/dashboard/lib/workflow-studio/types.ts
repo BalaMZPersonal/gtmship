@@ -35,6 +35,85 @@ export interface WorkflowStudioMessage {
   annotations?: unknown[];
 }
 
+export const WORKFLOW_DRAFT_PROGRESS_STAGES = [
+  "analysis",
+  "access",
+  "grounding",
+  "code",
+  "mermaid",
+  "finalize",
+] as const;
+
+export type WorkflowDraftProgressStage =
+  (typeof WORKFLOW_DRAFT_PROGRESS_STAGES)[number];
+
+export type WorkflowDraftProgressStatus =
+  | "started"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "update";
+
+export const WORKFLOW_DRAFT_PROGRESS_LABELS: Record<
+  WorkflowDraftProgressStage,
+  string
+> = {
+  analysis: "Defining the workflow",
+  access: "Checking required access",
+  grounding: "Researching API schemas",
+  code: "Writing and testing the workflow",
+  mermaid: "Visualizing the workflow",
+  finalize: "Finalizing the draft",
+};
+
+export interface WorkflowDraftProgressEvent {
+  type: "workflow-draft-progress";
+  toolCallId: string;
+  stage: WorkflowDraftProgressStage;
+  status: WorkflowDraftProgressStatus;
+  label: string;
+  detail?: string;
+  attempt?: number;
+  totalAttempts?: number;
+  timestamp: string;
+}
+
+export interface ContextPressureEvent {
+  type: "context-pressure";
+  tier: 0 | 1 | 2 | 3;
+  usageRatio: number;
+  tokenEstimate: number;
+  tokenBudget: number;
+  toolResultLimit: number;
+  timestamp: string;
+}
+
+export function isWorkflowDraftProgressEvent(
+  value: unknown
+): value is WorkflowDraftProgressEvent {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<WorkflowDraftProgressEvent>;
+
+  return (
+    candidate.type === "workflow-draft-progress" &&
+    typeof candidate.toolCallId === "string" &&
+    typeof candidate.stage === "string" &&
+    typeof candidate.status === "string" &&
+    typeof candidate.label === "string" &&
+    typeof candidate.timestamp === "string"
+  );
+}
+
+export interface WorkflowTranscriptCompaction {
+  version: 1;
+  summary: string;
+  compactedAt: string;
+  archivedMessages: WorkflowStudioMessage[];
+}
+
 export type WorkflowAccessRequirementType = "integration" | "public_url";
 export type WorkflowAccessRequirementMode = "read" | "write";
 export type WorkflowAccessRequirementStatus =
@@ -96,6 +175,21 @@ export interface WorkflowPreviewOperation {
   checkpoint?: string;
   description?: string;
   responseStatus?: number;
+  responseBodySnippet?: string;
+}
+
+export type WorkflowPreviewLogLevel =
+  | "log"
+  | "info"
+  | "warn"
+  | "error"
+  | "debug";
+
+export interface WorkflowPreviewLogEntry {
+  id: string;
+  level: WorkflowPreviewLogLevel;
+  timestamp: string;
+  message: string;
 }
 
 export interface WorkflowPendingApproval {
@@ -109,8 +203,10 @@ export interface WorkflowPendingApproval {
 export interface WorkflowPreviewResult {
   status: "success" | "needs_approval" | "error";
   operations: WorkflowPreviewOperation[];
+  logs?: WorkflowPreviewLogEntry[];
   result?: unknown;
   error?: string;
+  stack?: string;
   warnings?: string[];
   pendingApproval?: WorkflowPendingApproval;
 }
@@ -131,6 +227,33 @@ export type WorkflowSecretBackendKind =
   | "aws_secrets_manager"
   | "gcp_secret_manager";
 export type WorkflowSecretRuntimeAccessMode = "direct" | "local_cache";
+export type ConnectionAuthStrategyHealth =
+  | "healthy"
+  | "degraded"
+  | "migrating";
+
+export interface ConnectionAuthStrategyBackend {
+  kind: WorkflowSecretBackendKind;
+  region?: string;
+  projectId?: string;
+  secretPrefix?: string;
+}
+
+export interface ConnectionAuthReplicaSummary {
+  activeConnections: number;
+  expectedReplicas: number;
+  active: number;
+  pending: number;
+  error: number;
+  missing: number;
+}
+
+export interface ConnectionAuthStrategyStatus {
+  mode: WorkflowDeployAuthMode;
+  status: ConnectionAuthStrategyHealth;
+  configuredBackends: ConnectionAuthStrategyBackend[];
+  replicaSummary: ConnectionAuthReplicaSummary;
+}
 
 export interface WorkflowExecutionConfig {
   kind?: WorkflowExecutionKind;
@@ -354,6 +477,7 @@ export interface WorkflowProjectDeploymentDefaults {
   provider?: WorkflowDeployProvider;
   region?: string;
   gcpProject?: string;
+  authStrategy?: ConnectionAuthStrategyStatus | null;
 }
 
 export interface WorkflowStudioArtifact {
@@ -368,6 +492,7 @@ export interface WorkflowStudioArtifact {
   writeCheckpoints: WorkflowWriteCheckpoint[];
   chatSummary: string;
   messages: WorkflowStudioMessage[];
+  transcriptCompaction?: WorkflowTranscriptCompaction;
   deploy?: WorkflowDeploySpec;
   triggerConfig?: WorkflowTriggerConfig;
   bindings?: WorkflowBinding[];
@@ -376,6 +501,25 @@ export interface WorkflowStudioArtifact {
   validation?: WorkflowValidationReport;
   preview?: WorkflowPreviewResult;
   build?: WorkflowBuildResult;
+  groundedApiContext?: GroundedApiContext;
+}
+
+export interface GroundedEndpoint {
+  provider: string;
+  path: string;
+  method: string;
+  purpose: string;
+  requestSchema?: string;
+  responseSchema?: string;
+  tested?: boolean;
+  testStatus?: number;
+  docsSource?: string;
+}
+
+export interface GroundedApiContext {
+  endpoints: GroundedEndpoint[];
+  researchNotes: string[];
+  groundedAt: string;
 }
 
 export interface StoredWorkflowRecord {

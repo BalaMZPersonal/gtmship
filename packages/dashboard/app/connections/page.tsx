@@ -30,7 +30,7 @@ import {
 
 interface Connection {
   id: string;
-  label: string;
+  label: string | null;
   status: string;
   provider: {
     name: string;
@@ -52,6 +52,12 @@ interface Connection {
   accountEmail?: string | null;
 }
 
+interface ConnectRequest {
+  provider: ConnectableProvider;
+  targetConnectionId?: string;
+  targetConnectionLabel?: string | null;
+}
+
 function getTokenStatus(conn: Connection): "ok" | "expiring" | "expired" | "no-token" {
   if (!conn.hasToken) return "no-token";
   if (!conn.tokenExpiresAt) return "ok";
@@ -63,6 +69,32 @@ function getTokenStatus(conn: Connection): "ok" | "expiring" | "expired" | "no-t
   if (expiresAt.getTime() - now.getTime() < 10 * 60 * 1000) return "expiring";
 
   return "ok";
+}
+
+function connectionNeedsReconnect(connection: Connection) {
+  const tokenStatus = getTokenStatus(connection);
+
+  return (
+    connection.provider.authType === "oauth2" &&
+    (tokenStatus === "expired" ||
+      tokenStatus === "expiring" ||
+      tokenStatus === "no-token") &&
+    !connection.hasRefreshToken
+  );
+}
+
+function connectionCanRefresh(connection: Connection) {
+  const tokenStatus = getTokenStatus(connection);
+
+  return (
+    connection.provider.authType === "oauth2" &&
+    (tokenStatus === "expired" || tokenStatus === "expiring") &&
+    connection.hasRefreshToken
+  );
+}
+
+function connectionIsReady(connection: Connection) {
+  return connection.status === "active" && !connectionNeedsReconnect(connection);
 }
 
 function formatConnectionDate(value: string) {
@@ -98,7 +130,7 @@ function SummaryCard({
 
 function SavedCustomProvidersSection({
   providers,
-  connectedSlugs,
+  existingConnectionSlugs,
   onConnect,
   onEdit,
   onDelete,
@@ -106,7 +138,7 @@ function SavedCustomProvidersSection({
   onCustomIntegration,
 }: {
   providers: ConnectableProvider[];
-  connectedSlugs: Set<string>;
+  existingConnectionSlugs: Set<string>;
   onConnect: (provider: ConnectableProvider) => void;
   onEdit: (slug: string) => void;
   onDelete: (provider: ConnectableProvider) => void;
@@ -121,12 +153,12 @@ function SavedCustomProvidersSection({
             Saved custom integrations
           </p>
           <h3 className="mt-2 text-lg font-semibold text-white">
-            Pick up custom OAuth flows where you left off
+            Finish custom setups that still need a connection
           </h3>
           <p className="mt-2 text-sm leading-6 text-zinc-500">
-            Every custom provider you save now has a direct connect or reconnect
-            path here, so you can adjust the config and launch auth without
-            going back through the agent.
+            Saved custom providers stay here until setup is complete. Once a
+            custom integration connects successfully, you can manage reconnects
+            and provider edits from My connections.
           </p>
         </div>
 
@@ -143,18 +175,18 @@ function SavedCustomProvidersSection({
       {providers.length === 0 ? (
         <div className="mt-5 rounded-[24px] border border-dashed border-zinc-800 bg-zinc-950/70 px-6 py-10 text-center">
           <h4 className="text-lg font-semibold text-white">
-            No saved custom integrations yet
+            No custom setups waiting on auth
           </h4>
           <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-zinc-500">
-            Use the agent to create a custom provider once, then reconnect it
-            from here whenever you need to update OAuth credentials, launch a
-            new authorization, or tune the provider configuration.
+            Connected custom integrations now live under My connections. Use
+            the agent to start another provider whenever you need a fresh
+            setup.
           </p>
         </div>
       ) : (
         <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {providers.map((provider) => {
-            const connected = connectedSlugs.has(provider.slug);
+            const hasExistingConnection = existingConnectionSlugs.has(provider.slug);
 
             return (
               <div
@@ -183,9 +215,9 @@ function SavedCustomProvidersSection({
                         <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
                           Custom
                         </span>
-                        {connected ? (
-                          <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300">
-                            Connected
+                        {hasExistingConnection ? (
+                          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
+                            Reconnect needed
                           </span>
                         ) : null}
                       </div>
@@ -233,7 +265,7 @@ function SavedCustomProvidersSection({
                       className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 transition-colors hover:border-zinc-600 hover:text-white"
                     >
                       <Link2 size={14} />
-                      {connected ? "Reconnect" : "Connect"}
+                      {hasExistingConnection ? "Reconnect" : "Connect"}
                     </button>
 
                     <button
@@ -329,12 +361,52 @@ export default function ConnectionsPage() {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
   const [deletingProviderSlug, setDeletingProviderSlug] = useState<string | null>(null);
-  const [connectingProvider, setConnectingProvider] =
-    useState<ConnectableProvider | null>(null);
+  const [connectingRequest, setConnectingRequest] =
+    useState<ConnectRequest | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
+
+  const openConnectModal = (
+    provider: ConnectableProvider,
+    options?: { connectionId?: string }
+  ) => {
+    const explicitConnection = options?.connectionId
+      ? connections.find((connection) => connection.id === options.connectionId) || null
+      : null;
+    const activeProviderConnections = connections.filter(
+      (connection) =>
+        connection.provider.slug === provider.slug && connection.status === "active",
+    );
+
+    if (!explicitConnection && activeProviderConnections.length > 1) {
+      setTab("connections");
+      window.alert(
+        `Multiple active ${provider.name} connections exist. Reconnect from the specific connection card in My connections so GTMShip updates the original row.`,
+      );
+      return;
+    }
+
+    const targetConnection =
+      explicitConnection ||
+      (activeProviderConnections.length === 1 ? activeProviderConnections[0] : null);
+
+    setConnectingRequest({
+      provider,
+      targetConnectionId: targetConnection?.id,
+      targetConnectionLabel: targetConnection?.label ?? null,
+    });
+  };
 
   const connectedSlugs = useMemo(
     () => new Set(connections.map((connection) => connection.provider.slug)),
+    [connections],
+  );
+  const readyConnectionSlugs = useMemo(
+    () =>
+      new Set(
+        connections
+          .filter((connection) => connectionIsReady(connection))
+          .map((connection) => connection.provider.slug),
+      ),
     [connections],
   );
   const catalogBySlug = useMemo(
@@ -355,6 +427,11 @@ export default function ConnectionsPage() {
   const activeConnections = useMemo(
     () => connections.filter((connection) => connection.status === "active").length,
     [connections],
+  );
+  const pendingCustomProviders = useMemo(
+    () =>
+      customProviders.filter((provider) => !readyConnectionSlugs.has(provider.slug)),
+    [customProviders, readyConnectionSlugs],
   );
   const attentionCount = useMemo(
     () =>
@@ -518,8 +595,8 @@ export default function ConnectionsPage() {
       if (editingSlug === provider.slug) {
         setEditingSlug(null);
       }
-      if (connectingProvider?.slug === provider.slug) {
-        setConnectingProvider(null);
+      if (connectingRequest?.provider.slug === provider.slug) {
+        setConnectingRequest(null);
       }
     } catch (error) {
       window.alert(
@@ -533,8 +610,20 @@ export default function ConnectionsPage() {
   };
 
   const handleOpenAgent = (provider?: ConnectableProvider) => {
+    const providerConnections = provider
+      ? connections.filter((connection) => connection.provider.slug === provider.slug)
+      : [];
     const initialMessage = provider
-      ? `I want to connect to ${provider.name}. Auth type: ${provider.authType}. Source: ${provider.source || "catalog"}. Docs: ${provider.docsUrl || "N/A"}`
+      ? `I want to connect to ${provider.name}. Auth type: ${provider.authType}. Source: ${provider.source || "catalog"}. Docs: ${provider.docsUrl || "N/A"}${
+          providerConnections.length > 0
+            ? ` Existing connections: ${providerConnections
+                .map(
+                  (connection) =>
+                    `${connection.id}${connection.label ? ` (${connection.label})` : ""}`
+                )
+                .join(", ")}. If this is a reconnect, update the original connection instead of creating a duplicate.`
+            : ""
+        }`
       : "I want to set up a custom integration.";
 
     window.dispatchEvent(
@@ -544,7 +633,7 @@ export default function ConnectionsPage() {
 
   const tabDescription =
     tab === "catalog"
-      ? "Browse the live catalog, reconnect saved custom providers, and kick off a new custom integration when the built-in list is not enough."
+      ? "Browse the live catalog, finish saved custom setups that still need auth, and kick off a new custom integration when the built-in list is not enough."
       : "Review every active connection, test credentials, refresh expiring OAuth tokens, and jump straight into provider configuration.";
 
   return (
@@ -598,14 +687,16 @@ export default function ConnectionsPage() {
                   title={
                     attentionCount > 0
                       ? `${attentionCount} need review`
-                      : customProviders.length > 0
-                        ? `${customProviders.length} custom provider${customProviders.length === 1 ? "" : "s"}`
+                      : pendingCustomProviders.length > 0
+                        ? `${pendingCustomProviders.length} custom setup${pendingCustomProviders.length === 1 ? "" : "s"} pending`
                         : "Everything looks healthy"
                   }
                   description={
                     attentionCount > 0
                       ? "Refresh or reconnect expiring credentials before they interrupt deployments."
-                      : "Custom providers and stable tokens stay manageable from the same page."
+                      : pendingCustomProviders.length > 0
+                        ? "Finish saved custom integrations here, then manage healthy connections from My connections."
+                        : "Stable connections and completed custom setups stay manageable from the same page."
                   }
                 />
               </div>
@@ -664,7 +755,7 @@ export default function ConnectionsPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <p className="text-sm text-zinc-500">
                     {tab === "catalog"
-                      ? "Search first, then connect or hand off to the agent."
+                      ? "Search first, then connect or finish any saved custom setups."
                       : "Refresh statuses, test auth, and edit providers from one place."}
                   </p>
                   <button
@@ -694,9 +785,9 @@ export default function ConnectionsPage() {
               ) : (
                 <div className="space-y-6">
                   <SavedCustomProvidersSection
-                    providers={customProviders}
-                    connectedSlugs={connectedSlugs}
-                    onConnect={setConnectingProvider}
+                    providers={pendingCustomProviders}
+                    existingConnectionSlugs={connectedSlugs}
+                    onConnect={openConnectModal}
                     onEdit={setEditingSlug}
                     onDelete={handleDeleteProvider}
                     deletingSlug={deletingProviderSlug}
@@ -708,7 +799,7 @@ export default function ConnectionsPage() {
                     categories={categories}
                     connectedSlugs={connectedSlugs}
                     onConnect={(provider) =>
-                      setConnectingProvider(normalizeCatalogProvider(provider))
+                      openConnectModal(normalizeCatalogProvider(provider))
                     }
                     onCustomIntegration={() => handleOpenAgent()}
                   />
@@ -783,21 +874,12 @@ export default function ConnectionsPage() {
 
                 <div className="grid gap-4 xl:grid-cols-2">
                   {connections.map((connection) => {
-                    const tokenStatus = getTokenStatus(connection);
                     const catalogEntry = catalogBySlug.get(connection.provider.slug);
                     const connectableEntry = connectableProviderBySlug.get(
                       connection.provider.slug,
                     );
-                    const needsReconnect =
-                      connection.provider.authType === "oauth2" &&
-                      (tokenStatus === "expired" ||
-                        tokenStatus === "expiring" ||
-                        tokenStatus === "no-token") &&
-                      !connection.hasRefreshToken;
-                    const canRefresh =
-                      connection.provider.authType === "oauth2" &&
-                      (tokenStatus === "expired" || tokenStatus === "expiring") &&
-                      connection.hasRefreshToken;
+                    const needsReconnect = connectionNeedsReconnect(connection);
+                    const canRefresh = connectionCanRefresh(connection);
                     const testResult = testResults[connection.id];
 
                     return (
@@ -922,9 +1004,10 @@ export default function ConnectionsPage() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  setConnectingProvider(
+                                  openConnectModal(
                                     connectableEntry ||
                                       normalizeCatalogProvider(catalogEntry!),
+                                    { connectionId: connection.id },
                                   )
                                 }
                                 className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
@@ -992,20 +1075,22 @@ export default function ConnectionsPage() {
           </div>
         </section>
 
-        {connectingProvider ? (
+        {connectingRequest ? (
           <ConnectModal
-            provider={connectingProvider}
+            provider={connectingRequest.provider}
             catalog={connectableProviders}
             connectedSlugs={connectedSlugs}
-            onClose={() => setConnectingProvider(null)}
+            targetConnectionId={connectingRequest.targetConnectionId}
+            targetConnectionLabel={connectingRequest.targetConnectionLabel}
+            onClose={() => setConnectingRequest(null)}
             onConnected={() => {
-              setConnectingProvider(null);
+              setConnectingRequest(null);
               void loadConnections();
               void loadCustomProviders();
               setTab("connections");
             }}
             onUseAgent={(provider) => {
-              setConnectingProvider(null);
+              setConnectingRequest(null);
               handleOpenAgent(provider);
             }}
           />
@@ -1017,7 +1102,7 @@ export default function ConnectionsPage() {
             onClose={() => setEditingSlug(null)}
             onConnect={(provider) => {
               setEditingSlug(null);
-              setConnectingProvider(provider);
+              openConnectModal(provider);
             }}
             onDelete={handleDeleteProvider}
             onUpdated={() => {

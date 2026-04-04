@@ -89,12 +89,18 @@ function containsBlockedPath(command: string): boolean {
   return BLOCKED_PATH_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+const SAFE_ABSOLUTE_PATHS = ["/dev/null", "/tmp/", "/tmp"];
+
 function containsUnsafeFileReference(command: string): boolean {
   return command
     .split(/\s+/)
     .some(
       (token) =>
-        (token.startsWith("/") && !/^https?:\/\//i.test(token)) ||
+        (token.startsWith("/") &&
+          !/^https?:\/\//i.test(token) &&
+          !SAFE_ABSOLUTE_PATHS.some(
+            (safe) => token === safe || token.startsWith(safe)
+          )) ||
         token === ".." ||
         token.startsWith("../") ||
         token.includes("/../")
@@ -141,12 +147,23 @@ export async function executeCommand(
       };
   }
 
+  // Detect shell operators that won't work with execFile
+  const SHELL_OPERATORS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
+  const shellOp = args.find((a) => SHELL_OPERATORS.has(a));
+  if (shellOp) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Shell operator "${shellOp}" is not supported. The sandbox runs a single command via execFile, not a shell. Run separate executeCommand calls instead.`,
+    };
+  }
+
   if (containsUnsafeFileReference(command)) {
     return {
       exitCode: 1,
       stdout: "",
       stderr:
-        "Blocked: absolute paths and parent-directory traversal are not allowed.",
+        "Blocked: absolute paths and parent-directory traversal are not allowed. Only /tmp/ and /dev/null are allowed.",
     };
   }
 

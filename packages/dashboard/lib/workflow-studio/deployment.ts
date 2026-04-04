@@ -10,6 +10,7 @@ import {
 import { loadWorkflowDefinitionFromSource } from "./runtime";
 import type { ActiveConnectionRecord } from "./auth-service";
 import type {
+  ConnectionAuthStrategyStatus,
   WorkflowBinding,
   WorkflowBindingSelector,
   WorkflowDeploySpec,
@@ -17,6 +18,7 @@ import type {
   WorkflowStudioArtifact,
   WorkflowTriggerConfig,
 } from "./types";
+import { applyGlobalAuthStrategyToPlan } from "./auth-strategy";
 
 interface WorkflowDefinitionLike {
   id?: string;
@@ -328,6 +330,7 @@ export function buildWorkflowDeploymentPlanForArtifact(input: {
   provider?: "aws" | "gcp";
   region?: string;
   gcpProject?: string;
+  authStrategy?: ConnectionAuthStrategyStatus | null;
 }): WorkflowDeploymentPlan {
   const definition = loadWorkflowDefinition(input.artifact);
   const requiredProviders = Array.from(
@@ -364,5 +367,8 @@ export function buildWorkflowDeploymentPlanForArtifact(input: {
     connections: normalizeConnectionRecords(input.connections),
   });
 
-  return plan as WorkflowDeploymentPlan;
+  return applyGlobalAuthStrategyToPlan(
+    plan as WorkflowDeploymentPlan,
+    input.authStrategy
+  );
 }

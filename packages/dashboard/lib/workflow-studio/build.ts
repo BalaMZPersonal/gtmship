@@ -52,7 +52,7 @@ function formatPreviewSummary(preview: WorkflowPreviewResult): string {
 
   if (preview.status === "needs_approval") {
     return preview.pendingApproval
-      ? `Preview paused for approval at checkpoint "${preview.pendingApproval.checkpoint}".`
+      ? `Preview paused for approval at checkpoint "${preview.pendingApproval.checkpoint}". Additional declared write checkpoints may require approval in later preview reruns.`
       : "Preview paused pending approval.";
   }
 

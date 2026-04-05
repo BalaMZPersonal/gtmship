@@ -532,15 +532,53 @@ export async function deployCommand(options: DeployOptions) {
   const hasSecretManager = workflowPlans.some((wp) => wp.plan.authMode === "secret_manager");
   const schedulePlan = workflowPlans.find((wp) => wp.plan.trigger.type === "schedule")?.plan;
 
+  const memoryPlan = workflowPlans.find((wp) => wp.plan.memory)?.plan;
+  const cpuPlan = workflowPlans.find((wp) => wp.plan.cpu)?.plan;
+  const hasWebhook = workflowPlans.some((wp) => wp.plan.trigger.type === "webhook");
+
   const gcpNeeds = provider === "gcp" ? {
     executionKind: (hasJob ? "job" : "service") as "job" | "service",
     cloudScheduler: hasSchedule,
     scheduleCron: schedulePlan?.trigger.cron,
     scheduleTimezone: schedulePlan?.trigger.timezone,
     secretManager: hasSecretManager,
+    publicIngress: hasWebhook,
     database: false,
     storage: false,
+    memory: memoryPlan?.memory,
+    cpu: cpuPlan?.cpu,
   } : undefined;
+
+  // -------------------------------------------------------------------------
+  // Validate GCP resource constraints before building
+  // -------------------------------------------------------------------------
+
+  if (provider === "gcp") {
+    const { validateGcpResourceConstraints } = await import("@gtmship/deploy-engine");
+    const validationErrors: Array<{ workflowId: string; field: string; message: string }> = [];
+
+    for (const workflowPlan of workflowPlans) {
+      const errors = validateGcpResourceConstraints(workflowPlan.plan);
+      for (const error of errors) {
+        validationErrors.push({
+          workflowId: workflowPlan.workflowId,
+          ...error,
+        });
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      console.log("");
+      console.log(chalk.red("  GCP Resource Validation Failed"));
+      console.log(chalk.red("  " + "─".repeat(50)));
+      for (const error of validationErrors) {
+        console.log(chalk.red(`  ${error.workflowId}: ${error.message}`));
+      }
+      console.log("");
+      console.log(chalk.yellow("  Fix the resource configuration in your workflow definition or gtmship.config.yaml."));
+      process.exit(1);
+    }
+  }
 
   console.log("");
 

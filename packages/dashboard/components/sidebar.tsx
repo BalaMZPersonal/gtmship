@@ -9,8 +9,6 @@ import {
   Rocket,
   ScrollText,
   Settings,
-  MessageSquare,
-  Terminal,
 } from "lucide-react";
 
 const nav = [
@@ -21,15 +19,7 @@ const nav = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function Sidebar({
-  chatOpen,
-  onToggleChat,
-  onOpenAgent,
-}: {
-  chatOpen: boolean;
-  onToggleChat: () => void;
-  onOpenAgent: () => void;
-}) {
+export function Sidebar() {
   const pathname = usePathname();
 
   return (
@@ -56,28 +46,6 @@ export function Sidebar({
           </Link>
         ))}
       </nav>
-
-      <div className="border-t border-zinc-800 p-2 space-y-1">
-        <button
-          onClick={onOpenAgent}
-          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-white transition-colors"
-        >
-          <Terminal size={16} />
-          AI Agent
-        </button>
-        <button
-          onClick={onToggleChat}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-            chatOpen
-              ? "bg-blue-600 text-white"
-              : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
-          )}
-        >
-          <MessageSquare size={16} />
-          AI Chat
-        </button>
-      </div>
     </aside>
   );
 }

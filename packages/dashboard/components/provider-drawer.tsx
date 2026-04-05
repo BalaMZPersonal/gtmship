@@ -739,8 +739,8 @@ function ApiSchemaTab({
       <div className="rounded-lg border border-zinc-800 p-8 text-center">
         <p className="text-sm text-zinc-500">No API schema available.</p>
         <p className="mt-1 text-xs text-zinc-600">
-          Use the AI Agent to set up this integration. It will capture the API
-          structure from docs for you.
+          Use the Connections Agent to set up this integration. It will
+          capture the API structure from docs for you.
         </p>
       </div>
     );
@@ -993,7 +993,7 @@ function TestTab({
         <div className="rounded-lg border border-zinc-800 p-8 text-center">
           <p className="text-sm text-zinc-500">No test configuration available.</p>
           <p className="mt-1 text-xs text-zinc-600">
-            Connect a credential and the AI Agent will generate test
+            Connect a credential and the Connections Agent will generate test
             instructions.
           </p>
         </div>

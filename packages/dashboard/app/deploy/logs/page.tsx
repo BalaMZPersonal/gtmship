@@ -1,13 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Loader2, Search } from "lucide-react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Cloud, Loader2, RefreshCw, ScrollText, Search } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import {
   getScopedWorkflowDeployments,
+  loadCloudDeploySettings,
+  resolveCloudProvider,
+  resolvePreferredCloudProvider,
   resolveSelectedExecutionName,
   resolveSelectedWorkflowDeploymentId,
+  type CloudProvider,
   type WorkflowDeploymentLogEntry,
   type WorkflowDeploymentOverview,
 } from "@/lib/deploy";
@@ -19,11 +30,55 @@ const timeRanges = [
   { value: "7d", label: "Last 7d" },
 ];
 
-const levelColors: Record<string, string> = {
-  info: "bg-green-900/40 text-green-400 border-green-800",
-  warn: "bg-yellow-900/40 text-yellow-400 border-yellow-800",
-  error: "bg-red-900/40 text-red-400 border-red-800",
+const cloudProviders: CloudProvider[] = ["aws", "gcp"];
+
+const CLOUD_PROVIDER_LABELS: Record<CloudProvider, string> = {
+  aws: "AWS",
+  gcp: "Google Cloud",
 };
+
+const fieldClassName =
+  "w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-zinc-600 focus:border-blue-500";
+
+const levelColors: Record<string, string> = {
+  info: "border-emerald-900/80 bg-emerald-950/40 text-emerald-300",
+  warn: "border-amber-900/80 bg-amber-950/40 text-amber-200",
+  error: "border-red-900/80 bg-red-950/40 text-red-200",
+};
+
+function SectionEyebrow({
+  icon,
+  children,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/80 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
+      {icon}
+      {children}
+    </div>
+  );
+}
+
+function StatusBanner({
+  tone,
+  children,
+}: {
+  tone: "error" | "warning";
+  children: ReactNode;
+}) {
+  const className =
+    tone === "error"
+      ? "border-red-900/40 bg-red-950/20 text-red-200"
+      : "border-amber-900/40 bg-amber-950/20 text-amber-100";
+
+  return (
+    <div className={`rounded-xl border px-4 py-3 text-sm ${className}`}>
+      {children}
+    </div>
+  );
+}
 
 function formatDateTime(value?: string | null): string {
   if (!value) {
@@ -109,15 +164,15 @@ function normalizeLegacyLogEntries(
 
 export default function LogsPage() {
   const searchParams = useSearchParams();
-  const queryProvider =
-    searchParams.get("provider") === "gcp" ? "gcp" : "aws";
+  const requestedProvider = resolveCloudProvider(searchParams.get("provider"));
   const queryWorkflow = searchParams.get("workflow") || "";
   const queryWorkflowSlug = searchParams.get("workflowSlug") || "";
   const queryWorkflowValue = queryWorkflow || queryWorkflowSlug;
   const queryDeploymentId = searchParams.get("deploymentId") || "";
   const queryExecutionName = searchParams.get("executionName") || "";
 
-  const [provider, setProvider] = useState<"aws" | "gcp">(queryProvider);
+  const [provider, setProvider] = useState<CloudProvider | null>(requestedProvider);
+  const [providerReady, setProviderReady] = useState(Boolean(requestedProvider));
   const [workflowId, setWorkflowId] = useState(queryWorkflowValue);
   const [since, setSince] = useState("1h");
   const [logs, setLogs] = useState<WorkflowDeploymentLogEntry[]>([]);
@@ -137,16 +192,44 @@ export default function LogsPage() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    setProvider(queryProvider);
     setWorkflowId(queryWorkflowValue);
     setSelectedDeploymentId(queryDeploymentId);
     setSelectedExecutionName(queryExecutionName);
-  }, [
-    queryDeploymentId,
-    queryExecutionName,
-    queryProvider,
-    queryWorkflowValue,
-  ]);
+  }, [queryDeploymentId, queryExecutionName, queryWorkflowValue]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (requestedProvider) {
+      setProvider(requestedProvider);
+      setProviderReady(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setProvider(null);
+    setProviderReady(false);
+
+    void (async () => {
+      const settings = await loadCloudDeploySettings();
+      if (cancelled) {
+        return;
+      }
+
+      setProvider(
+        resolvePreferredCloudProvider({
+          requestedProvider,
+          savedProvider: settings.provider,
+        })
+      );
+      setProviderReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedProvider]);
 
   const workflowLookup = useMemo(() => {
     const trimmedWorkflow = workflowId.trim();
@@ -195,8 +278,27 @@ export default function LogsPage() {
       (execution) => execution.executionName === selectedExecutionName
     );
 
+  const activeProviderLabel = provider
+    ? CLOUD_PROVIDER_LABELS[provider]
+    : "your primary cloud";
+  const providerStatusCopy = !providerReady
+    ? "Loading the cloud configured in Settings..."
+    : requestedProvider && provider === requestedProvider
+      ? `Showing ${activeProviderLabel} from the current provider-specific link.`
+      : requestedProvider
+        ? `Switched to ${activeProviderLabel} for this session after opening from a provider-specific link.`
+      : `Opening ${activeProviderLabel} because it is configured as your primary cloud in Settings.`;
+
+  const handleProviderChange = (nextProvider: CloudProvider) => {
+    setProvider(nextProvider);
+    setLogs([]);
+    setError("");
+    setLiveError("");
+    setDeploymentError("");
+  };
+
   const loadDeployments = useCallback(async () => {
-    if (provider !== "gcp") {
+    if (!providerReady || provider !== "gcp") {
       setGcpDeployments([]);
       setDeploymentError("");
       return;
@@ -236,7 +338,7 @@ export default function LogsPage() {
     } finally {
       setDeploymentsLoading(false);
     }
-  }, [provider, queryWorkflowSlug, workflowId, workflowLookup]);
+  }, [provider, providerReady, queryWorkflowSlug, workflowId, workflowLookup]);
 
   useEffect(() => {
     if (provider !== "gcp") {
@@ -275,6 +377,10 @@ export default function LogsPage() {
   ]);
 
   const fetchLogs = useCallback(async () => {
+    if (!providerReady || !provider) {
+      return;
+    }
+
     setLoading(true);
     setError("");
     setLiveError("");
@@ -315,268 +421,399 @@ export default function LogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [provider, selectedDeployment, selectedExecutionName, since, workflowId]);
+  }, [
+    provider,
+    providerReady,
+    selectedDeployment,
+    selectedExecutionName,
+    since,
+    workflowId,
+  ]);
 
   useEffect(() => {
-    void loadDeployments();
-  }, [loadDeployments]);
-
-  useEffect(() => {
-    void fetchLogs();
-  }, [fetchLogs]);
-
-  useEffect(() => {
-    if (autoRefresh) {
-      intervalRef.current = setInterval(() => {
-        void fetchLogs();
-        if (provider === "gcp") {
-          void loadDeployments();
-        }
-      }, 10000);
-    } else if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    if (!providerReady || !provider) {
+      return;
     }
+
+    void loadDeployments();
+  }, [loadDeployments, provider, providerReady]);
+
+  useEffect(() => {
+    if (!providerReady || !provider) {
+      return;
+    }
+
+    void fetchLogs();
+  }, [fetchLogs, provider, providerReady]);
+
+  useEffect(() => {
+    if (!providerReady || !provider || !autoRefresh) {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
+    intervalRef.current = setInterval(() => {
+      void fetchLogs();
+      if (provider === "gcp") {
+        void loadDeployments();
+      }
+    }, 10000);
 
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
     };
-  }, [autoRefresh, fetchLogs, loadDeployments, provider]);
+  }, [autoRefresh, fetchLogs, loadDeployments, provider, providerReady]);
 
   return (
-    <div className="p-8 max-w-5xl">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold">Execution Logs</h2>
-        <p className="mt-1 text-sm text-zinc-500">
-          View workflow execution logs from your cloud infrastructure.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl p-8">
+      <div className="space-y-6">
+        <section className="relative overflow-hidden rounded-[28px] border border-zinc-800 bg-gradient-to-br from-zinc-900 via-zinc-950 to-zinc-950">
+          <div className="absolute right-0 top-0 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
+          <div className="absolute bottom-0 left-10 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl" />
 
-      <div className="mb-4 rounded-lg border border-zinc-800 p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className="mb-1.5 block text-xs text-zinc-500">Provider</label>
-            <select
-              value={provider}
-              onChange={(event) =>
-                setProvider(event.target.value as "aws" | "gcp")
-              }
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
-            >
-              <option value="aws">AWS</option>
-              <option value="gcp">GCP</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1.5 block text-xs text-zinc-500">
-              {provider === "gcp" ? "Workflow Filter" : "Workflow ID"}
-            </label>
-            <div className="relative">
-              <Search
-                size={14}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500"
-              />
-              <input
-                type="text"
-                value={workflowId}
-                onChange={(event) => setWorkflowId(event.target.value)}
-                placeholder={
-                  provider === "gcp"
-                    ? "Filter deployments by workflow..."
-                    : "Filter AWS logs by workflow..."
-                }
-                className="rounded-md border border-zinc-700 bg-zinc-900 pl-8 pr-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-blue-600"
-              />
-            </div>
-          </div>
-
-          {provider === "gcp" ? (
-            <div className="min-w-[280px] flex-1">
-              <label className="mb-1.5 block text-xs text-zinc-500">
-                Deployment
-              </label>
-              <select
-                value={selectedDeploymentId}
-                onChange={(event) => setSelectedDeploymentId(event.target.value)}
-                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
-              >
-                {visibleGcpDeployments.length === 0 ? (
-                  <option value="">
-                    {deploymentsLoading ? "Loading deployments..." : "No deployments"}
-                  </option>
-                ) : null}
-                {visibleGcpDeployments.map((deployment) => (
-                  <option key={deployment.id} value={deployment.id}>
-                    {describeDeployment(deployment)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-
-          {provider === "gcp" ? (
-            <div className="min-w-[220px]">
-              <label className="mb-1.5 block text-xs text-zinc-500">
-                Execution
-              </label>
-              <select
-                value={selectedExecutionName}
-                onChange={(event) => setSelectedExecutionName(event.target.value)}
-                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
-              >
-                <option value="">All recent runs</option>
-                {hasCustomExecutionSelection ? (
-                  <option value={selectedExecutionName}>
-                    {selectedExecutionName}
-                  </option>
-                ) : null}
-                {executionOptions.map((execution, index) => (
-                  <option
-                    key={`${execution.executionName || index}`}
-                    value={execution.executionName || ""}
-                  >
-                    {(execution.executionName || "execution") +
-                      ` • ${execution.status || "unknown"}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-
-          <div>
-            <label className="mb-1.5 block text-xs text-zinc-500">
-              Time Range
-            </label>
-            <select
-              value={since}
-              onChange={(event) => setSince(event.target.value)}
-              className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
-            >
-              {timeRanges.map((entry) => (
-                <option key={entry.value} value={entry.value}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={() => {
-              void loadDeployments();
-              void fetchLogs();
-            }}
-            disabled={loading || deploymentsLoading}
-            className="flex items-center gap-2 rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-400 transition-colors hover:text-white hover:border-zinc-600 disabled:opacity-50"
-          >
-            <RefreshCw
-              size={14}
-              className={loading || deploymentsLoading ? "animate-spin" : ""}
-            />
-            Refresh
-          </button>
-
-          <label className="ml-auto flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(event) => setAutoRefresh(event.target.checked)}
-              className="rounded border-zinc-700 bg-zinc-900"
-            />
-            Auto-refresh
-          </label>
-        </div>
-      </div>
-
-      {provider === "gcp" && selectedDeployment ? (
-        <div className="mb-4 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-medium text-white">
-                {describeDeployment(selectedDeployment)}
-              </h3>
-              <p className="mt-1 text-xs text-zinc-500">
-                {selectedDeployment.platform?.gcpProject ||
-                  selectedDeployment.gcpProject ||
-                  "Unknown project"}
-                {" • "}
-                {selectedDeployment.platform?.region ||
-                  selectedDeployment.region ||
-                  "Unknown region"}
+          <div className="relative p-6 sm:p-8">
+            <div className="max-w-3xl">
+              <SectionEyebrow icon={<ScrollText size={12} />}>
+                Execution observability
+              </SectionEyebrow>
+              <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                Logs
+              </h1>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-zinc-400 sm:text-base">
+                Review workflow executions from your cloud deployment, narrow the
+                stream to a specific workflow or time window, and jump into GCP
+                deployments when recent execution metadata is available.
               </p>
             </div>
-            <p className="text-xs text-zinc-500">
-              Last deployed:{" "}
-              {formatDateTime(
-                selectedDeployment.deployedAt || selectedDeployment.updatedAt
-              )}
+
+            <p className="mt-5 text-sm leading-6 text-zinc-400">
+              {providerStatusCopy}
+            </p>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
+          <div className="max-w-3xl">
+            <SectionEyebrow icon={<Cloud size={12} />}>Log filters</SectionEyebrow>
+            <h2 className="mt-4 text-2xl font-semibold text-white">
+              Choose what to inspect
+            </h2>
+            <p className="mt-2 text-sm leading-7 text-zinc-400">
+              Start with your primary cloud from Settings, refine the workflow
+              scope, then refresh the stream manually or keep it live while you
+              investigate.
             </p>
           </div>
 
-          {selectedDeployment.liveError ? (
-            <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
-              {selectedDeployment.liveError}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {deploymentError ? (
-        <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
-          {deploymentError}
-        </div>
-      ) : null}
-
-      {error ? (
-        <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
-          {error}
-        </div>
-      ) : null}
-
-      {liveError ? (
-        <div className="mb-4 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
-          {liveError}
-        </div>
-      ) : null}
-
-      <div className="rounded-lg border border-zinc-800 bg-zinc-950">
-        {loading && logs.length === 0 ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-zinc-500">
-            <Loader2 size={16} className="animate-spin" />
-            Loading logs...
-          </div>
-        ) : logs.length === 0 ? (
-          <div className="flex items-center justify-center py-16 text-sm text-zinc-500">
-            {provider === "gcp" && !selectedDeploymentId
-              ? "Select a deployment to view logs."
-              : "No logs found"}
-          </div>
-        ) : (
-          <div className="max-h-[640px] overflow-y-auto p-4 space-y-1 font-mono text-xs">
-            {logs.map((log, index) => (
-              <div key={`${log.timestamp}-${index}`} className="flex items-start gap-2 py-1">
-                <span className="whitespace-nowrap shrink-0 text-zinc-600">
-                  {log.timestamp || "unknown-time"}
-                </span>
-                <span
-                  className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border shrink-0 ${
-                    levelColors[log.level] || levelColors.info
-                  }`}
-                >
-                  {log.level.toUpperCase()}
-                </span>
-                {log.executionName ? (
-                  <span className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400">
-                    {log.executionName}
-                  </span>
-                ) : null}
-                <span className="break-all text-zinc-300">{log.message}</span>
+          <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
+            {!providerReady || !provider ? (
+              <div className="flex min-h-40 items-center justify-center gap-3 text-sm text-zinc-500">
+                <Loader2 size={16} className="animate-spin" />
+                Loading your preferred cloud...
               </div>
-            ))}
+            ) : (
+              <div className="space-y-6">
+                <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+                      Primary cloud
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-zinc-400">
+                      Open the same provider configured in Settings by default,
+                      or switch clouds here for the current session.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {cloudProviders.map((entry) => (
+                      <button
+                        key={entry}
+                        type="button"
+                        onClick={() => handleProviderChange(entry)}
+                        className={`rounded-2xl border px-5 py-4 text-left transition-colors ${
+                          provider === entry
+                            ? "border-blue-500 bg-blue-500/10 text-white"
+                            : "border-zinc-800 bg-zinc-950/70 text-zinc-400 hover:border-zinc-700 hover:text-white"
+                        }`}
+                      >
+                        <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">
+                          Cloud source
+                        </p>
+                        <p className="mt-2 text-sm font-medium">
+                          {CLOUD_PROVIDER_LABELS[entry]}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_220px_auto] xl:items-end">
+                  <div>
+                    <label className="mb-2 block text-xs text-zinc-500">
+                      {provider === "gcp" ? "Workflow filter" : "Workflow ID"}
+                    </label>
+                    <div className="relative">
+                      <Search
+                        size={14}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
+                      />
+                      <input
+                        type="text"
+                        value={workflowId}
+                        onChange={(event) => setWorkflowId(event.target.value)}
+                        placeholder={
+                          provider === "gcp"
+                            ? "Filter deployments by workflow..."
+                            : "Filter AWS logs by workflow..."
+                        }
+                        className={`${fieldClassName} pl-9`}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs text-zinc-500">
+                      Time range
+                    </label>
+                    <select
+                      value={since}
+                      onChange={(event) => setSince(event.target.value)}
+                      className={fieldClassName}
+                    >
+                      {timeRanges.map((entry) => (
+                        <option key={entry.value} value={entry.value}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void loadDeployments();
+                        void fetchLogs();
+                      }}
+                      disabled={loading || deploymentsLoading}
+                      className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        size={14}
+                        className={
+                          loading || deploymentsLoading ? "animate-spin" : ""
+                        }
+                      />
+                      Refresh
+                    </button>
+
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-400">
+                      <input
+                        type="checkbox"
+                        checked={autoRefresh}
+                        onChange={(event) => setAutoRefresh(event.target.checked)}
+                        className="rounded border-zinc-700 bg-zinc-900"
+                      />
+                      Auto-refresh
+                    </label>
+                  </div>
+                </div>
+
+                {provider === "gcp" ? (
+                  <div className="border-t border-zinc-800 pt-6">
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.8fr)]">
+                      <div>
+                        <label className="mb-2 block text-xs text-zinc-500">
+                          Deployment
+                        </label>
+                        <select
+                          value={selectedDeploymentId}
+                          onChange={(event) =>
+                            setSelectedDeploymentId(event.target.value)
+                          }
+                          className={fieldClassName}
+                        >
+                          {visibleGcpDeployments.length === 0 ? (
+                            <option value="">
+                              {deploymentsLoading
+                                ? "Loading deployments..."
+                                : "No deployments"}
+                            </option>
+                          ) : null}
+                          {visibleGcpDeployments.map((deployment) => (
+                            <option key={deployment.id} value={deployment.id}>
+                              {describeDeployment(deployment)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-2 block text-xs text-zinc-500">
+                          Execution
+                        </label>
+                        <select
+                          value={selectedExecutionName}
+                          onChange={(event) =>
+                            setSelectedExecutionName(event.target.value)
+                          }
+                          className={fieldClassName}
+                        >
+                          <option value="">All recent runs</option>
+                          {hasCustomExecutionSelection ? (
+                            <option value={selectedExecutionName}>
+                              {selectedExecutionName}
+                            </option>
+                          ) : null}
+                          {executionOptions.map((execution, index) => (
+                            <option
+                              key={`${execution.executionName || index}`}
+                              value={execution.executionName || ""}
+                            >
+                              {(execution.executionName || "execution") +
+                                ` • ${execution.status || "unknown"}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {selectedDeployment ? (
+                      <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-white">
+                              {describeDeployment(selectedDeployment)}
+                            </p>
+                            <p className="mt-1 text-sm text-zinc-500">
+                              {selectedDeployment.platform?.gcpProject ||
+                                selectedDeployment.gcpProject ||
+                                "Unknown project"}
+                              {" • "}
+                              {selectedDeployment.platform?.region ||
+                                selectedDeployment.region ||
+                                "Unknown region"}
+                            </p>
+                          </div>
+
+                          <p className="text-sm text-zinc-500">
+                            Last deployed{" "}
+                            {formatDateTime(
+                              selectedDeployment.deployedAt ||
+                                selectedDeployment.updatedAt
+                            )}
+                          </p>
+                        </div>
+
+                        {selectedDeployment.liveError ? (
+                          <div className="mt-3">
+                            <StatusBanner tone="warning">
+                              {selectedDeployment.liveError}
+                            </StatusBanner>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
-        )}
+        </section>
+
+        {deploymentError ? (
+          <StatusBanner tone="error">{deploymentError}</StatusBanner>
+        ) : null}
+
+        {error ? <StatusBanner tone="error">{error}</StatusBanner> : null}
+
+        {liveError ? <StatusBanner tone="warning">{liveError}</StatusBanner> : null}
+
+        <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950">
+          <div className="border-b border-zinc-800 bg-zinc-950/80 px-5 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+                  Log stream
+                </p>
+                <h2 className="mt-1 text-base font-medium text-white">
+                  {!providerReady || !provider
+                    ? "Preparing execution logs"
+                    : `${activeProviderLabel} execution logs`}
+                </h2>
+              </div>
+
+              {providerReady && provider ? (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1">
+                    {timeRanges.find((entry) => entry.value === since)?.label ||
+                      since}
+                  </span>
+                  <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1">
+                    {autoRefresh ? "Auto-refresh on" : "Manual refresh"}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {!providerReady || !provider ? (
+            <div className="flex items-center justify-center gap-2 py-20 text-sm text-zinc-500">
+              <Loader2 size={16} className="animate-spin" />
+              Loading logs...
+            </div>
+          ) : loading && logs.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-20 text-sm text-zinc-500">
+              <Loader2 size={16} className="animate-spin" />
+              Loading logs...
+            </div>
+          ) : logs.length === 0 ? (
+            <div className="flex items-center justify-center py-20 text-sm text-zinc-500">
+              {provider === "gcp" && !selectedDeploymentId
+                ? "Select a deployment to view logs."
+                : "No logs found for this filter set."}
+            </div>
+          ) : (
+            <div className="max-h-[680px] overflow-y-auto">
+              {logs.map((log, index) => (
+                <div
+                  key={`${log.timestamp}-${index}`}
+                  className="flex flex-col gap-2 border-b border-zinc-900/80 px-5 py-3 last:border-b-0 lg:flex-row lg:items-start"
+                >
+                  <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-zinc-600 lg:min-w-40">
+                    {log.timestamp || "unknown-time"}
+                  </span>
+
+                  <div className="flex min-w-0 flex-1 flex-wrap items-start gap-2">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-medium uppercase tracking-wide ${
+                        levelColors[log.level] || levelColors.info
+                      }`}
+                    >
+                      {log.level.toUpperCase()}
+                    </span>
+
+                    {log.executionName ? (
+                      <span className="inline-flex items-center rounded-full border border-zinc-800 bg-zinc-900 px-2 py-1 text-[10px] text-zinc-400">
+                        {log.executionName}
+                      </span>
+                    ) : null}
+
+                    <span className="min-w-0 flex-1 break-words font-mono text-xs leading-6 text-zinc-300">
+                      {log.message}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ import {
   Loader2,
   ExternalLink,
   Search,
+  Brain,
 } from "lucide-react";
 
 interface ToolInvocation {
@@ -106,6 +107,10 @@ export function ToolRenderer({
       return <ActiveConnectionsRenderer args={args} state={state} result={result} />;
     case "testActiveConnection":
       return <ConnectionRenderer args={args} state={state} result={result} title="Testing active connection" />;
+    case "saveMemory":
+      return <SaveMemoryRenderer args={args} state={state} result={result} />;
+    case "recallMemories":
+      return <RecallMemoriesRenderer args={args} state={state} result={result} />;
     default:
       return <GenericRenderer toolName={toolName} args={args} state={state} result={result} />;
   }
@@ -1356,6 +1361,87 @@ function PreviewRenderer({
           </p>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function SaveMemoryRenderer({
+  args,
+  state,
+  result,
+}: {
+  args: Record<string, unknown>;
+  state: string;
+  result: unknown;
+}) {
+  const content = String(args.content || "");
+  const category = String(args.category || "general");
+  const scope = String(args.scope || "app");
+  const res = result as { saved?: boolean; id?: string; error?: string } | undefined;
+
+  return (
+    <div className="rounded-lg border border-purple-800/50 bg-purple-950/20 overflow-hidden my-2">
+      <div className="flex items-center gap-2 px-3 py-2 text-xs">
+        <Brain size={12} className="text-purple-400" />
+        <span className="text-purple-300 font-medium">
+          {state === "call" ? "Saving to memory..." : "Saved to memory"}
+        </span>
+        <span className="rounded bg-purple-900/40 px-1.5 py-0.5 text-[10px] text-purple-300">
+          {category}
+        </span>
+        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+          {scope}
+        </span>
+        {state === "call" && (
+          <Loader2 size={12} className="animate-spin text-purple-400 ml-auto" />
+        )}
+        {res?.saved && (
+          <CheckCircle size={12} className="text-purple-400 ml-auto" />
+        )}
+        {res?.error && <XCircle size={12} className="text-red-400 ml-auto" />}
+      </div>
+      <div className="px-3 pb-2 text-xs text-zinc-300">
+        {content.length > 150 ? content.slice(0, 150) + "..." : content}
+      </div>
+      {res?.error && (
+        <p className="px-3 pb-2 text-xs text-red-400">{res.error}</p>
+      )}
+    </div>
+  );
+}
+
+function RecallMemoriesRenderer({
+  args,
+  state,
+  result,
+}: {
+  args: Record<string, unknown>;
+  state: string;
+  result: unknown;
+}) {
+  const query = String(args.query || "");
+  const res = result as
+    | { count?: number; error?: string; memories?: unknown[] }
+    | undefined;
+
+  return (
+    <div className="flex items-center gap-2 my-2 px-3 py-2 rounded-lg border border-purple-800/30 bg-purple-950/10 text-xs">
+      <Brain size={12} className="text-purple-400 shrink-0" />
+      <span className="text-zinc-400">Recalling memories</span>
+      <span className="text-purple-300 font-mono truncate max-w-[200px]">
+        {query}
+      </span>
+      {state === "call" && (
+        <Loader2 size={12} className="animate-spin text-purple-400 ml-auto shrink-0" />
+      )}
+      {res && !res.error && (
+        <span className="text-purple-300 ml-auto shrink-0">
+          {res.count || 0} found
+        </span>
+      )}
+      {res?.error && (
+        <span className="text-red-400 ml-auto shrink-0">{res.error}</span>
+      )}
     </div>
   );
 }

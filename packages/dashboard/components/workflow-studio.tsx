@@ -19,6 +19,7 @@ import remarkGfm from "remark-gfm";
 import {
   AlertCircle,
   ArrowLeft,
+  Brain,
   CheckCircle2,
   ChevronRight,
   Code2,
@@ -38,7 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api, type MemoryRecord } from "@/lib/api";
 import {
   buildDeploymentLogsHref,
   type DashboardDeployInfraKey,
@@ -149,6 +150,13 @@ interface WorkflowConversationPanelProps {
   onBusyChange: (value: boolean) => void;
   onError: (message: string | null) => void;
 }
+
+type WorkflowStudioProject = {
+  name: string;
+  path: string;
+  isDefault: boolean;
+  workflowCount: number;
+};
 
 type WorkflowConnectionBlockerStatus = "missing" | "blocked" | "attention";
 
@@ -889,6 +897,10 @@ function formatBytes(value?: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatWorkflowCount(count: number): string {
+  return `${count} workflow${count === 1 ? "" : "s"}`;
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const data = await response.json();
   if (!response.ok) {
@@ -1105,7 +1117,7 @@ function ChatMessage({
         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-700">
           <Workflow size={14} />
         </div>
-        <div className="min-w-0 flex-1 rounded-2xl bg-zinc-800/60 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-zinc-200">
+        <div className="min-w-0 flex-1 break-words rounded-2xl bg-zinc-800/60 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-zinc-200">
           {message.content}
         </div>
       </div>
@@ -1118,7 +1130,7 @@ function ChatMessage({
         <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-600">
           <AlertCircle size={14} />
         </div>
-        <div className="min-w-0 flex-1 rounded-2xl border border-amber-900/40 bg-amber-950/20 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-amber-100">
+        <div className="min-w-0 flex-1 break-words rounded-2xl border border-amber-900/40 bg-amber-950/20 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-amber-100">
           <MarkdownContent text={message.content} tone="system" />
         </div>
       </div>
@@ -1146,7 +1158,7 @@ function ChatMessage({
               ) : (
                 <div className="w-7 shrink-0" />
               )}
-              <div className="min-w-0 flex-1 rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm leading-relaxed text-zinc-200">
+              <div className="min-w-0 flex-1 break-words rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm leading-relaxed text-zinc-200">
                 <MarkdownContent text={text} />
               </div>
             </div>
@@ -1648,14 +1660,7 @@ export function WorkflowStudio() {
   const [cloudSettings, setCloudSettings] =
     useState<ResolvedCloudDeploySettings | null>(null);
   const [showProjectPicker, setShowProjectPicker] = useState(false);
-  const [projects, setProjects] = useState<
-    Array<{
-      name: string;
-      path: string;
-      isDefault: boolean;
-      workflowCount: number;
-    }>
-  >([]);
+  const [projects, setProjects] = useState<WorkflowStudioProject[]>([]);
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
   const [switchingProject, setSwitchingProject] = useState(false);
@@ -1669,6 +1674,8 @@ export function WorkflowStudio() {
   const [editorSessionKey, setEditorSessionKey] = useState(() =>
     `workflow-studio-${Date.now()}`
   );
+  const [workflowMemories, setWorkflowMemories] = useState<MemoryRecord[]>([]);
+  const [workflowMemoriesLoading, setWorkflowMemoriesLoading] = useState(false);
   const conversationRef = useRef<WorkflowConversationPanelHandle | null>(null);
 
   // Refs to preserve manually-run validation/preview/build results from being
@@ -2062,12 +2069,26 @@ export function WorkflowStudio() {
       setActiveTab("flow");
       setEditorSessionKey(`${slug}-${Date.now()}`);
       setError(null);
+      // Load workflow-level memories
+      loadWorkflowMemories(slug);
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load workflow."
       );
     } finally {
       setLoadingWorkflow(false);
+    }
+  }
+
+  async function loadWorkflowMemories(slug: string) {
+    setWorkflowMemoriesLoading(true);
+    try {
+      const data = await api.getMemories({ scope: "workflow", workflowId: slug });
+      setWorkflowMemories(Array.isArray(data) ? data : []);
+    } catch {
+      setWorkflowMemories([]);
+    } finally {
+      setWorkflowMemoriesLoading(false);
     }
   }
 
@@ -2676,174 +2697,284 @@ export function WorkflowStudio() {
     { value: "build", label: "Build", icon: Package },
     { value: "deploy", label: "Deploy", icon: Rocket },
   ];
+  const projectName =
+    listing?.projectName || listing?.projectRoot?.split("/").pop() || "default";
+  const workflowCountLabel = formatWorkflowCount(workflows.length);
+  const projectPickerToggleLabel = showProjectPicker
+    ? "Hide projects"
+    : listing?.projectRootConfigured
+      ? "Switch project"
+      : "Choose project";
 
   return (
-    <div className="relative flex h-[calc(100vh-1rem)] min-h-[720px] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950">
+    <div
+      className={cn(
+        "relative",
+        showEditor
+          ? "flex h-[calc(100vh-1rem)] min-h-[720px] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950"
+          : "mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8"
+      )}
+    >
       {!showEditor ? (
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-            <div>
-              <h2 className="text-lg font-semibold text-white">
-                Workflow Studio
-              </h2>
-              <p className="mt-0.5 text-xs text-zinc-500">
-                Repo-backed AI workflow generation.
-              </p>
-            </div>
-            <button
-              onClick={startNewWorkflow}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-blue-500"
-            >
-              <Plus size={14} />
-              New Workflow
-            </button>
-          </header>
-
-          <div className="flex-1 overflow-y-auto p-6">
-            {listing?.projectRootConfigured ? (
-              <div className="mb-4 flex items-center gap-2">
-                <p className="text-xs text-zinc-500">
-                  Project:{" "}
-                  <span className="font-medium text-zinc-300">
-                    {listing.projectName || listing.projectRoot?.split("/").pop() || "default"}
-                  </span>
-                </p>
-                <button
-                  onClick={() => {
-                    void loadProjects();
-                    setShowProjectPicker(!showProjectPicker);
-                  }}
-                  className="rounded px-2 py-0.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-                >
-                  Switch
-                </button>
-              </div>
-            ) : null}
-
-            {showProjectPicker ? (
-              <div className="mb-6 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                <p className="mb-3 text-sm font-medium text-white">
-                  Your Projects
-                </p>
-                <p className="mb-3 text-xs text-zinc-500">
-                  Each project has its own workflows directory. Pick one or
-                  create a new project.
-                </p>
-                <div className="space-y-1.5">
-                  {projects.map((project) => (
-                    <button
-                      key={project.path}
-                      onClick={() => void switchProject(project.path)}
-                      disabled={switchingProject}
-                      className={cn(
-                        "flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-left text-xs transition-colors",
-                        listing?.projectRoot === project.path
-                          ? "border-blue-600/50 bg-blue-600/10 text-white"
-                          : "border-zinc-800 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-800/50"
-                      )}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className="font-medium">{project.name}</span>
-                        {project.isDefault ? (
-                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
-                            default
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="text-zinc-600">
-                        {project.workflowCount} workflow
-                        {project.workflowCount !== 1 ? "s" : ""}
-                      </span>
-                    </button>
-                  ))}
+        <div className="space-y-6">
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+            <div className="space-y-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <div className="max-w-3xl">
+                  <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                    Workflows
+                  </h1>
+                  <p className="mt-2 text-sm leading-7 text-zinc-400">
+                    {listing?.projectRootConfigured
+                      ? `${workflowCountLabel} in ${projectName}. Open an existing draft or start a new workflow.`
+                      : "Pick a project workspace, then open an existing draft or start a new workflow."}
+                  </p>
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <input
-                    value={newProjectName}
-                    onChange={(e) => setNewProjectName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void handleCreateProject();
-                    }}
-                    placeholder="New project name"
-                    className="flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-white placeholder-zinc-600 outline-none focus:border-blue-600"
-                  />
-                  <button
-                    onClick={() => void handleCreateProject()}
-                    disabled={creatingProject || !newProjectName.trim()}
-                    className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
-                  >
-                    {creatingProject ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <FolderPlus size={12} />
-                    )}
-                    Create
-                  </button>
-                </div>
-              </div>
-            ) : null}
 
-            {loadingList ? (
-              <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500">
-                <Loader2 size={14} className="animate-spin" />
-                Loading workflows...
-              </div>
-            ) : workflows.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <Workflow size={36} className="text-zinc-700" />
-                <h3 className="mt-4 text-base font-medium text-white">
-                  No workflows yet
-                </h3>
-                <p className="mt-2 max-w-md text-sm text-zinc-500">
-                  Create a new workflow to get started. The agent can inspect
-                  docs, debug issues, and keep the draft in sync as it works.
-                </p>
                 <button
                   onClick={startNewWorkflow}
-                  className="mt-6 flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+                  disabled={loadingWorkflow}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Plus size={14} />
-                  Create your first workflow
+                  New workflow
                 </button>
               </div>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {workflows.map((workflow) => (
-                  <button
-                    key={workflow.slug}
-                    onClick={() => void loadWorkflow(workflow.slug)}
-                    className={cn(
-                      "rounded-xl border px-4 py-4 text-left transition-colors hover:border-zinc-600 hover:bg-zinc-900/60",
-                      selectedSlug === workflow.slug
-                        ? "border-blue-600 bg-blue-600/5"
-                        : "border-zinc-800 bg-zinc-900/30"
-                    )}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="truncate text-sm font-medium text-white">
-                        {workflow.title}
-                      </p>
-                      {workflow.hasStudioMetadata ? (
-                        <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
-                          studio
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
-                          legacy
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-1.5 line-clamp-2 text-xs text-zinc-500">
-                      {workflow.summary}
+
+              <div className="flex flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs text-zinc-500">Project</p>
+                  <p className="mt-1 text-sm font-medium text-zinc-200">
+                    {listing?.projectRootConfigured
+                      ? projectName
+                      : "Choose where workflows live"}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {listing?.projectRootConfigured
+                      ? `${workflowCountLabel} available in this workspace.`
+                      : "Workflow Studio needs a project workspace before it can save drafts."}
+                  </p>
+                  {listing?.projectRoot ? (
+                    <p className="mt-2 truncate text-xs text-zinc-600">
+                      {listing.projectRoot}
                     </p>
-                    <p className="mt-2 text-[11px] text-zinc-600">
-                      {workflow.trigger} &middot; {formatDate(workflow.updatedAt)}
-                    </p>
-                  </button>
-                ))}
+                  ) : null}
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (!showProjectPicker) {
+                      void loadProjects();
+                    }
+                    setShowProjectPicker((current) => !current);
+                  }}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
+                >
+                  {switchingProject ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : showProjectPicker ? (
+                    <X size={14} />
+                  ) : (
+                    <ChevronRight size={14} />
+                  )}
+                  {projectPickerToggleLabel}
+                </button>
               </div>
-            )}
-          </div>
+
+              {showProjectPicker ? (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+                  <div className="flex flex-col gap-3">
+                    <div className="max-w-2xl">
+                      <p className="text-sm font-medium text-white">
+                        Projects
+                      </p>
+                      <p className="mt-1 text-sm leading-6 text-zinc-500">
+                        Each project keeps its own workflows directory. Pick an
+                        existing project or create a new project for a separate
+                        workflow list.
+                      </p>
+                    </div>
+                  </div>
+
+                  {projects.length === 0 ? (
+                    <div className="mt-4 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/60 px-6 py-10 text-center text-sm text-zinc-500">
+                      No saved projects yet. Create one below to start a fresh
+                      workflow workspace.
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      {projects.map((project) => (
+                        <button
+                          key={project.path}
+                          onClick={() => void switchProject(project.path)}
+                          disabled={switchingProject}
+                          className={cn(
+                            "flex w-full items-start justify-between gap-4 rounded-xl border px-4 py-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-70",
+                            listing?.projectRoot === project.path
+                              ? "border-zinc-700 bg-zinc-900/80 text-white"
+                              : "border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-700 hover:bg-zinc-900/70"
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-medium">
+                                {project.name}
+                              </p>
+                              {project.isDefault ? (
+                                <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                                  Default
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-2 text-sm leading-6 text-zinc-500">
+                              {formatWorkflowCount(project.workflowCount)} in
+                              this workspace.
+                            </p>
+                            <p className="mt-2 truncate text-xs text-zinc-600">
+                              {project.path}
+                            </p>
+                          </div>
+
+                          <div className="mt-0.5 shrink-0 text-zinc-500">
+                            {switchingProject &&
+                            listing?.projectRoot === project.path ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <ChevronRight size={16} />
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <input
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleCreateProject();
+                      }}
+                      placeholder="New project name"
+                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950/90 px-3 py-3 text-sm text-white placeholder-zinc-600 outline-none transition-colors focus:border-blue-500"
+                    />
+                    <button
+                      onClick={() => void handleCreateProject()}
+                      disabled={creatingProject || !newProjectName.trim()}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {creatingProject ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <FolderPlus size={14} />
+                      )}
+                      Create project
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {loadingList ? (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 px-5 py-12 text-center">
+                  <div className="inline-flex items-center gap-2 text-sm text-zinc-500">
+                    <Loader2 size={16} className="animate-spin" />
+                    Loading workflows...
+                  </div>
+                </div>
+              ) : workflows.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-6 py-14 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-400">
+                    <Workflow size={22} />
+                  </div>
+                  <h3 className="mt-5 text-xl font-semibold text-white">
+                    No workflows yet
+                  </h3>
+                  <p className="mx-auto mt-3 max-w-xl text-sm leading-7 text-zinc-500">
+                    Start a new workflow when you are ready to generate code,
+                    inspect docs, and keep the draft in sync with the agent.
+                  </p>
+                  <button
+                    onClick={startNewWorkflow}
+                    className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+                  >
+                    <Plus size={14} />
+                    Create your first workflow
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/40">
+                  <div className="divide-y divide-zinc-800/80">
+                    {workflows.map((workflow) => {
+                      const isOpening =
+                        loadingWorkflow && selectedSlug === workflow.slug;
+
+                      return (
+                        <button
+                          key={workflow.slug}
+                          onClick={() => void loadWorkflow(workflow.slug)}
+                          disabled={loadingWorkflow}
+                          className={cn(
+                            "group flex w-full flex-col gap-3 px-5 py-4 text-left transition-colors hover:bg-zinc-900/60 focus:outline-none focus-visible:bg-zinc-900/60 disabled:cursor-not-allowed",
+                            selectedSlug === workflow.slug
+                              ? "bg-zinc-900/70"
+                              : ""
+                          )}
+                        >
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0 max-w-3xl">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="truncate text-base font-semibold text-white">
+                                  {workflow.title}
+                                </h3>
+                                <span
+                                  className={cn(
+                                    "rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.18em]",
+                                    workflow.hasStudioMetadata
+                                      ? "border-zinc-700 bg-zinc-900 text-zinc-300"
+                                      : "border-zinc-800 bg-zinc-950 text-zinc-500"
+                                  )}
+                                >
+                                  {workflow.hasStudioMetadata
+                                    ? "Studio"
+                                    : "Legacy"}
+                                </span>
+                              </div>
+                              <p className="mt-2 line-clamp-2 text-sm leading-6 text-zinc-500">
+                                {workflow.summary ||
+                                  "No summary yet for this workflow."}
+                              </p>
+                            </div>
+
+                            <div className="hidden shrink-0 items-center gap-2 self-center text-sm text-zinc-600 sm:flex">
+                              {isOpening ? (
+                                <>
+                                  <Loader2
+                                    size={14}
+                                    className="animate-spin"
+                                  />
+                                  <span>Opening</span>
+                                </>
+                              ) : (
+                                <ChevronRight
+                                  size={16}
+                                  className="transition-transform group-hover:translate-x-0.5"
+                                />
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                            <span>{workflow.trigger}</span>
+                            <span>Updated {formatDate(workflow.updatedAt)}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       ) : (
         <>
@@ -3202,6 +3333,86 @@ export function WorkflowStudio() {
                         </div>
                       )}
                     </div>
+
+                    {selectedSlug && (
+                      <details className="group overflow-hidden rounded-2xl border border-purple-800/30 bg-purple-950/10 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
+                        <summary className="flex cursor-pointer items-center justify-between gap-3 px-5 py-4 text-sm font-medium text-zinc-200 transition-colors hover:bg-purple-950/20">
+                          <div className="flex items-center gap-2">
+                            <Brain size={14} className="text-purple-400" />
+                            <span>Workflow Memory</span>
+                          </div>
+                          <span className="rounded-full border border-purple-500/20 bg-purple-500/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-purple-300">
+                            {workflowMemoriesLoading
+                              ? "..."
+                              : `${workflowMemories.length} saved`}
+                          </span>
+                        </summary>
+                        <div className="border-t border-purple-800/20 px-5 py-4">
+                          {workflowMemoriesLoading ? (
+                            <div className="flex items-center gap-2 py-4 justify-center text-xs text-zinc-500">
+                              <Loader2
+                                size={12}
+                                className="animate-spin"
+                              />
+                              Loading...
+                            </div>
+                          ) : workflowMemories.length === 0 ? (
+                            <p className="py-4 text-center text-xs text-zinc-500">
+                              No memories for this workflow yet. The AI agent
+                              will save validated knowledge here during
+                              conversations.
+                            </p>
+                          ) : (
+                            <div className="space-y-2 max-h-60 overflow-y-auto">
+                              {workflowMemories.map((memory) => (
+                                <div
+                                  key={memory.id}
+                                  className="group/mem flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-zinc-300 leading-relaxed">
+                                      {memory.content}
+                                    </p>
+                                    <div className="mt-1.5 flex items-center gap-1.5 text-[10px]">
+                                      <span className="rounded bg-purple-900/40 px-1.5 py-0.5 text-purple-300">
+                                        {memory.category}
+                                      </span>
+                                      <span className="text-zinc-600">
+                                        {new Date(
+                                          memory.createdAt
+                                        ).toLocaleDateString()}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      await api.deleteMemory(memory.id);
+                                      setWorkflowMemories((ms) =>
+                                        ms.filter((m) => m.id !== memory.id)
+                                      );
+                                    }}
+                                    className="shrink-0 rounded p-1 text-zinc-600 opacity-0 transition-all group-hover/mem:opacity-100 hover:text-red-400"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (selectedSlug) loadWorkflowMemories(selectedSlug);
+                            }}
+                            className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-500 transition-colors hover:text-purple-400"
+                          >
+                            <RefreshCw size={10} />
+                            Refresh
+                          </button>
+                        </div>
+                      </details>
+                    )}
                   </div>
                 ) : null}
 
@@ -4607,7 +4818,14 @@ export function WorkflowStudio() {
       )}
 
       {error ? (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-lg border border-rose-900/40 bg-rose-950/90 px-4 py-3 text-sm text-rose-100 shadow-lg backdrop-blur-sm">
+        <div
+          className={cn(
+            "z-50 flex items-center gap-2 rounded-lg border border-rose-900/40 bg-rose-950/90 px-4 py-3 text-sm text-rose-100 shadow-lg backdrop-blur-sm",
+            showEditor
+              ? "absolute bottom-6 left-1/2 -translate-x-1/2"
+              : "fixed bottom-6 left-1/2 -translate-x-1/2"
+          )}
+        >
           <AlertCircle size={14} className="shrink-0 text-rose-400" />
           <span>{error}</span>
           <button

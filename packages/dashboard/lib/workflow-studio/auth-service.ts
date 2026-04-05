@@ -31,6 +31,7 @@ export interface ProviderDetailRecord {
   testEndpoint?: string | null;
   headerName?: string | null;
   apiSchema?: Record<string, unknown> | null;
+  openApiSpecUrl?: string | null;
   hasCredentials?: boolean;
   connections: Array<{
     id: string;

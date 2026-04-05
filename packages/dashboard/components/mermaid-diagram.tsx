@@ -2,6 +2,7 @@
 
 import { AlertCircle } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { getWorkflowMermaid } from "@/lib/workflow-studio/mermaid";
 
 interface MermaidDiagramProps {
   chart: string;
@@ -14,7 +15,7 @@ const workflowMermaidThemeCss = `
   .node polygon,
   .node path {
     stroke-width: 1.5px;
-    filter: drop-shadow(0 10px 24px rgba(15, 23, 42, 0.22));
+    filter: none;
   }
 
   .node rect,
@@ -24,10 +25,10 @@ const workflowMermaidThemeCss = `
     ry: 18px;
   }
 
-  .node.default rect,
-  .node.default polygon,
-  .node.default path {
-    fill: rgba(15, 23, 42, 0.92);
+  .node rect,
+  .node polygon {
+    fill: rgba(24, 24, 27, 0.92) !important;
+    stroke: rgba(63, 63, 70, 0.70) !important;
   }
 
   .label,
@@ -38,21 +39,32 @@ const workflowMermaidThemeCss = `
 
   .label text,
   .nodeLabel p,
-  .edgeLabel p,
   .cluster-label text {
     font-weight: 600;
   }
 
+  .nodeLabel,
+  .nodeLabel p {
+    color: #e4e4e7 !important;
+  }
+
+  .edgeLabel,
+  .edgeLabel p {
+    color: #a1a1aa !important;
+    font-weight: 500;
+    font-size: 0.75em;
+  }
+
   .cluster rect {
-    fill: rgba(15, 23, 42, 0.42);
-    stroke: rgba(125, 211, 252, 0.22);
+    fill: rgba(24, 24, 27, 0.42);
+    stroke: rgba(63, 63, 70, 0.50);
     stroke-width: 1px;
   }
 
   g.edgeLabel rect,
   .edgeLabel rect {
-    fill: rgba(9, 14, 28, 0.92) !important;
-    stroke: rgba(59, 130, 246, 0.32) !important;
+    fill: rgba(9, 9, 11, 0.92) !important;
+    stroke: rgba(63, 63, 70, 0.40) !important;
     rx: 999px;
     ry: 999px;
   }
@@ -60,10 +72,12 @@ const workflowMermaidThemeCss = `
   .flowchart-link,
   .edgePath .path,
   .edgePath path {
+    stroke: rgba(59, 130, 246, 0.35) !important;
     stroke-width: 2px;
   }
 
   marker path {
+    fill: rgba(59, 130, 246, 0.50) !important;
     stroke: none;
   }
 `;
@@ -78,25 +92,25 @@ const workflowMermaidConfig = {
     'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   themeVariables: {
     background: "#09090b",
-    primaryColor: "#0f172a",
-    primaryBorderColor: "#3b82f6",
-    primaryTextColor: "#f8fafc",
-    secondaryColor: "#082f49",
-    secondaryBorderColor: "#38bdf8",
-    secondaryTextColor: "#e0f2fe",
+    primaryColor: "#18181b",
+    primaryBorderColor: "#3f3f46",
+    primaryTextColor: "#e4e4e7",
+    secondaryColor: "#18181b",
+    secondaryBorderColor: "#3f3f46",
+    secondaryTextColor: "#e4e4e7",
     tertiaryColor: "#18181b",
     tertiaryBorderColor: "#3f3f46",
     tertiaryTextColor: "#e4e4e7",
-    lineColor: "#38bdf8",
+    lineColor: "#3b82f6",
     textColor: "#e4e4e7",
-    mainBkg: "#0f172a",
-    nodeTextColor: "#f8fafc",
-    clusterBkg: "rgba(15, 23, 42, 0.42)",
-    clusterBorder: "rgba(125, 211, 252, 0.22)",
-    defaultLinkColor: "#38bdf8",
-    edgeLabelBackground: "#090e1c",
-    labelBackground: "#090e1c",
-    titleColor: "#f8fafc",
+    mainBkg: "#18181b",
+    nodeTextColor: "#e4e4e7",
+    clusterBkg: "rgba(24, 24, 27, 0.42)",
+    clusterBorder: "rgba(63, 63, 70, 0.30)",
+    defaultLinkColor: "#3b82f6",
+    edgeLabelBackground: "#09090b",
+    labelBackground: "#09090b",
+    titleColor: "#e4e4e7",
   },
   themeCSS: workflowMermaidThemeCss,
   flowchart: {
@@ -127,7 +141,7 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
       }
 
       try {
-        const mermaid = (await import("mermaid")).default;
+        const mermaid = await getWorkflowMermaid();
         mermaid.initialize(workflowMermaidConfig);
 
         const { svg } = await mermaid.render(`workflow-${diagramId}`, chart);
@@ -157,12 +171,12 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
   }, [chart, diagramId]);
 
   return (
-    <div className="relative overflow-hidden rounded-[24px] border border-white/10 bg-zinc-950/65 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/8 via-transparent to-cyan-500/10" />
-      <div className="absolute -right-12 top-0 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl" />
-      <div className="absolute bottom-0 left-6 h-28 w-28 rounded-full bg-cyan-500/10 blur-3xl" />
+    <div className="relative overflow-hidden rounded-[24px] border border-zinc-800 bg-zinc-950/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-blue-500/5" />
+      <div className="absolute -right-12 top-0 h-40 w-40 rounded-full bg-blue-500/5 blur-3xl" />
+      <div className="absolute bottom-0 left-6 h-28 w-28 rounded-full bg-blue-500/5 blur-3xl" />
       <div
-        className="absolute inset-0 opacity-40"
+        className="absolute inset-0 opacity-25"
         style={{
           backgroundImage:
             "linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.05) 1px, transparent 1px)",

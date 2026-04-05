@@ -41,6 +41,8 @@ export {
   getDefaultExecutionKind,
   planWorkflowDeployment,
   planWorkflowDeployments,
+  validateGcpResourceConstraints,
+  type GcpValidationError,
   type DeployTarget as PlannedDeployTarget,
   type PlannedResource,
   type PlannedTriggerSummary,

@@ -13,6 +13,17 @@ import {
 } from "@/lib/deploy";
 import type { ConnectionAuthStrategyStatus } from "@/lib/workflow-studio/types";
 
+export interface MemoryRecord {
+  id: string;
+  content: string;
+  category: string;
+  scope: string;
+  workflowId: string | null;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
 
 async function request(path: string, options?: RequestInit) {
@@ -192,6 +203,40 @@ export const api = {
     }>(`/api/workflows/${encodeURIComponent(slug)}`, {
       method: "DELETE",
       body: JSON.stringify(input || {}),
+    }),
+
+  // Memory
+  getMemories: (params?: {
+    scope?: string;
+    workflowId?: string;
+    category?: string;
+    q?: string;
+  }) => {
+    const query = new URLSearchParams();
+    if (params?.scope) query.set("scope", params.scope);
+    if (params?.workflowId) query.set("workflowId", params.workflowId);
+    if (params?.category) query.set("category", params.category);
+    if (params?.q) query.set("q", params.q);
+    const qs = query.toString();
+    return request(`/memories${qs ? `?${qs}` : ""}`) as Promise<MemoryRecord[]>;
+  },
+  createMemory: (data: {
+    content: string;
+    category?: string;
+    scope?: string;
+    workflowId?: string;
+    source?: string;
+  }) =>
+    request("/memories", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<MemoryRecord>,
+  deleteMemory: (id: string) =>
+    request(`/memories/${id}`, { method: "DELETE" }),
+  deleteMemories: (ids: string[]) =>
+    request("/memories", {
+      method: "DELETE",
+      body: JSON.stringify({ ids }),
     }),
 
   // Deploy

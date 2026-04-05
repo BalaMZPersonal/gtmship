@@ -44,6 +44,7 @@ model Provider {
   description   String?
   source        String?      @default("manual") // "catalog", "agent", "manual"
   apiSchema     Json?        @map("api_schema") // Endpoints, response structures, test instructions
+  openApiSpecUrl String?     @map("openapi_spec_url") // URL to published OpenAPI/Swagger spec (from APIs.guru or manual)
   oauthProviderKey String?   @map("oauth_provider_key")
   clientId      String?      @map("client_id")
   clientSecret  String?      @map("client_secret") // Encrypted
@@ -205,4 +206,21 @@ model Setting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("settings")
+}
+
+/// Persistent AI memory — knowledge retained across conversations
+model Memory {
+  id          String   @id @default(cuid())
+  content     String
+  category    String   @default("general")   // integration, business, workflow, general
+  scope       String   @default("app")       // app | workflow
+  workflowId  String?  @map("workflow_id")   // null for app-scoped, workflow slug for workflow-scoped
+  source      String   @default("agent")     // chat, agent, workflow — which agent created it
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([scope])
+  @@index([workflowId])
+  @@index([category])
+  @@map("memories")
 }

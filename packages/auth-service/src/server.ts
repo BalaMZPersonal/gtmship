@@ -11,6 +11,7 @@ import { catalogRoutes } from "./routes/catalog.js";
 import { cloudAuthRoutes } from "./routes/cloud-auth.js";
 import { workflowControlPlaneRoutes } from "./services/workflow-control-plane-routes.js";
 import { oauthProviderRoutes } from "./routes/oauth-providers.js";
+import { memoriesRoutes } from "./routes/memories.js";
 
 config();
 
@@ -50,6 +51,7 @@ app.use("/cloud-auth", cloudAuthRoutes);
 app.use("/workflow-control", workflowControlPlaneRoutes);
 app.use("/workflow-control-plane", workflowControlPlaneRoutes);
 app.use("/oauth-providers", oauthProviderRoutes);
+app.use("/memories", memoriesRoutes);
 app.use(
   (
     error: RequestBodyError,

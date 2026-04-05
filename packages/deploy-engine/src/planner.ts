@@ -193,6 +193,8 @@ export interface WorkflowDeploymentPlan {
     warning?: string;
   }>;
   heavyExecution: boolean;
+  memory?: string;
+  cpu?: string;
   warnings: string[];
 }
 
@@ -311,6 +313,36 @@ function parseNumeric(value?: number | string): number | undefined {
 
   const parsed = Number(match[0]);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeMemoryString(
+  value?: number | string
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number") return `${value}Mi`;
+  if (/^\d+$/.test(value)) return `${value}Mi`;
+  return value;
+}
+
+function normalizeCpuString(
+  value?: number | string
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return String(value);
+}
+
+function parseMemoryToMi(value?: string | number): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number") return value;
+
+  const giMatch = value.match(/^([\d.]+)\s*Gi$/i);
+  if (giMatch) return Math.round(parseFloat(giMatch[1]) * 1024);
+
+  const miMatch = value.match(/^([\d.]+)\s*Mi$/i);
+  if (miMatch) return Math.round(parseFloat(miMatch[1]));
+
+  const num = parseFloat(value);
+  return Number.isFinite(num) ? num : undefined;
 }
 
 function normalizeAuthMode(
@@ -570,10 +602,10 @@ export function getDefaultExecutionKind(
 ): WorkflowExecutionKind {
   switch (triggerType) {
     case "schedule":
+    case "manual":
       return "job";
     case "webhook":
     case "event":
-    case "manual":
     default:
       return "service";
   }
@@ -895,6 +927,12 @@ export function planWorkflowDeployment(
       : normalizedAuth;
   const authMode = auth.mode;
   const heavy = isHeavyExecution(input.deploy);
+  const resolvedMemory = normalizeMemoryString(
+    input.deploy?.execution?.memory ?? input.deploy?.memory
+  );
+  const resolvedCpu = normalizeCpuString(
+    input.deploy?.execution?.cpu ?? input.deploy?.cpu
+  );
   const warnings: string[] = [];
 
   if (provider === "gcp" && !gcpProject) {
@@ -903,7 +941,7 @@ export function planWorkflowDeployment(
 
   if (input.trigger.type === "manual" && !explicitExecutionKind) {
     warnings.push(
-      "Manual workflows work best with an explicit deploy.execution.kind. Defaulting to service."
+      "Manual workflows default to job execution. Set deploy.execution.kind explicitly to override."
     );
   }
 
@@ -1049,6 +1087,8 @@ export function planWorkflowDeployment(
       warning: binding.status === "resolved" ? undefined : binding.message,
     })),
     heavyExecution: heavy,
+    memory: resolvedMemory,
+    cpu: resolvedCpu,
     warnings,
   };
 }
@@ -1168,4 +1208,64 @@ export function buildWorkflowDeploymentPlan(
     bindings: inferredBindings,
     warnings: plan.warnings,
   };
+}
+
+// ---------------------------------------------------------------------------
+// GCP resource constraint validation
+// ---------------------------------------------------------------------------
+
+export interface GcpValidationError {
+  field: string;
+  message: string;
+  value?: string;
+}
+
+const GCP_MEMORY_CPU_LIMITS: Record<number, [number, number]> = {
+  1: [512, 4096],
+  2: [1024, 8192],
+  4: [2048, 16384],
+  6: [4096, 24576],
+  8: [4096, 32768],
+};
+
+export function validateGcpResourceConstraints(
+  plan: WorkflowDeploymentPlan
+): GcpValidationError[] {
+  const errors: GcpValidationError[] = [];
+
+  if (plan.provider !== "gcp") return errors;
+
+  const effectiveMemory = plan.memory || "512Mi";
+  const effectiveCpu = plan.cpu || "1";
+  const memoryMi = parseMemoryToMi(effectiveMemory);
+  const cpuValue = parseNumeric(effectiveCpu);
+
+  if (memoryMi !== undefined && memoryMi < 512) {
+    errors.push({
+      field: "memory",
+      message: `Cloud Run requires at least 512Mi of memory when CPU is always allocated. Got: ${effectiveMemory}.`,
+      value: effectiveMemory,
+    });
+  }
+
+  if (cpuValue !== undefined && ![1, 2, 4, 6, 8].includes(cpuValue)) {
+    errors.push({
+      field: "cpu",
+      message: `Cloud Run CPU must be 1, 2, 4, 6, or 8. Got: ${effectiveCpu}.`,
+      value: effectiveCpu,
+    });
+  }
+
+  if (cpuValue !== undefined && memoryMi !== undefined) {
+    const range = GCP_MEMORY_CPU_LIMITS[cpuValue];
+    if (range && (memoryMi < range[0] || memoryMi > range[1])) {
+      errors.push({
+        field: "memory",
+        message: `Cloud Run with ${cpuValue} CPU requires memory between ${range[0]}Mi and ${range[1]}Mi. Got: ${memoryMi}Mi.`,
+        value: effectiveMemory,
+      });
+    }
+  }
+
+  return errors;
 }

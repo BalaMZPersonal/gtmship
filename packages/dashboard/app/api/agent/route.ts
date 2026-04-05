@@ -5,6 +5,13 @@ import { fetchUrl } from "@/lib/url-fetcher";
 import { searchDocumentation } from "@/lib/doc-search";
 import { researchWeb, researchWebInputSchema } from "@/lib/research";
 import { createConfiguredLanguageModel } from "@/lib/ai-settings";
+import {
+  createSaveMemoryTool,
+  createRecallMemoriesTool,
+  fetchMemoryContext,
+  MEMORY_SYSTEM_PROMPT_ADDITION,
+} from "@/lib/memory-tools";
+import { resolveOpenApiSpecUrl } from "@/lib/workflow-studio/apis-guru";
 
 const AUTH_URL = process.env.AUTH_SERVICE_URL || "http://localhost:4000";
 const MAX_PROVIDER_SAVE_PAYLOAD_BYTES = 250_000;
@@ -261,7 +268,7 @@ function buildCompactProviderSavePayload(
   };
 }
 
-const SYSTEM_PROMPT = `You are GTMShip's Integration Agent — an expert at setting up API integrations.
+const SYSTEM_PROMPT = `You are GTMShip's Connections Agent — an expert at setting up API integrations.
 You have access to bash, curl, python, and a web research tool for documentation discovery.
 
 Your capabilities:
@@ -361,7 +368,12 @@ CRITICAL — Documentation Discovery Rules:
 - Use researchWeb with mode="scrape" when you already have a concrete public URL.
 - If researchWeb returns noUsefulResults AND the catalog doesn't have the provider, ASK the user: "I couldn't find the API documentation automatically. Could you share the documentation URL?"
 - Do not repeatedly try different guessed URLs. Search once, then ask.
-`;
+
+MEMORY BEHAVIOR:
+- At the start of a conversation, call recallMemories with the provider name to check if you've set it up before.
+- After successfully saving a provider and testing a connection, save the key details (provider slug, auth type, base URL, scopes, any quirks) to memory with category "integration" and scope "app".
+- After the user confirms their setup goals or requirements, save them with category "business".
+${MEMORY_SYSTEM_PROMPT_ADDITION}`;
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
@@ -381,12 +393,16 @@ export async function POST(req: Request) {
     );
   }
 
+  const memoryContext = await fetchMemoryContext();
+
   const result = streamText({
     model,
     maxSteps: 25,
-    system: SYSTEM_PROMPT,
+    system: SYSTEM_PROMPT + memoryContext,
     messages,
     tools: {
+      saveMemory: createSaveMemoryTool({ source: "agent" }),
+      recallMemories: createRecallMemoriesTool(),
       researchWeb: tool({
         description:
           "Search the web and optionally inspect a public page in one tool call. Use mode='research' when you only know the provider or query. Use mode='scrape' when you already have a docs URL. Prefer focus='documentation' for API research.",
@@ -450,13 +466,18 @@ export async function POST(req: Request) {
             const res = await fetch(`${AUTH_URL}/catalog/${slug.toLowerCase()}`);
             if (res.ok) {
               const provider = await res.json();
-              return { found: true, ...provider };
+              const openApiSpecUrl = await resolveOpenApiSpecUrl(slug.toLowerCase());
+              return { found: true, ...provider, ...(openApiSpecUrl ? { openApiSpecUrl } : {}) };
             }
             // Try search
             const searchRes = await fetch(`${AUTH_URL}/catalog?q=${encodeURIComponent(slug)}`);
             if (searchRes.ok) {
               const data = await searchRes.json();
-              if (data.items?.length > 0) return { found: true, ...data.items[0] };
+              if (data.items?.length > 0) {
+                const matchedSlug = data.items[0].slug || slug;
+                const openApiSpecUrl = await resolveOpenApiSpecUrl(matchedSlug.toLowerCase());
+                return { found: true, ...data.items[0], ...(openApiSpecUrl ? { openApiSpecUrl } : {}) };
+              }
             }
             return { found: false, message: `"${slug}" not in catalog. Use researchWeb to inspect API docs instead.` };
           } catch {
@@ -516,6 +537,7 @@ export async function POST(req: Request) {
           category: z.string().optional(),
           description: z.string().optional(),
           oauth_provider_key: z.string().optional(),
+          openapi_spec_url: z.string().optional().describe("URL to published OpenAPI/Swagger spec. Auto-resolved from APIs.guru if not provided."),
           api_schema: z.object({
             endpoints: z.array(z.object({
               method: z.string(),

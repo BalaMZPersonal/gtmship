@@ -2,7 +2,7 @@
 
 **Build GTM workflows with AI. Ship to your cloud.**
 
-GTMShip is an open-source platform for GTM (Go-To-Market) engineering. Build workflows with AI coding tools like Claude Code or Codex, manage OAuth connections through an agentic chat interface, and deploy to your own AWS or GCP with a single command.
+GTMShip is an open-source platform for GTM (Go-To-Market) engineering. Build workflows with AI coding tools like Claude Code or Codex, manage OAuth connections through a dedicated Connections Agent, and deploy to your own AWS or GCP with a single command.
 
 ## The Problem
 
@@ -23,7 +23,7 @@ gtmship deploy                    # Ship to your AWS/GCP
 ┌─────────────────────────────────────────────────────┐
 │                    Dashboard                         │
 │  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │Connections│ │Workflows │ │   AI Chat Agent   │   │
+│  │Connections│ │Workflows │ │ Connections Agent │   │
 │  │  Manager  │ │ Manager  │ │ (Claude/OpenAI)   │   │
 │  └────┬─────┘ └────┬─────┘ └────────┬──────────┘   │
 │       │             │                │               │
@@ -91,11 +91,11 @@ export default defineWorkflow({
 
 ## Managing Connections
 
-Add platform connections through the AI-powered chat interface:
+Add platform connections through the Connections Agent:
 
 1. Open the dashboard at `http://localhost:3000`
 2. Configure your AI provider (Claude or OpenAI)
-3. Click "Add Connection" and chat with the AI agent
+3. Click "Add Connection" and launch the Connections Agent
 4. The agent guides you through OAuth setup, tests the connection, and saves it
 
 Supports OAuth2, API Key, and Basic Auth. Pre-built templates for HubSpot, Salesforce, and Slack.
@@ -106,7 +106,7 @@ Supports OAuth2, API Key, and Basic Auth. Pre-built templates for HubSpot, Sales
 |-----------|-----------|---------|
 | Workflow Runtime | Trigger.dev | Apache 2.0 |
 | Dashboard | Next.js + shadcn/ui | MIT |
-| AI Chat | Vercel AI SDK | Apache 2.0 |
+| Connections Agent | Vercel AI SDK | Apache 2.0 |
 | Deployment | Pulumi | Apache 2.0 |
 | Database | PostgreSQL | PostgreSQL |
 | Auth Service | Custom (Pizzly-inspired) | MIT |

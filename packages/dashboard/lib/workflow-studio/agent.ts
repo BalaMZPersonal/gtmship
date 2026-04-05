@@ -14,6 +14,7 @@ import {
   generateWorkflowArtifact,
   parseGroundedApiContext,
 } from "./ai";
+import { fetchAndFilterOpenApiSpec } from "./openapi-spec";
 import { buildWorkflowArtifact } from "./build";
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
 import {
@@ -29,6 +30,12 @@ import {
   COORDINATOR_TOKEN_BUDGET,
   truncateToolResult,
 } from "./context-manager";
+import {
+  createSaveMemoryTool,
+  createRecallMemoriesTool,
+  fetchMemoryContext,
+  MEMORY_SYSTEM_PROMPT_ADDITION,
+} from "@/lib/memory-tools";
 import { compactWorkflowTranscriptIfNeeded } from "./transcript-compaction-server";
 import { normalizeWorkflowMessagesForModel } from "./transcript-compaction";
 import type {
@@ -163,17 +170,20 @@ Critical behavior:
 1. Treat this as an agentic workflow design/debug session, not a one-shot generator.
 2. When integrations are involved, inspect active connections early and read the provider reference before searching the open web.
 3. API Grounding — Before calling generateWorkflowDraft, ground every API endpoint the workflow will use:
-   a. Call readIntegrationReference for each provider. Examine the apiSchema field for endpoint paths, methods, request bodies, and response shapes.
-   b. If apiSchema is missing or does not cover the specific endpoints needed:
-      - Call researchWeb with mode="research" and a targeted query like "<provider> <endpoint> API reference".
+   a. Call readIntegrationReference for each provider to get metadata, docsUrl, and connection status.
+   b. Call fetchOpenApiSpec with the provider slug and a query describing the endpoints you need.
+      - If it returns structured endpoint definitions, use those directly as grounded context.
+      - The response includes exact paths, methods, parameters, request bodies, and response schemas from the provider's published OpenAPI spec.
+      - If the provider has multiple sub-APIs (e.g. HubSpot CRM vs Marketing), check the availableSubApis field and make a follow-up call with the specific sub-API's specUrl if needed.
+   c. If fetchOpenApiSpec returns an error or no matching endpoints (provider has no published OpenAPI spec):
+      - Fall back to researchWeb with mode="research" and a targeted query like "<provider> <endpoint> API reference".
       - If the auto-selected page is not useful, call researchWeb with mode="scrape" on a better result URL.
       - Extract the exact endpoint path, HTTP method, required request fields, and expected response shape.
-   c. For READ endpoints: test them in isolation using a single executeCommand call with curl through the auth proxy:
+   d. For READ endpoints covered by the OpenAPI spec: optionally verify one key endpoint with curl through the auth proxy to confirm the spec matches reality:
       curl -s http://localhost:4000/proxy/<provider-slug>/v1/endpoint --max-time 10
       Do NOT use -o, pipes (|), chaining (&&), or redirection (>). The sandbox runs execFile, not a shell. Each curl must be a single standalone command. To process output, run a separate executeCommand with jq or python3 on the previous result.
-      Verify the status code and inspect the response shape (top-level keys, array vs object, pagination structure).
-   d. For WRITE endpoints: do NOT call them during grounding. Verify the request schema from documentation only.
-   e. Pass grounded findings in the instructions parameter of generateWorkflowDraft using this format:
+   e. For WRITE endpoints: use the spec's request schema directly — do NOT call them during grounding.
+   f. Pass grounded findings in the instructions parameter of generateWorkflowDraft using this format:
       GROUNDED API CONTEXT:
       - <provider>: <METHOD> <path> — <purpose>
         Request: <key fields>
@@ -181,6 +191,7 @@ Critical behavior:
         Tested: <yes/no> Status: <code>
         Docs: <source URL>
    This prevents hallucinated endpoints, wrong field names, and incorrect request formats.
+   g. After grounding is complete, use saveMemory to save the key grounded endpoints for each provider (category: "integration", scope: "app"). This avoids re-grounding the same provider in future conversations.
 4. If researchWeb returns noUsefulResults or weak matches, try alternative queries (e.g. "<provider> REST API endpoints", "<provider> developer documentation") before falling back to general knowledge. Never fabricate an endpoint path from memory alone when research tools are available.
 5. If the user says they configured connections, asks you to recheck connections, or returns from the Connections Agent, call listActiveConnections first, test the relevant providers when possible, and only continue generating/fixing/building after you verify the needed access is ready.
 6. Documentation handling should mirror the connection agent:
@@ -211,8 +222,14 @@ Critical behavior:
 16. Do not remove or weaken legitimate write checkpoints just to avoid preview-only approvals. Workflow Studio preview can require multiple sequential approvals in the UI.
 17. If any tool returns an error, treat that step as failed. Do not say the workflow is done or describe changes as completed unless a later tool result confirms success.
 18. A generateWorkflowDraft error means the draft was not updated. Retry with clearer repair instructions or explain the failure.
+19. Memory usage:
+    a. At the start of every conversation, call recallMemories with scope "all" and relevant provider names to load both app-level and this workflow's prior context.
+    b. After successfully grounding API endpoints, save provider-level knowledge (base URL, auth type, API quirks) as scope "app" — it's reusable across workflows. Save workflow-specific endpoint usage (which endpoints THIS workflow calls, field mappings) as scope "workflow".
+    c. After a successful build/preview, save the working approach as scope "workflow" — these details are specific to this workflow and should not leak into other workflows.
+    d. After the user confirms a requirement, save as scope "app" if it applies broadly (business rules, preferences) or scope "workflow" if it's specific to this workflow's behavior.
+    e. Workflow memories are ISOLATED — they are only visible when the user is working on this same workflow. App memories are shared everywhere.
 
-Be concise, but show your work through tools and short reasoning updates in the chat.`;
+Be concise, but show your work through tools and short reasoning updates in the chat.${MEMORY_SYSTEM_PROMPT_ADDITION}`;
 
 export async function createWorkflowAgentResponse(
   rawBody: unknown
@@ -248,6 +265,8 @@ export async function createWorkflowAgentResponse(
     );
   }
 
+  const memoryContext = await fetchMemoryContext(draft?.slug);
+
   const contextManager = new ContextManager({
     tokenBudget: COORDINATOR_TOKEN_BUDGET,
   });
@@ -261,9 +280,12 @@ export async function createWorkflowAgentResponse(
       const result = streamText({
         model,
         maxSteps: 30,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM_PROMPT + memoryContext,
         messages: managed.messages as never,
         tools: {
+      saveMemory: createSaveMemoryTool({ source: "workflow", workflowId: draft?.slug }),
+      recallMemories: createRecallMemoriesTool({ workflowId: draft?.slug }),
+
       listActiveConnections: tool({
         description:
           "List the active integrations available right now. Use this early when the workflow depends on integrations.",
@@ -318,6 +340,34 @@ export async function createWorkflowAgentResponse(
           }
 
           return provider;
+        },
+      }),
+
+      fetchOpenApiSpec: tool({
+        description:
+          "Fetch and search the published OpenAPI specification for a provider. Returns structured endpoint definitions with paths, parameters, request bodies, and response schemas from APIs.guru or the provider's stored spec URL. Use this for API grounding before generating workflow code — more comprehensive than readIntegrationReference's apiSchema.",
+        parameters: z.object({
+          providerSlug: z.string().describe("Provider slug to fetch the spec for"),
+          query: z.string().optional().describe("Filter endpoints by keyword (e.g., 'contacts', 'create deal', 'send message')"),
+          maxEndpoints: z.number().int().min(1).max(50).optional().describe("Max endpoints to return. Default 15."),
+          specUrl: z.string().optional().describe("Direct URL to a specific sub-API spec. Use this when availableSubApis indicates multiple specs and you need a specific one."),
+        }),
+        execute: async ({ providerSlug, query, maxEndpoints, specUrl }) => {
+          // If no explicit specUrl, try to get it from the stored provider record
+          let resolvedSpecUrl = specUrl;
+          if (!resolvedSpecUrl) {
+            const provider = await getProviderDetail(providerSlug);
+            resolvedSpecUrl = provider?.openApiSpecUrl ?? undefined;
+          }
+
+          const result = await fetchAndFilterOpenApiSpec({
+            specUrl: resolvedSpecUrl,
+            providerSlug,
+            query,
+            maxEndpoints,
+          });
+
+          return truncateToolResult(result, contextManager.getToolResultLimit());
         },
       }),
 

@@ -3,6 +3,7 @@ import { prisma } from "../services/db.js";
 import { encrypt } from "../services/crypto.js";
 import { resolveSharedOAuthProviderKey } from "../services/shared-oauth.js";
 import { getApiSchemaForSlug } from "../services/catalog.js";
+import { resolveOpenApiSpecUrl } from "../services/apis-guru.js";
 
 export const providerRoutes: Router = Router();
 
@@ -54,6 +55,7 @@ providerRoutes.get("/", async (_req, res) => {
       logoUrl: true,
       description: true,
       source: true,
+      openApiSpecUrl: true,
       oauthProviderKey: true,
       clientId: true,
       createdAt: true,
@@ -119,9 +121,16 @@ providerRoutes.get("/:slug", async (req, res) => {
     }
   }
 
+  // Enrich with APIs.guru OpenAPI spec URL when DB has none
+  let openApiSpecUrl = safe.openApiSpecUrl;
+  if (!openApiSpecUrl) {
+    openApiSpecUrl = await resolveOpenApiSpecUrl(safe.slug);
+  }
+
   res.json({
     ...safe,
     apiSchema,
+    openApiSpecUrl,
     hasCredentials:
       !!clientId ||
       (resolveSharedOAuthProviderKey({
@@ -145,9 +154,16 @@ providerRoutes.post("/", async (req, res) => {
     scopes, token_refresh, test_endpoint, header_name,
     docs_url, notes, client_id, client_secret,
     category, logo_url, description, source, api_schema, oauth_provider_key,
+    openapi_spec_url,
   } = req.body;
 
   try {
+    // Auto-resolve OpenAPI spec URL from APIs.guru if not provided
+    let resolvedSpecUrl = openapi_spec_url || undefined;
+    if (!resolvedSpecUrl && slug) {
+      resolvedSpecUrl = (await resolveOpenApiSpecUrl(slug)) ?? undefined;
+    }
+
     const data = {
       name,
       slug,
@@ -166,6 +182,7 @@ providerRoutes.post("/", async (req, res) => {
       description,
       source: source || "manual",
       apiSchema: api_schema || undefined,
+      openApiSpecUrl: resolvedSpecUrl,
       oauthProviderKey: oauth_provider_key || undefined,
       clientId: client_id,
       clientSecret: client_secret ? encrypt(client_secret) : null,
@@ -219,7 +236,7 @@ providerRoutes.put("/:slug", async (req, res) => {
     scopes, token_refresh, test_endpoint, header_name,
     docs_url, notes, client_id, client_secret,
     category, logo_url, description, api_schema,
-    oauth_provider_key,
+    oauth_provider_key, openapi_spec_url,
   } = req.body;
 
   try {
@@ -245,6 +262,7 @@ providerRoutes.put("/:slug", async (req, res) => {
     if (logo_url !== undefined) update.logoUrl = logo_url;
     if (description !== undefined) update.description = description;
     if (api_schema !== undefined) update.apiSchema = api_schema;
+    if (openapi_spec_url !== undefined) update.openApiSpecUrl = openapi_spec_url;
     if (oauth_provider_key !== undefined) {
       update.oauthProviderKey = oauth_provider_key || null;
     }

@@ -115,7 +115,7 @@ export function AgentTerminal({ onClose, initialMessage }: AgentTerminalProps) {
             <Terminal size={14} />
           </div>
           <div>
-            <span className="text-sm font-medium">Integration Agent</span>
+            <span className="text-sm font-medium">Connections Agent</span>
             <span className="ml-2 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">
               bash, curl, python
             </span>
@@ -144,7 +144,7 @@ export function AgentTerminal({ onClose, initialMessage }: AgentTerminalProps) {
           <div className="max-w-2xl mx-auto text-center mt-16">
             <Terminal size={40} className="mx-auto mb-4 text-zinc-700" />
             <h3 className="text-lg font-medium text-zinc-300 mb-2">
-              Integration Agent
+              Connections Agent
             </h3>
             <p className="text-sm text-zinc-500 mb-6">
               I can help you set up custom API integrations. I have access to

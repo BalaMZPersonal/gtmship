@@ -334,6 +334,17 @@ export function buildDeploymentLogsHref(input: {
   return `/deploy/logs?${params.toString()}`;
 }
 
+export function resolveCloudProvider(value?: string | null): CloudProvider | null {
+  return value === "aws" || value === "gcp" ? value : null;
+}
+
+export function resolvePreferredCloudProvider(input: {
+  requestedProvider?: string | null;
+  savedProvider?: CloudProvider | null;
+}): CloudProvider {
+  return resolveCloudProvider(input.requestedProvider) || input.savedProvider || "aws";
+}
+
 function defaultRegion(provider: CloudProvider): string {
   return provider === "gcp" ? GCP_DEFAULT_REGION : AWS_DEFAULT_REGION;
 }
@@ -376,8 +387,11 @@ export function deriveDeploySettings(
   let savedGcpProject = "";
 
   for (const setting of settings) {
-    if (setting.key === "cloud_provider" && (setting.value === "aws" || setting.value === "gcp")) {
-      savedProvider = setting.value;
+    if (setting.key === "cloud_provider") {
+      const normalizedProvider = resolveCloudProvider(setting.value);
+      if (normalizedProvider) {
+        savedProvider = normalizedProvider;
+      }
     }
     if (setting.key === "aws_region" && setting.value) {
       savedAwsRegion = setting.value;

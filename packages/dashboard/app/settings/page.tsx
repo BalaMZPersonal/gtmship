@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { api, type MemoryRecord } from "@/lib/api";
 import type { ConnectionAuthStrategyStatus } from "@/lib/workflow-studio/types";
 import {
   AI_DEFAULT_MODELS,
@@ -15,6 +15,7 @@ import {
 import {
   AlertCircle,
   Bot,
+  Brain,
   CheckCircle,
   Cloud,
   ExternalLink,
@@ -25,6 +26,8 @@ import {
   Loader2,
   Save,
   ShieldCheck,
+  Trash2,
+  Search,
 } from "lucide-react";
 import { awsRegions, gcpRegions } from "@/lib/cloud-regions";
 
@@ -548,6 +551,32 @@ export default function SettingsPage() {
     identity?: string;
     error?: string;
   } | null>(null);
+
+  // Memory state
+  const [memories, setMemories] = useState<MemoryRecord[]>([]);
+  const [memoriesLoading, setMemoriesLoading] = useState(true);
+  const [memoryFilter, setMemoryFilter] = useState({ scope: "", category: "", q: "" });
+  const [deletingMemoryIds, setDeletingMemoryIds] = useState<Set<string>>(new Set());
+
+  const loadMemories = useCallback(async () => {
+    setMemoriesLoading(true);
+    try {
+      const params: Record<string, string> = {};
+      if (memoryFilter.scope) params.scope = memoryFilter.scope;
+      if (memoryFilter.category) params.category = memoryFilter.category;
+      if (memoryFilter.q) params.q = memoryFilter.q;
+      const data = await api.getMemories(params);
+      setMemories(Array.isArray(data) ? data : []);
+    } catch {
+      setMemories([]);
+    } finally {
+      setMemoriesLoading(false);
+    }
+  }, [memoryFilter]);
+
+  useEffect(() => {
+    loadMemories();
+  }, [loadMemories]);
 
   useEffect(() => {
     (async () => {
@@ -1368,6 +1397,144 @@ export default function SettingsPage() {
                 {renderCloudSetupGuide(alternateCloudProvider)}
               </div>
             </details>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-6">
+          <div className="flex items-start gap-3">
+            <div className="rounded-2xl border border-purple-800/50 bg-purple-950/30 p-3 text-purple-400">
+              <Brain size={18} />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-white">Memory</h2>
+              <p className="mt-1 text-sm leading-6 text-zinc-500">
+                Knowledge saved by AI agents across conversations. Agents
+                automatically recall relevant memories in future sessions.
+              </p>
+            </div>
+            {memories.length > 0 && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!confirm(`Delete all ${memories.length} memories?`)) return;
+                  const ids = memories.map((m) => m.id);
+                  await api.deleteMemories(ids);
+                  loadMemories();
+                }}
+                className="shrink-0 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-red-700 hover:text-red-400"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <div className="relative">
+              <Search
+                size={12}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
+              />
+              <input
+                value={memoryFilter.q}
+                onChange={(e) =>
+                  setMemoryFilter((f) => ({ ...f, q: e.target.value }))
+                }
+                placeholder="Search memories..."
+                className="w-48 rounded-lg border border-zinc-800 bg-zinc-950/90 py-1.5 pl-8 pr-3 text-xs text-white placeholder-zinc-600 outline-none focus:border-purple-600"
+              />
+            </div>
+            <select
+              value={memoryFilter.scope}
+              onChange={(e) =>
+                setMemoryFilter((f) => ({ ...f, scope: e.target.value }))
+              }
+              className="rounded-lg border border-zinc-800 bg-zinc-950/90 px-3 py-1.5 text-xs text-white outline-none focus:border-purple-600"
+            >
+              <option value="">All scopes</option>
+              <option value="app">App</option>
+              <option value="workflow">Workflow</option>
+            </select>
+            <select
+              value={memoryFilter.category}
+              onChange={(e) =>
+                setMemoryFilter((f) => ({ ...f, category: e.target.value }))
+              }
+              className="rounded-lg border border-zinc-800 bg-zinc-950/90 px-3 py-1.5 text-xs text-white outline-none focus:border-purple-600"
+            >
+              <option value="">All categories</option>
+              <option value="integration">Integration</option>
+              <option value="business">Business</option>
+              <option value="workflow">Workflow</option>
+              <option value="general">General</option>
+            </select>
+          </div>
+
+          <div className="mt-4 max-h-[420px] space-y-2 overflow-y-auto">
+            {memoriesLoading ? (
+              <div className="flex items-center gap-2 py-8 justify-center text-xs text-zinc-500">
+                <Loader2 size={14} className="animate-spin" />
+                Loading memories...
+              </div>
+            ) : memories.length === 0 ? (
+              <div className="py-8 text-center text-sm text-zinc-500">
+                No memories saved yet. AI agents will save knowledge here
+                during conversations.
+              </div>
+            ) : (
+              memories.map((memory) => (
+                <div
+                  key={memory.id}
+                  className="group flex items-start gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-zinc-200 leading-relaxed">
+                      {memory.content}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
+                      <span className="rounded bg-purple-900/40 px-1.5 py-0.5 text-purple-300">
+                        {memory.category}
+                      </span>
+                      <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400">
+                        {memory.scope}
+                        {memory.workflowId ? `: ${memory.workflowId}` : ""}
+                      </span>
+                      <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-500">
+                        via {memory.source}
+                      </span>
+                      <span className="text-zinc-600">
+                        {new Date(memory.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={deletingMemoryIds.has(memory.id)}
+                    onClick={async () => {
+                      setDeletingMemoryIds((s) => new Set(s).add(memory.id));
+                      try {
+                        await api.deleteMemory(memory.id);
+                        setMemories((ms) =>
+                          ms.filter((m) => m.id !== memory.id)
+                        );
+                      } finally {
+                        setDeletingMemoryIds((s) => {
+                          const next = new Set(s);
+                          next.delete(memory.id);
+                          return next;
+                        });
+                      }
+                    }}
+                    className="shrink-0 rounded-lg p-1.5 text-zinc-600 opacity-0 transition-all group-hover:opacity-100 hover:bg-zinc-800 hover:text-red-400 disabled:opacity-50"
+                  >
+                    {deletingMemoryIds.has(memory.id) ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </section>
 

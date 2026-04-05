@@ -25,7 +25,7 @@
 | 8 | **README** | root | Done | Architecture diagram, quick start, code examples, tech stack table |
 
 | 9 | **Dashboard** | `@gtmship/dashboard` | Done | Next.js 14 + Tailwind CSS. Minimalistic. Pages: connections, workflows, deploy, settings. |
-| 10 | **Agentic Chat UI** | dashboard component | Done | Vercel AI SDK chat panel with tool calling (searchTemplate, createProvider, connectApiKey, startOAuth, testConnection). |
+| 10 | **Connections Agent** | dashboard component | Done | Vercel AI SDK-powered agent for connection setup and repair, launched from Connections and Workflow Studio flows. |
 | 11 | **CLI `dev` command** | `@gtmship/cli` | Done | Docker Compose + auth-service + dashboard process management with cleanup. |
 
 ### Not Started
@@ -62,7 +62,7 @@
 - List all connections from auth-service `/connections` API
 - Status indicators (active/expired/revoked)
 - "Test" button per connection → calls `/connections/:id/test`
-- "Add Connection" button → opens agentic chat (Task 2)
+- "Add Connection" button → opens the Connections Agent (Task 2)
 - Delete connection
 
 #### 1d. Workflows Page
@@ -82,22 +82,22 @@
 
 ---
 
-### Task 2: Build Agentic Chat Interface
+### Task 2: Build Connections Agent Interface
 
 **Priority:** HIGH — Key differentiator  
-**Location:** `packages/dashboard/components/auth-chat/`  
+**Location:** `packages/dashboard/components/agent-terminal.tsx`  
 **Tech:** Vercel AI SDK (`@ai-sdk/react`, `useChat` hook) + Generative UI
 
-#### 2a. Chat UI Component
-- Chat message list with streaming support
+#### 2a. Connections Agent UI
+- Full-screen agent terminal with streaming support
 - Input field with send button
-- Supports rendering interactive React components inline (Generative UI)
-- Persistent across page navigation (global chat panel)
+- Launched from connection-specific workflows instead of a global sidebar panel
+- Supports OAuth completion and connection refresh flows
 
-#### 2b. AI Backend Route (`/api/chat`)
+#### 2b. Agent Backend Route (`/api/agent`)
 - Next.js API route using Vercel AI SDK `streamText`
 - Reads AI provider & API key from auth-service settings
-- System prompt: GTMShip auth setup specialist
+- System prompt: GTMShip Connections Agent
 - Supports both Anthropic and OpenAI providers (toggleable)
 
 #### 2c. Tool Definitions (Function Calling)
@@ -196,7 +196,7 @@ Interactive components rendered inline in chat responses:
 │   ├── sdk/              ✅ Done — @gtmship/sdk
 │   ├── cli/              ✅ Done — @gtmship/cli  
 │   ├── auth-service/     ✅ Done — Express + Prisma + OAuth
-│   ├── dashboard/        ✅ Done — Next.js + AI Chat
+│   ├── dashboard/        ✅ Done — Next.js + Connections Agent
 │   └── deploy-engine/    ✅ Done — Pulumi Automation API
 ├── templates/
 │   ├── connections/      ✅ Done — HubSpot, Salesforce, Slack
@@ -213,7 +213,7 @@ Interactive components rendered inline in chat responses:
 |-----------|-----------|---------|--------|
 | Workflow Runtime | Trigger.dev | Apache 2.0 | SDK wrapper done |
 | Dashboard | Next.js + shadcn/ui | MIT | Not started |
-| AI Chat UI | Vercel AI SDK | Apache 2.0 | Not started |
+| Connections Agent UI | Vercel AI SDK | Apache 2.0 | Done |
 | Agent Tools | bash-tool + just-bash | MIT | Not started |
 | LLM Backend | User's Claude / OpenAI key | BYOK | Settings API done |
 | Deployment IaC | Pulumi | Apache 2.0 | Stub done |
@@ -230,6 +230,6 @@ Interactive components rendered inline in chat responses:
 2. **Runtime:** Trigger.dev (Apache 2.0, code-first, AI-friendly SDK)
 3. **Auth:** Custom MIT-licensed OAuth manager (Nango is AGPL, Composio server is proprietary)
 4. **Deploy:** Pulumi (Apache 2.0, programmable IaC in TypeScript)
-5. **AI Chat:** Vercel AI SDK + bash-tool (model-agnostic: Claude + OpenAI toggleable)
+5. **Connections Agent:** Vercel AI SDK + agent tooling (model-agnostic: Claude + OpenAI toggleable)
 6. **Audience:** Progressive disclosure — CLI for technical users, dashboard for operators
 7. **MVP cloud:** AWS Lambda only (GCP in v0.2)

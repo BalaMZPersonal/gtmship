@@ -7,6 +7,7 @@ import {
   testConnection,
 } from "./auth-service";
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
+import { buildMermaidGenerationPrompt } from "./mermaid-prompt";
 import { previewWorkflowArtifact } from "./preview";
 import { slugifyWorkflowTitle } from "./storage";
 import { ContextManager, GENERATION_TOKEN_BUDGET } from "./context-manager";
@@ -403,14 +404,18 @@ function normalizeGeneratedJson(value: string): string {
 }
 
 function normalizeGeneratedMermaid(value: string): string {
-  const normalized = stripMarkdownFences(value);
-  if (MERMAID_SYNTAX_RE.test(normalized)) {
-    return normalized;
+  let normalized = stripMarkdownFences(value);
+  if (!MERMAID_SYNTAX_RE.test(normalized)) {
+    throw new Error(
+      "The mermaid field must be a Mermaid diagram string without markdown fences."
+    );
   }
 
-  throw new Error(
-    "The mermaid field must be a Mermaid diagram string without markdown fences."
-  );
+  // Fix orphaned closing delimiters split across lines by AI generation.
+  // E.g., hexagon nodes: D{{"text"}\n  } → D{{"text"}}
+  normalized = normalized.replace(/([}\])])\s*\n[ \t]*([}\])])/g, "$1$2");
+
+  return normalized;
 }
 
 function normalizeGeneratedCode(value: string): string {
@@ -982,47 +987,17 @@ async function generateMermaid(
   let lastError: string | undefined;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const prompt = [
-      "You are GTMShip Workflow Studio. Generate a Mermaid diagram for the finalized workflow draft.",
-      "Return a Mermaid flowchart or graph that matches the workflow behavior.",
-      "The diagram should show the trigger, major read/transform steps, approvals, writes, and outcome.",
-      "Return raw Mermaid only, without markdown fences.",
-      "",
-      "Finalized workflow draft:",
-      JSON.stringify(
-        {
-          title: input.title,
-          summary: input.summary,
-          description: input.description,
-          requiredAccesses: input.accesses,
-          writeCheckpoints: input.writeCheckpoints,
-        },
-        null,
-        2
-      ),
-      "",
-      "Workflow code:",
-      input.code,
-      currentArtifact?.mermaid?.trim()
-        ? [
-            "",
-            "Current Mermaid diagram to revise:",
-            currentArtifact.mermaid.trim(),
-          ].join("\n")
-        : "",
-      lastError
-        ? [
-            "",
-            "The previous Mermaid generation attempt failed. Fix the response so it returns valid Mermaid only.",
-            `Previous error: ${lastError}`,
-          ].join("\n")
-        : "",
-      "",
-      "Conversation:",
-      formatConversation(messages),
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const prompt = buildMermaidGenerationPrompt({
+      title: input.title,
+      summary: input.summary,
+      description: input.description,
+      accesses: input.accesses,
+      writeCheckpoints: input.writeCheckpoints,
+      code: input.code,
+      conversation: formatConversation(messages),
+      currentMermaid: currentArtifact?.mermaid,
+      lastError,
+    });
 
     try {
       const result = await generateObject({

@@ -4,6 +4,7 @@ import {
   dedupeWorkflowDeploymentsById,
   getScopedWorkflowDeployments,
   getWorkflowDeploymentRefs,
+  resolvePreferredCloudProvider,
   resolveSelectedExecutionName,
   resolveSelectedWorkflowDeploymentId,
   type WorkflowDeploymentOverview,
@@ -123,5 +124,30 @@ describe("deploy helpers", () => {
     ).toBe(
       "/deploy/logs?provider=gcp&deploymentId=dep-123&workflow=workflow-alpha&workflowSlug=workflow-alpha-slug&executionName=run-9"
     );
+  });
+
+  it("prefers an explicit logs provider over the saved settings cloud", () => {
+    expect(
+      resolvePreferredCloudProvider({
+        requestedProvider: "gcp",
+        savedProvider: "aws",
+      })
+    ).toBe("gcp");
+  });
+
+  it("falls back to the saved cloud provider, then aws when no override exists", () => {
+    expect(
+      resolvePreferredCloudProvider({
+        requestedProvider: null,
+        savedProvider: "gcp",
+      })
+    ).toBe("gcp");
+
+    expect(
+      resolvePreferredCloudProvider({
+        requestedProvider: null,
+        savedProvider: null,
+      })
+    ).toBe("aws");
   });
 });

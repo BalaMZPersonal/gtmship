@@ -35,6 +35,12 @@ export interface GcpResourceNeeds {
   database?: boolean;
   /** Whether a Cloud Storage bucket is needed. */
   storage?: boolean;
+  /** Whether public (unauthenticated) ingress is needed (e.g., webhook triggers). */
+  publicIngress?: boolean;
+  /** Memory limit for the Cloud Run container (e.g., "512Mi", "1Gi"). */
+  memory?: string;
+  /** CPU limit for the Cloud Run container (e.g., "1", "2"). */
+  cpu?: string;
 }
 
 export interface GcpConfig {
@@ -74,6 +80,9 @@ export interface GcpRuntimeTarget {
 const PULUMI_PROJECT = "gtmship";
 const DB_NAME = "gtmship";
 const DB_USERNAME = "gtmship_admin";
+
+const DEFAULT_MEMORY = "512Mi";
+const DEFAULT_CPU = "1";
 
 // ---------------------------------------------------------------------------
 // Pulumi inline program
@@ -252,7 +261,10 @@ function createPulumiProgram(config: GcpConfig) {
               {
                 image: containerImage,
                 resources: {
-                  limits: { memory: "512Mi", cpu: "1" },
+                  limits: {
+                    memory: needs.memory || DEFAULT_MEMORY,
+                    cpu: needs.cpu || DEFAULT_CPU,
+                  },
                 },
                 envs: [
                   { name: "NODE_OPTIONS", value: "--enable-source-maps" },
@@ -294,14 +306,19 @@ function createPulumiProgram(config: GcpConfig) {
 
       const cloudRunService = new gcp.cloudrunv2.Service("gtmship-service", {
         location: config.region,
-        ingress: "INGRESS_TRAFFIC_ALL",
+        ingress: needs.publicIngress
+          ? "INGRESS_TRAFFIC_ALL"
+          : "INGRESS_TRAFFIC_INTERNAL_ONLY",
         template: {
           serviceAccount: serviceAccount.email,
           containers: [
             {
               image: containerImage,
               resources: {
-                limits: { memory: "256Mi" },
+                limits: {
+                  memory: needs.memory || DEFAULT_MEMORY,
+                  cpu: needs.cpu || DEFAULT_CPU,
+                },
               },
               envs: [
                 { name: "NODE_OPTIONS", value: "--enable-source-maps" },
@@ -314,14 +331,16 @@ function createPulumiProgram(config: GcpConfig) {
         labels: { project: config.projectName.toLowerCase() },
       });
 
-      // Allow unauthenticated access (public webhook ingress)
-      new gcp.cloudrunv2.ServiceIamMember("gtmship-service-public", {
-        project: config.gcpProject,
-        location: config.region,
-        name: cloudRunService.name,
-        role: "roles/run.invoker",
-        member: "allUsers",
-      });
+      // Allow unauthenticated access only when public ingress is needed (webhook triggers)
+      if (needs.publicIngress) {
+        new gcp.cloudrunv2.ServiceIamMember("gtmship-service-public", {
+          project: config.gcpProject,
+          location: config.region,
+          name: cloudRunService.name,
+          role: "roles/run.invoker",
+          member: "allUsers",
+        });
+      }
 
       outputs["serviceUrl"] = cloudRunService.uri;
       outputs["serviceId"] = cloudRunService.name;

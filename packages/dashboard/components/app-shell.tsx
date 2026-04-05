@@ -2,11 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
-import { ChatPanel } from "@/components/chat-panel";
 import { AgentTerminal } from "@/components/agent-terminal";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [chatOpen, setChatOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentSessionKey, setAgentSessionKey] = useState(0);
   const [agentInitialMessage, setAgentInitialMessage] = useState<
@@ -17,7 +15,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setAgentInitialMessage(initialMessage);
     setAgentSessionKey((current) => current + 1);
     setAgentOpen(true);
-    setChatOpen(false);
   }, []);
 
   // Listen for "open-agent" events from child components
@@ -32,16 +29,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex">
-      <Sidebar
-        chatOpen={chatOpen}
-        onToggleChat={() => {
-          setChatOpen(!chatOpen);
-          if (agentOpen) setAgentOpen(false);
-        }}
-        onOpenAgent={() => handleOpenAgent()}
-      />
+      <Sidebar />
       <main className="flex-1 overflow-y-auto h-screen">{children}</main>
-      {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
       {agentOpen && (
         <AgentTerminal
           key={agentSessionKey}

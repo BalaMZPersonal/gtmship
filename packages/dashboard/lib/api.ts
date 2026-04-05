@@ -209,6 +209,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  searchConnectionAiModels: (connectionId: string, query?: string) =>
+    request(`/connections/${connectionId}/models`, {
+      method: "POST",
+      body: JSON.stringify(query ? { query } : {}),
+    }) as Promise<{
+      connectionId: string;
+      providerSlug: string;
+      models: AiModelOption[];
+    }>,
   deleteWorkflow: (
     slug: string,
     input?: { removeDeployment?: boolean }

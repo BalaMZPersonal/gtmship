@@ -21,6 +21,7 @@ type ProviderWithSharedOAuth = Pick<
   | "oauthProviderKey"
   | "baseUrl"
   | "headerName"
+  | "defaultHeaders"
   | "apiSchema"
 >;
 

@@ -44,6 +44,7 @@ model Provider {
   description   String?
   source        String?      @default("manual") // "catalog", "agent", "manual"
   apiSchema     Json?        @map("api_schema") // Endpoints, response structures, test instructions
+  defaultHeaders Json?       @map("default_headers") // Static headers required on every provider request
   openApiSpecUrl String?     @map("openapi_spec_url") // URL to published OpenAPI/Swagger spec (from APIs.guru or manual)
   oauthProviderKey String?   @map("oauth_provider_key")
   clientId      String?      @map("client_id")

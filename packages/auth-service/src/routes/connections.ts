@@ -17,6 +17,7 @@ import {
   normalizeSecretBackendKind,
   syncConnectionSecretReplicasById,
 } from "../services/connection-secret-replicas.js";
+import { searchProviderModels } from "../services/ai-models.js";
 
 export const connectionRoutes: Router = Router();
 
@@ -24,6 +25,20 @@ function toOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function getAiProviderForConnection(
+  providerSlug: string
+): "openai" | "claude" | null {
+  if (providerSlug === "openai") {
+    return "openai";
+  }
+
+  if (providerSlug === "anthropic") {
+    return "claude";
+  }
+
+  return null;
 }
 
 async function getSharedCredentialStatus(
@@ -192,6 +207,64 @@ connectionRoutes.post("/:id/secret-replicas/sync", async (req, res) => {
     synced: replicas.length,
     replicas,
   });
+});
+
+connectionRoutes.post("/:id/models", async (req, res) => {
+  const connection = await prisma.connection.findUnique({
+    where: { id: req.params.id },
+    include: {
+      provider: true,
+      oauthCredential: {
+        select: {
+          id: true,
+          accountEmail: true,
+          accessToken: true,
+          refreshToken: true,
+          tokenExpiresAt: true,
+        },
+      },
+    },
+  });
+
+  if (!connection) {
+    res.status(404).json({ error: "Connection not found" });
+    return;
+  }
+
+  const provider = getAiProviderForConnection(connection.provider.slug);
+  if (!provider) {
+    res.status(400).json({
+      error: "This connection does not support workflow AI model lookup.",
+    });
+    return;
+  }
+
+  const apiKey = decryptAccessToken(connection);
+  if (!apiKey) {
+    res.status(400).json({
+      error: "No API key is stored for this connection.",
+    });
+    return;
+  }
+
+  try {
+    const models = await searchProviderModels({
+      provider,
+      apiKey,
+      query: toOptionalString(req.body?.query) || undefined,
+    });
+
+    res.json({
+      connectionId: connection.id,
+      providerSlug: connection.provider.slug,
+      models,
+    });
+  } catch (error) {
+    res.status(400).json({
+      error:
+        error instanceof Error ? error.message : "Unable to load AI models.",
+    });
+  }
 });
 
 // Test a connection

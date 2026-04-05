@@ -14,6 +14,8 @@ export interface CatalogProvider {
   headerName?: string;
   docsUrl?: string;
   oauthProviderKey?: string;
+  defaultHeaders?: Record<string, string>;
+  apiSchema?: Record<string, unknown> | null;
 }
 
 export interface CatalogResponse {

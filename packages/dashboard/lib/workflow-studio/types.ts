@@ -331,6 +331,13 @@ export interface WorkflowBinding {
   selector: WorkflowBindingSelector;
 }
 
+export type WorkflowAiProviderSlug = "openai" | "anthropic";
+
+export interface WorkflowAiConfig {
+  providerSlug: WorkflowAiProviderSlug;
+  model?: string;
+}
+
 export interface WorkflowRuntimeAuthManifestProvider {
   providerSlug: string;
   connectionId?: string;
@@ -496,6 +503,7 @@ export interface WorkflowStudioArtifact {
   deploy?: WorkflowDeploySpec;
   triggerConfig?: WorkflowTriggerConfig;
   bindings?: WorkflowBinding[];
+  aiConfigs?: WorkflowAiConfig[];
   deploymentPlan?: WorkflowDeploymentPlan;
   deploymentRun?: WorkflowDeploymentRun;
   validation?: WorkflowValidationReport;

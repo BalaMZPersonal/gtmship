@@ -340,6 +340,19 @@ function normalizeSecretPayload(
         : undefined,
     headerName:
       typeof record.headerName === "string" ? record.headerName : undefined,
+    defaultHeaders:
+      record.defaultHeaders &&
+      typeof record.defaultHeaders === "object" &&
+      !Array.isArray(record.defaultHeaders)
+        ? Object.fromEntries(
+            Object.entries(record.defaultHeaders as Record<string, unknown>).filter(
+              ([key, headerValue]) =>
+                key.trim().length > 0 &&
+                typeof headerValue === "string" &&
+                headerValue.trim().length > 0
+            )
+          )
+        : undefined,
     baseUrl: typeof record.baseUrl === "string" ? record.baseUrl : undefined,
     instanceUrl:
       typeof record.instanceUrl === "string" ? record.instanceUrl : undefined,
@@ -707,6 +720,10 @@ function buildDirectAuthHeaders(
   manifestEntry?: WorkflowRuntimeAuthManifestProvider
 ): Record<string, string> {
   const authType = manifestEntry?.authType || secret.authType || "oauth2";
+  const defaultHeaders = {
+    ...(manifestEntry?.defaultHeaders || {}),
+    ...(secret.defaultHeaders || {}),
+  };
 
   switch (authType) {
     case "api_key": {
@@ -718,12 +735,14 @@ function buildDirectAuthHeaders(
       }
       const headerName = manifestEntry?.headerName || secret.headerName || "X-API-Key";
       return {
+        ...defaultHeaders,
         [headerName]: formatApiKeyHeaderValue(token, headerName),
       };
     }
     case "basic": {
       if (secret.username && secret.password) {
         return {
+          ...defaultHeaders,
           Authorization: `Basic ${encodeBasicCredentials(
             secret.username,
             secret.password
@@ -737,6 +756,7 @@ function buildDirectAuthHeaders(
         }
 
         return {
+          ...defaultHeaders,
           Authorization: `Basic ${encodeBasicToken(secret.accessToken)}`,
         };
       }
@@ -753,7 +773,7 @@ function buildDirectAuthHeaders(
           `Missing oauth2 access token for ${providerSlug} in secret-manager mode.`
         );
       }
-      return { Authorization: `Bearer ${token}` };
+      return { ...defaultHeaders, Authorization: `Bearer ${token}` };
     }
   }
 }

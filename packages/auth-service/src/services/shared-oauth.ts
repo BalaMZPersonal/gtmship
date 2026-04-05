@@ -23,6 +23,8 @@ const SHARED_OAUTH_DEFINITIONS: Record<string, SharedOAuthDefinition> = {
 const SHARED_OAUTH_SERVICE_SLUGS: Record<string, string> = {
   gmail: "google",
   "google-sheets": "google",
+  "google-calendar": "google",
+  "google-ads": "google",
 };
 
 export function inferSharedOAuthProviderKeyFromSlug(

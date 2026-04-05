@@ -191,6 +191,8 @@ export function ConnectModal({
       logo_url: connectableProvider.logoUrl,
       description: connectableProvider.description,
       source: connectableProvider.source || "catalog",
+      api_schema: connectableProvider.apiSchema,
+      default_headers: connectableProvider.defaultHeaders,
       oauth_provider_key: resolveSharedOAuthProviderKey({
         slug: connectableProvider.slug,
         oauthProviderKey: connectableProvider.oauthProviderKey,
@@ -772,8 +774,14 @@ export function ConnectModal({
                   </div>
                   <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-500">
                     <p>1. Save the provider configuration that should back this connection.</p>
-                    <p>2. Launch the authorization step with the callback URL above.</p>
-                    <p>3. Return here and update the saved connection instead of creating a duplicate reconnect.</p>
+                    {isOAuth ? (
+                      <>
+                        <p>2. Launch the authorization step with the callback URL above.</p>
+                        <p>3. Return here and update the saved connection instead of creating a duplicate reconnect.</p>
+                      </>
+                    ) : (
+                      <p>2. Encrypt and store the API key so it is available for every future request.</p>
+                    )}
                   </div>
                 </div>
 

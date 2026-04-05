@@ -18,6 +18,8 @@ export interface SavedProvider {
   logoUrl?: string | null;
   source?: string | null;
   oauthProviderKey?: string | null;
+  defaultHeaders?: Record<string, string> | null;
+  apiSchema?: Record<string, unknown> | null;
   hasCredentials?: boolean;
 }
 
@@ -57,6 +59,8 @@ export function normalizeSavedProvider(
     headerName: provider.headerName || undefined,
     docsUrl: provider.docsUrl || undefined,
     oauthProviderKey: provider.oauthProviderKey || undefined,
+    defaultHeaders: provider.defaultHeaders || undefined,
+    apiSchema: provider.apiSchema || undefined,
     source: provider.source || "manual",
     hasCredentials: provider.hasCredentials,
     notes: provider.notes || null,

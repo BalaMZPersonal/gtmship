@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type MemoryRecord } from "@/lib/api";
+import type { AiModelOption } from "@/lib/ai-config";
 import {
   buildDeploymentLogsHref,
   buildWorkflowSecretSyncSummary,
@@ -76,6 +77,8 @@ import type {
   WorkflowBindingSelectorType,
   StoredWorkflowRecord,
   WorkflowAccessRequirement,
+  WorkflowAiConfig,
+  WorkflowAiProviderSlug,
   WorkflowBuildResult,
   WorkflowDeploymentRun,
   WorkflowListItem,
@@ -169,6 +172,255 @@ interface WorkflowConnectionBlocker {
   status: WorkflowConnectionBlockerStatus;
   providerSlug?: string;
   purpose?: string;
+}
+
+interface WorkflowStudioConnectionRecord {
+  id: string;
+  label?: string | null;
+  status: string;
+  createdAt?: string;
+  provider: {
+    slug: string;
+    name?: string;
+  };
+}
+
+type WorkflowAiBindingResolutionStatus = "resolved" | "missing" | "ambiguous";
+
+interface WorkflowAiBindingResolution {
+  providerSlug: WorkflowAiProviderSlug;
+  selectorType: WorkflowBindingSelectorType;
+  status: WorkflowAiBindingResolutionStatus;
+  message: string;
+  connection: WorkflowStudioConnectionRecord | null;
+  candidates: WorkflowStudioConnectionRecord[];
+}
+
+const WORKFLOW_AI_PROVIDER_LABELS: Record<WorkflowAiProviderSlug, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+
+const WORKFLOW_AI_PROVIDER_ORDER: WorkflowAiProviderSlug[] = [
+  "openai",
+  "anthropic",
+];
+
+function isWorkflowAiProviderSlug(value: string): value is WorkflowAiProviderSlug {
+  return value === "openai" || value === "anthropic";
+}
+
+function mapWorkflowAiProviderToModelProvider(
+  providerSlug: WorkflowAiProviderSlug
+): "openai" | "claude" {
+  return providerSlug === "openai" ? "openai" : "claude";
+}
+
+function normalizeWorkflowAiConfigs(
+  aiConfigs?: WorkflowAiConfig[]
+): WorkflowAiConfig[] {
+  const normalized = new Map<WorkflowAiProviderSlug, WorkflowAiConfig>();
+
+  for (const config of aiConfigs || []) {
+    if (!isWorkflowAiProviderSlug(config.providerSlug)) {
+      continue;
+    }
+
+    normalized.set(config.providerSlug, {
+      providerSlug: config.providerSlug,
+      ...(config.model?.trim() ? { model: config.model.trim() } : {}),
+    });
+  }
+
+  return WORKFLOW_AI_PROVIDER_ORDER.flatMap((providerSlug) => {
+    const config = normalized.get(providerSlug);
+    return config ? [config] : [];
+  });
+}
+
+function sortConnectionsByCreatedAtDesc(
+  connections: WorkflowStudioConnectionRecord[]
+): WorkflowStudioConnectionRecord[] {
+  return [...connections].sort((left, right) => {
+    const leftTime = left.createdAt ? Date.parse(left.createdAt) : NaN;
+    const rightTime = right.createdAt ? Date.parse(right.createdAt) : NaN;
+
+    if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime)) {
+      return rightTime - leftTime;
+    }
+
+    if (!Number.isNaN(rightTime)) {
+      return 1;
+    }
+
+    if (!Number.isNaN(leftTime)) {
+      return -1;
+    }
+
+    return 0;
+  });
+}
+
+function resolveWorkflowAiBinding(
+  providerSlug: WorkflowAiProviderSlug,
+  binding: WorkflowStudioArtifact["bindings"] extends Array<infer T> ? T : never,
+  connections: WorkflowStudioConnectionRecord[]
+): WorkflowAiBindingResolution {
+  const activeProviderConnections = sortConnectionsByCreatedAtDesc(
+    connections.filter(
+      (connection) =>
+        connection.status === "active" && connection.provider.slug === providerSlug
+    )
+  );
+  const selectorType = binding?.selector.type || "latest_active";
+  const selectorConnectionId = binding?.selector.connectionId?.trim() || "";
+  const selectorLabel = binding?.selector.label?.trim() || "";
+
+  if (selectorType === "latest_active") {
+    if (activeProviderConnections.length === 1) {
+      return {
+        providerSlug,
+        selectorType,
+        status: "resolved",
+        message: "Resolved to the only active connection for this provider.",
+        connection: activeProviderConnections[0],
+        candidates: activeProviderConnections,
+      };
+    }
+
+    if (activeProviderConnections.length > 1) {
+      return {
+        providerSlug,
+        selectorType,
+        status: "ambiguous",
+        message:
+          "Binding is latest_active and multiple active connections match this provider.",
+        connection: null,
+        candidates: activeProviderConnections,
+      };
+    }
+
+    return {
+      providerSlug,
+      selectorType,
+      status: "missing",
+      message: "No active connections found for this provider.",
+      connection: null,
+      candidates: [],
+    };
+  }
+
+  if (selectorType === "connection_id") {
+    if (!selectorConnectionId) {
+      return {
+        providerSlug,
+        selectorType,
+        status: "missing",
+        message: "Binding is missing a connection_id value.",
+        connection: null,
+        candidates: activeProviderConnections,
+      };
+    }
+
+    const matches = activeProviderConnections.filter(
+      (connection) => connection.id === selectorConnectionId
+    );
+
+    if (matches.length === 1) {
+      return {
+        providerSlug,
+        selectorType,
+        status: "resolved",
+        message: `Resolved by connection_id (${selectorConnectionId}).`,
+        connection: matches[0],
+        candidates: matches,
+      };
+    }
+
+    return {
+      providerSlug,
+      selectorType,
+      status: "missing",
+      message:
+        matches.length === 0
+          ? `No active connection matched id "${selectorConnectionId}".`
+          : `Multiple active connections matched id "${selectorConnectionId}".`,
+      connection: null,
+      candidates: matches,
+    };
+  }
+
+  if (!selectorLabel) {
+    return {
+      providerSlug,
+      selectorType,
+      status: "missing",
+      message: "Binding is missing a label value.",
+      connection: null,
+      candidates: activeProviderConnections,
+    };
+  }
+
+  const normalizedLabel = selectorLabel.toLowerCase();
+  const matches = activeProviderConnections.filter(
+    (connection) => (connection.label || "").trim().toLowerCase() === normalizedLabel
+  );
+
+  if (matches.length === 1) {
+    return {
+      providerSlug,
+      selectorType,
+      status: "resolved",
+      message: `Resolved by label "${selectorLabel}".`,
+      connection: matches[0],
+      candidates: matches,
+    };
+  }
+
+  if (matches.length > 1) {
+    return {
+      providerSlug,
+      selectorType,
+      status: "ambiguous",
+      message: `Label "${selectorLabel}" matched multiple active connections.`,
+      connection: null,
+      candidates: matches,
+    };
+  }
+
+  return {
+    providerSlug,
+    selectorType,
+    status: "missing",
+    message: `No active connection matched label "${selectorLabel}".`,
+    connection: null,
+    candidates: [],
+  };
+}
+
+function withSelectedModelOption(
+  options: AiModelOption[],
+  providerSlug: WorkflowAiProviderSlug,
+  selectedModel?: string
+): AiModelOption[] {
+  const normalizedSelectedModel = selectedModel?.trim() || "";
+
+  if (
+    !normalizedSelectedModel ||
+    options.some((option) => option.id === normalizedSelectedModel)
+  ) {
+    return options;
+  }
+
+  return [
+    {
+      id: normalizedSelectedModel,
+      displayName: `${normalizedSelectedModel} (saved)`,
+      provider: mapWorkflowAiProviderToModelProvider(providerSlug),
+      createdAt: null,
+    },
+    ...options,
+  ];
 }
 
 function withDeploymentPlan(
@@ -878,6 +1130,7 @@ function isPlaceholderArtifact(
     artifact.writeCheckpoints.length > 0 ||
     artifact.deploy ||
     artifact.bindings?.length ||
+    artifact.aiConfigs?.length ||
     artifact.triggerConfig ||
     artifact.deploymentRun ||
     artifact.validation ||
@@ -1686,6 +1939,22 @@ export function WorkflowStudio() {
   >([]);
   const [connectionsChangedSinceBlocker, setConnectionsChangedSinceBlocker] =
     useState(false);
+  const [workflowAiConnections, setWorkflowAiConnections] = useState<
+    WorkflowStudioConnectionRecord[]
+  >([]);
+  const [workflowAiConnectionsLoading, setWorkflowAiConnectionsLoading] =
+    useState(false);
+  const [workflowAiConnectionsError, setWorkflowAiConnectionsError] =
+    useState("");
+  const [workflowAiModelOptions, setWorkflowAiModelOptions] = useState<
+    Partial<Record<WorkflowAiProviderSlug, AiModelOption[]>>
+  >({});
+  const [workflowAiModelLoading, setWorkflowAiModelLoading] = useState<
+    Partial<Record<WorkflowAiProviderSlug, boolean>>
+  >({});
+  const [workflowAiModelErrors, setWorkflowAiModelErrors] = useState<
+    Partial<Record<WorkflowAiProviderSlug, string>>
+  >({});
   const [editingTitle, setEditingTitle] = useState(false);
   const [editorSessionKey, setEditorSessionKey] = useState(() =>
     `workflow-studio-${Date.now()}`
@@ -1842,6 +2111,45 @@ export function WorkflowStudio() {
     }
     return Array.from(providers);
   }, [currentArtifact.requiredAccesses, currentArtifact.bindings]);
+  const workflowAiConfigs = useMemo(
+    () => normalizeWorkflowAiConfigs(currentArtifact.aiConfigs),
+    [currentArtifact.aiConfigs]
+  );
+  const workflowAiConfigByProvider = useMemo(
+    () => new Map(workflowAiConfigs.map((config) => [config.providerSlug, config])),
+    [workflowAiConfigs]
+  );
+  const workflowAiProviderSlugs = useMemo(
+    () =>
+      WORKFLOW_AI_PROVIDER_ORDER.filter((providerSlug) =>
+        workflowAiConfigByProvider.has(providerSlug)
+      ),
+    [workflowAiConfigByProvider]
+  );
+  const workflowAiBindingResolutions = useMemo(
+    () =>
+      workflowAiProviderSlugs.map((providerSlug) => {
+        const binding = (currentArtifact.bindings || []).find(
+          (entry) => entry.providerSlug === providerSlug
+        );
+        return resolveWorkflowAiBinding(
+          providerSlug,
+          binding,
+          workflowAiConnections
+        );
+      }),
+    [currentArtifact.bindings, workflowAiConnections, workflowAiProviderSlugs]
+  );
+  const workflowAiBindingResolutionByProvider = useMemo(
+    () =>
+      new Map(
+        workflowAiBindingResolutions.map((resolution) => [
+          resolution.providerSlug,
+          resolution,
+        ])
+      ),
+    [workflowAiBindingResolutions]
+  );
   const visibleAccesses = useMemo(
     () =>
       blockedAccesses.length > 0
@@ -1980,6 +2288,24 @@ export function WorkflowStudio() {
       selectedWorkflowId,
     ]
   );
+
+  const loadWorkflowAiConnections = useCallback(async () => {
+    setWorkflowAiConnectionsLoading(true);
+    setWorkflowAiConnectionsError("");
+    try {
+      const connections = (await api.getConnections()) as WorkflowStudioConnectionRecord[];
+      setWorkflowAiConnections(Array.isArray(connections) ? connections : []);
+    } catch (connectionError) {
+      setWorkflowAiConnections([]);
+      setWorkflowAiConnectionsError(
+        connectionError instanceof Error
+          ? connectionError.message
+          : "Failed to load connections."
+      );
+    } finally {
+      setWorkflowAiConnectionsLoading(false);
+    }
+  }, []);
 
   const sendIssueToChat = useCallback(
     async (prompt: string) => {

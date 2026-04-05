@@ -22,6 +22,8 @@ import type {
   GroundedApiContext,
   GroundedEndpoint,
   WorkflowAccessRequirement,
+  WorkflowAiConfig,
+  WorkflowAiProviderSlug,
   WorkflowBinding,
   WorkflowDraftProgressEvent,
   WorkflowPreviewResult,
@@ -176,6 +178,20 @@ type WorkflowCodeDraft = z.infer<typeof codeDraftSchema>;
 const MERMAID_SYNTAX_RE =
   /\b(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|mindmap|timeline)\b/i;
 const CODE_GENERATION_MAX_ATTEMPTS = 3;
+const WORKFLOW_AI_PROVIDER_LABELS: Record<WorkflowAiProviderSlug, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+const DEFAULT_WORKFLOW_AI_MODELS: Record<WorkflowAiProviderSlug, string> = {
+  openai: "gpt-4.1",
+  anthropic: "claude-sonnet-4-6",
+};
+
+function isWorkflowAiProviderSlug(
+  value: string | undefined | null
+): value is WorkflowAiProviderSlug {
+  return value === "openai" || value === "anthropic";
+}
 
 function formatConversation(messages: WorkflowStudioMessage[]): string {
   return messages
@@ -259,6 +275,7 @@ function buildDraftGenerationCompactionBudgetText(
           samplePayload: currentArtifact.samplePayload,
           requiredAccesses: currentArtifact.requiredAccesses,
           writeCheckpoints: currentArtifact.writeCheckpoints,
+          aiConfigs: currentArtifact.aiConfigs,
           validation: currentArtifact.validation,
           preview: currentArtifact.preview,
         },
@@ -437,6 +454,168 @@ function normalizeGeneratedCode(value: string): string {
   }
 
   return withoutFences;
+}
+
+function normalizeOpenAiModel(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\bchatgpt\b/, "gpt")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^gpt(?=[0-9])/, "gpt-")
+    .replace(/^o(?=[134])/, (match) => match)
+    .trim();
+}
+
+function normalizeAnthropicModel(value: string): string {
+  let normalized = value
+    .toLowerCase()
+    .replace(/\banthropic\b/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .trim();
+
+  if (!normalized.startsWith("claude")) {
+    normalized = `claude-${normalized}`.replace(/-+/g, "-");
+  }
+
+  return normalized;
+}
+
+function inferOpenAiModel(text: string): string | undefined {
+  const directMatch = text.match(
+    /\b((?:gpt|chatgpt)[-\s]?(?:4\.1|4o|4(?:\.\d+)?|5(?:\.\d+)?)(?:[-\s]?(?:mini|nano|turbo))?)\b/i
+  );
+  if (directMatch) {
+    return normalizeOpenAiModel(directMatch[1]);
+  }
+
+  const reasoningMatch = text.match(
+    /\b(o[134])(?:[-\s]?(mini|preview|high|pro))?\b/i
+  );
+  if (reasoningMatch) {
+    return [reasoningMatch[1], reasoningMatch[2]]
+      .filter(Boolean)
+      .join("-")
+      .toLowerCase();
+  }
+
+  return undefined;
+}
+
+function inferAnthropicModel(text: string): string | undefined {
+  const directMatch = text.match(
+    /\b(claude(?:[-\s]?(?:sonnet|haiku|opus))?(?:[-\s]?\d+(?:\.\d+)*){0,2})\b/i
+  );
+  if (directMatch) {
+    return normalizeAnthropicModel(directMatch[1]);
+  }
+
+  const familyMatch = text.match(
+    /\b(sonnet|haiku|opus)(?:[-\s]?(\d+(?:\.\d+)*))?\b/i
+  );
+  if (familyMatch) {
+    return normalizeAnthropicModel(
+      `claude-${familyMatch[1]}${familyMatch[2] ? `-${familyMatch[2]}` : ""}`
+    );
+  }
+
+  return undefined;
+}
+
+function mergeWorkflowAiConfigs(
+  existing: WorkflowAiConfig[] | undefined,
+  inferred: WorkflowAiConfig[]
+): WorkflowAiConfig[] {
+  const merged = new Map<WorkflowAiProviderSlug, WorkflowAiConfig>();
+
+  for (const config of existing || []) {
+    if (!isWorkflowAiProviderSlug(config.providerSlug)) {
+      continue;
+    }
+
+    merged.set(config.providerSlug, {
+      providerSlug: config.providerSlug,
+      ...(config.model?.trim() ? { model: config.model.trim() } : {}),
+    });
+  }
+
+  for (const config of inferred) {
+    const current = merged.get(config.providerSlug);
+    merged.set(config.providerSlug, {
+      providerSlug: config.providerSlug,
+      model:
+        config.model?.trim() ||
+        current?.model?.trim() ||
+        DEFAULT_WORKFLOW_AI_MODELS[config.providerSlug],
+    });
+  }
+
+  return Array.from(merged.values());
+}
+
+function inferWorkflowAiConfigs(
+  messages: WorkflowStudioMessage[],
+  currentArtifact?: WorkflowStudioArtifact | null
+): WorkflowAiConfig[] {
+  const conversation = messages.map(getWorkflowMessageModelText).join("\n");
+  const lowered = conversation.toLowerCase();
+  const inferred: WorkflowAiConfig[] = [];
+
+  if (
+    /\b(openai|chatgpt|gpt[-\s]?\d|o[134])\b/i.test(lowered)
+  ) {
+    inferred.push({
+      providerSlug: "openai",
+      model: inferOpenAiModel(conversation) || DEFAULT_WORKFLOW_AI_MODELS.openai,
+    });
+  }
+
+  if (
+    /\b(anthropic|claude|sonnet|haiku|opus)\b/i.test(lowered)
+  ) {
+    inferred.push({
+      providerSlug: "anthropic",
+      model:
+        inferAnthropicModel(conversation) ||
+        DEFAULT_WORKFLOW_AI_MODELS.anthropic,
+    });
+  }
+
+  return mergeWorkflowAiConfigs(currentArtifact?.aiConfigs, inferred);
+}
+
+function ensureWorkflowAiAccesses(
+  accesses: z.infer<typeof requirementSchema>[],
+  aiConfigs: WorkflowAiConfig[]
+): z.infer<typeof requirementSchema>[] {
+  const nextAccesses = [...accesses];
+
+  for (const config of aiConfigs) {
+    if (
+      nextAccesses.some(
+        (access) =>
+          access.type === "integration" &&
+          access.providerSlug === config.providerSlug
+      )
+    ) {
+      continue;
+    }
+
+    nextAccesses.push({
+      id: `ai-${config.providerSlug}`,
+      type: "integration",
+      mode: "read",
+      label: WORKFLOW_AI_PROVIDER_LABELS[config.providerSlug],
+      purpose: config.model
+        ? `Run workflow AI logic with ${config.model}.`
+        : "Run workflow AI logic.",
+      providerSlug: config.providerSlug,
+    });
+  }
+
+  return nextAccesses;
 }
 
 function normalizeText(value?: string | null): string {
@@ -807,6 +986,7 @@ async function generateCodeDraftOnce(
   analysis: WorkflowAnalysis,
   accesses: WorkflowAccessRequirement[],
   writeCheckpoints: z.infer<typeof checkpointSchema>[],
+  aiConfigs: WorkflowAiConfig[],
   currentArtifact?: WorkflowStudioArtifact | null,
   previousValidation?: WorkflowValidationReport,
   previousPreview?: WorkflowPreviewResult,
@@ -834,6 +1014,9 @@ async function generateCodeDraftOnce(
     "- Use `integration.read(...)` for reads and `integration.write(..., { method, checkpoint, ... })` for writes. CRITICAL: Every `.write(...)` call MUST include `checkpoint: \"<checkpoint-id>\"` from the write checkpoints list. Omitting it causes a hard validation failure.",
     "- `ctx.integration(...).read/write(...)` must use provider-relative paths like `/open/v1/...`, never full `https://...` URLs.",
     "- Use `ctx.web.read(url, ...)` for public/authless reads and `ctx.web.write(url, ...)` for public/authless writes.",
+    "- If the workflow needs LLM/model generation, call `ctx.ai.generate(...)` instead of direct provider HTTP calls.",
+    "- When using `ctx.ai.generate(...)`, pass explicit `provider` and `model` values from the workflow AI config list below.",
+    "- Do not hardcode AI provider/model values that are not present in the workflow AI config list.",
     "- `integration.read(...)`, `integration.write(...)`, `ctx.web.read(...)`, and `ctx.web.write(...)` return an object shaped like `{ data, status }`.",
     "- Read response data from the `.data` property before transforming it.",
     "- When the auth proxy encounters a non-JSON upstream response (e.g., file exports, binary downloads), the response `.data` is a JSON envelope: `{ _binary: true, contentType: string, data: string, size: number }` where `data` is the base64-encoded content. Access the raw bytes via `Buffer.from(result.data.data, 'base64')`. Check for `result.data._binary` to detect this case.",
@@ -870,6 +1053,8 @@ async function generateCodeDraftOnce(
       '      // const readResult = await integration.read("/path");',
       '      // Write example — MUST include checkpoint from the write checkpoints list:',
       '      // await integration.write("/path", { method: "POST", body: data, checkpoint: "checkpoint-id" });',
+      "      // AI generation example (use provider/model from Workflow AI configs):",
+      '      // const aiResult = await ctx.ai.generate({ provider: "openai", model: "gpt-4.1", prompt: "..." });',
       "      const result = { ok: true };",
       '      console.log("[workflow-id] Workflow completed", { result });',
       "      return result;",
@@ -895,6 +1080,11 @@ async function generateCodeDraftOnce(
     "",
     "Verified access list:",
     JSON.stringify(accesses, null, 2),
+    "",
+    "Workflow AI configs (use these for `ctx.ai.generate(...)` when AI generation is needed):",
+    aiConfigs.length > 0
+      ? JSON.stringify(aiConfigs, null, 2)
+      : "[]",
     ...(groundedApiContext?.endpoints.length
       ? [
           "",
@@ -1204,6 +1394,11 @@ export async function generateWorkflowArtifact(input: {
     detail: "Workflow definition is ready.",
   });
 
+  const aiConfigs = inferWorkflowAiConfigs(
+    input.messages,
+    input.currentArtifact
+  );
+
   emitDraftProgress(input.onProgress, {
     stage: "access",
     status: "started",
@@ -1217,7 +1412,10 @@ export async function generateWorkflowArtifact(input: {
 
   try {
     activeConnections = await listActiveConnections();
-    normalizedAccesses = analysis.requiredAccesses.map((access) =>
+    normalizedAccesses = ensureWorkflowAiAccesses(
+      analysis.requiredAccesses,
+      aiConfigs
+    ).map((access) =>
       normalizeAccessRequirement(access, activeConnections)
     );
     normalizedWriteCheckpoints = analysis.writeCheckpoints.map((checkpoint) =>
@@ -1332,6 +1530,7 @@ export async function generateWorkflowArtifact(input: {
             analysis,
             verifiedAccesses,
             normalizedWriteCheckpoints,
+            aiConfigs,
             input.currentArtifact,
             previousValidation,
             previousPreview,
@@ -1611,6 +1810,7 @@ export async function generateWorkflowArtifact(input: {
         verifiedAccesses,
         input.currentArtifact?.bindings
       ),
+      aiConfigs,
       validation: latestValidation,
       preview: latestPreview,
       groundedApiContext: input.groundedApiContext,

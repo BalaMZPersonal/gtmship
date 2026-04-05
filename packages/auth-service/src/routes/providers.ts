@@ -7,6 +7,29 @@ import { resolveOpenApiSpecUrl } from "../services/apis-guru.js";
 
 export const providerRoutes: Router = Router();
 
+function normalizeDefaultHeaders(
+  value: unknown
+): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value).filter(
+    ([key, headerValue]) =>
+      key.trim().length > 0 &&
+      typeof headerValue === "string" &&
+      headerValue.trim().length > 0
+  );
+
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    entries.map(([key, headerValue]) => [key.trim(), headerValue.trim()])
+  );
+}
+
 async function getSharedCredentialStatus(
   keys: Array<string | null | undefined>
 ): Promise<Map<string, boolean>> {
@@ -55,6 +78,7 @@ providerRoutes.get("/", async (_req, res) => {
       logoUrl: true,
       description: true,
       source: true,
+      defaultHeaders: true,
       openApiSpecUrl: true,
       oauthProviderKey: true,
       clientId: true,
@@ -154,7 +178,7 @@ providerRoutes.post("/", async (req, res) => {
     scopes, token_refresh, test_endpoint, header_name,
     docs_url, notes, client_id, client_secret,
     category, logo_url, description, source, api_schema, oauth_provider_key,
-    openapi_spec_url,
+    openapi_spec_url, default_headers,
   } = req.body;
 
   try {
@@ -182,6 +206,7 @@ providerRoutes.post("/", async (req, res) => {
       description,
       source: source || "manual",
       apiSchema: api_schema || undefined,
+      defaultHeaders: normalizeDefaultHeaders(default_headers),
       openApiSpecUrl: resolvedSpecUrl,
       oauthProviderKey: oauth_provider_key || undefined,
       clientId: client_id,
@@ -236,7 +261,7 @@ providerRoutes.put("/:slug", async (req, res) => {
     scopes, token_refresh, test_endpoint, header_name,
     docs_url, notes, client_id, client_secret,
     category, logo_url, description, api_schema,
-    oauth_provider_key, openapi_spec_url,
+    oauth_provider_key, openapi_spec_url, default_headers,
   } = req.body;
 
   try {
@@ -262,6 +287,9 @@ providerRoutes.put("/:slug", async (req, res) => {
     if (logo_url !== undefined) update.logoUrl = logo_url;
     if (description !== undefined) update.description = description;
     if (api_schema !== undefined) update.apiSchema = api_schema;
+    if (default_headers !== undefined) {
+      update.defaultHeaders = normalizeDefaultHeaders(default_headers) || null;
+    }
     if (openapi_spec_url !== undefined) update.openApiSpecUrl = openapi_spec_url;
     if (oauth_provider_key !== undefined) {
       update.oauthProviderKey = oauth_provider_key || null;

@@ -20,6 +20,9 @@ importers:
       '@activepieces/piece-airtable':
         specifier: ^0.6.6
         version: 0.6.6
+      '@activepieces/piece-apollo':
+        specifier: ^0.1.4
+        version: 0.1.4
       '@activepieces/piece-discord':
         specifier: ^0.4.4
         version: 0.4.4
@@ -29,6 +32,9 @@ importers:
       '@activepieces/piece-gmail':
         specifier: ^0.11.6
         version: 0.11.6
+      '@activepieces/piece-google-calendar':
+        specifier: ^0.9.1
+        version: 0.9.1
       '@activepieces/piece-google-docs':
         specifier: ^0.4.1
         version: 0.4.1
@@ -41,6 +47,12 @@ importers:
       '@activepieces/piece-hubspot':
         specifier: ^0.8.4
         version: 0.8.4
+      '@activepieces/piece-hunter':
+        specifier: ^0.1.3
+        version: 0.1.3
+      '@activepieces/piece-instantly-ai':
+        specifier: ^0.1.4
+        version: 0.1.4
       '@activepieces/piece-intercom':
         specifier: ^0.7.0
         version: 0.7.0
@@ -50,12 +62,18 @@ importers:
       '@activepieces/piece-linear':
         specifier: ^0.3.0
         version: 0.3.0
+      '@activepieces/piece-linkedin':
+        specifier: ^0.2.4
+        version: 0.2.4
       '@activepieces/piece-mailchimp':
         specifier: ^0.5.3
         version: 0.5.3
       '@activepieces/piece-microsoft-teams':
         specifier: ^0.3.13
         version: 0.3.13
+      '@activepieces/piece-neverbounce':
+        specifier: ^0.1.4
+        version: 0.1.4
       '@activepieces/piece-notion':
         specifier: ^0.6.1
         version: 0.6.1
@@ -71,12 +89,18 @@ importers:
       '@activepieces/piece-slack':
         specifier: ^0.14.2
         version: 0.14.2
+      '@activepieces/piece-smartlead':
+        specifier: ^0.0.1
+        version: 0.0.1
       '@activepieces/piece-stripe':
         specifier: ^0.6.5
         version: 0.6.5(@types/node@22.19.15)
       '@activepieces/piece-twilio':
         specifier: ^0.4.5
         version: 0.4.5(zod@4.3.6)
+      '@activepieces/piece-zendesk':
+        specifier: ^0.2.6
+        version: 0.2.6
       '@activepieces/piece-zoom':
         specifier: ^0.6.1
         version: 0.6.1
@@ -322,6 +346,9 @@ packages:
   '@activepieces/piece-airtable@0.6.6':
     resolution: {integrity: sha512-KDylkmAAS2xnvfjESY7i6eby0/MqpGwQNcp+Ivu2QOX/zbydrPNUkWvj0buJijjo2x+B4QvMzJ9FcaSC7XNB6w==}
 
+  '@activepieces/piece-apollo@0.1.4':
+    resolution: {integrity: sha512-ljyhAyZ8pPQdLZKCCPZ8dAkxKkGXILKFvQLsyxqkITpR304u77h7kftv2DtcBWt894KlS1iz5TNo5drGUklzOw==}
+
   '@activepieces/piece-discord@0.4.4':
     resolution: {integrity: sha512-n2Zrx0Trsl0+ZCQGIU9+Xzc4ztoCLnc+rXL/nFiiooiomL/glcerKWGjjG9ougMObAUy4TZxFm/FMNQqyRFt1g==}
 
@@ -330,6 +357,9 @@ packages:
 
   '@activepieces/piece-gmail@0.11.6':
     resolution: {integrity: sha512-1BV4wTu1sgQYmrKX73HgggUbLTynSqDKQh4SBcTUCyR8Mp8AYutOJwTjg8YJT5lLRF+rZQmiMZoQU1UR2VAVHg==}
+
+  '@activepieces/piece-google-calendar@0.9.1':
+    resolution: {integrity: sha512-7BAuXVZkUPFWuwGkfMof9ggDg5wC8X4Z8f7OKIe+HWvozyVm7D+70Z0/Xo2P9rJ8OOSyLmBgvM9R9q3s39ohvQ==}
 
   '@activepieces/piece-google-docs@0.4.1':
     resolution: {integrity: sha512-JwIaAEb/Ffbr8Mz6ogopO099f12XzLr07xHSq8kw6cRoqg+DO96MeCn4nTbIxrX70VGA8knxT4hMcopub81Kkg==}
@@ -343,6 +373,12 @@ packages:
   '@activepieces/piece-hubspot@0.8.4':
     resolution: {integrity: sha512-QwQsFh9USaOBWCjrjCt6cWuNOn1G/bt7bUA4HEySKBEk4daPIVLmc5mvO408lDoWuG0RGDZUAmmmecNm5Gzqsw==}
 
+  '@activepieces/piece-hunter@0.1.3':
+    resolution: {integrity: sha512-Tie4oZ7ER7sAA+AUxi+qrztDYyEvfBruoBKswrL9Ee7cgwNKj/DZL08zpSFyau9oVbf/iHct/gXpsqFfmmoGVg==}
+
+  '@activepieces/piece-instantly-ai@0.1.4':
+    resolution: {integrity: sha512-HARdRMo8C23jO6O4UcN8v8hQcq+XnuA0h2chv+TwlPIqjmQ9LB2nQf/3vlqDcKenumBHEPk6qHNTX0Le6e/50A==}
+
   '@activepieces/piece-intercom@0.7.0':
     resolution: {integrity: sha512-iuIG0shBFXc4yyEznsdoB+MSD6GUWXQT/nzp2ZZ1jzoA9scXHM2AJ7m8SSZ2Tce0coQGlHayh4VtG33ZGJX1/g==}
 
@@ -352,11 +388,17 @@ packages:
   '@activepieces/piece-linear@0.3.0':
     resolution: {integrity: sha512-zIwDRDX3WnItIbVEwa2w/LiMBV7MyLW3+7d40+OgRpy+h9oa7rDXhCB2AUf/4i4kIHsYsAKvALhJFlRA5vCqVA==}
 
+  '@activepieces/piece-linkedin@0.2.4':
+    resolution: {integrity: sha512-aMXRd3WDcCPavPZHgVpeQ+ptbKWJ98hH4EuOyvOpq6XkvMq1mYyWWojExNqe4DB14RoSPZSzOyRxB3Lq7+/vLA==}
+
   '@activepieces/piece-mailchimp@0.5.3':
     resolution: {integrity: sha512-qHO9kJD2HcGXZxPEhRVl8Jj1JoW1gXJq/cJzlthTjLvUF6tsAw7z1iObNKqHinohSsuZcLvSh3vg7OqHfFrRCg==}
 
   '@activepieces/piece-microsoft-teams@0.3.13':
     resolution: {integrity: sha512-OsGkuZaE6qzufXPOHgYxbPEx5QvEN0wZ+BaP+WgwCF7FRFSQtJg1LGrOnPfNp9g2bsRZ3IDQOScWJbVWIhglSQ==}
+
+  '@activepieces/piece-neverbounce@0.1.4':
+    resolution: {integrity: sha512-dAqp8uTd9E5FrWLXsRmxw4m/huAMY53ZJjKtOViHPXxe2w44j7+fuiSOLnClw48+0qY0cZMK5BmGCgBcn0m8KQ==}
 
   '@activepieces/piece-notion@0.6.1':
     resolution: {integrity: sha512-uAgdtwm3cvR8ehdK8KkB32vfeEezVGmNwYuT64hglx8Rz0VxOctFJx6pmxgVKbBp3aT6TP02sCewD2EJD4oJ1g==}
@@ -373,11 +415,17 @@ packages:
   '@activepieces/piece-slack@0.14.2':
     resolution: {integrity: sha512-ZSkeQ57wEek7mvPZxYmheyHJPDLKJKURpynwkUaCnq8qNZap6vijv71zFDhkO6jZbcou5zq08AGFELUYMIVEgw==}
 
+  '@activepieces/piece-smartlead@0.0.1':
+    resolution: {integrity: sha512-ygweSOJHvpXPpjNThyNwRVimS4qXW/FMOeUlaz2wzPxS8hza/jjK3Mc+KlmKhZe/UTIoAjI88/iwt/19dH/5UA==}
+
   '@activepieces/piece-stripe@0.6.5':
     resolution: {integrity: sha512-6B/Ac/q2U9Jp1GUGyfGLp4z7goG7BfAyMpxMv4yb0K2hlxmvT7P7Q0BG+RyQVU1/GuqPj4f+CTEOtoFOiRxA9Q==}
 
   '@activepieces/piece-twilio@0.4.5':
     resolution: {integrity: sha512-0HAkpfzATf2+SILzAe9IjGIagro25Y/cC/PeCXDPPYMZ5JCb7Sr9AbB7lWW+FhLIIOLLKPT4oIRgmESni7VRag==}
+
+  '@activepieces/piece-zendesk@0.2.6':
+    resolution: {integrity: sha512-vt86gjsQs0fjniNK4Hxf0gquc4GbvhHM5hUPQO7iaTp+DK3ZB6ZLwJEzcT74YFUSgYnPGUYEiLbFdGXWq5W8UQ==}
 
   '@activepieces/piece-zoom@0.6.1':
     resolution: {integrity: sha512-7/QMTUs5W0BqrSI26ZC5h28XHTdyfjputfqSqhf8t+ToI4wXNu+1CssUq/ToF9eQwzt65Ny/ExzOpPgQqzJ+4g==}
@@ -4045,6 +4093,10 @@ packages:
     resolution: {integrity: sha512-POQXvpdL69+CluYsillJ7SUhKvytYjW9vG/GKpnf+xP8UWgYEM/RaMzHHofbALDiKbbP1W8UEYmgGl39WkPZsg==}
     engines: {'0': node >= 0.2.0}
 
+  jsonwebtoken@9.0.1:
+    resolution: {integrity: sha512-K8wx7eJ5TPvEjuiVSkv167EVboBDv9PZdDoF7BgeQnBLVvZWW9clr2PsQHVJDTKaEIH5JBIwHujGcHp7GgI2eg==}
+    engines: {node: '>=12', npm: '>=6'}
+
   jsonwebtoken@9.0.3:
     resolution: {integrity: sha512-MT/xP0CrubFRNLNKvxJ2BYfy53Zkm++5bX9dtuPbqAeQpTVe0MQTFhao8+Cp//EmJp244xt6Drw/GVEGCUj40g==}
     engines: {node: '>=12', npm: '>=6'}
@@ -4055,8 +4107,14 @@ packages:
   just-diff@6.0.2:
     resolution: {integrity: sha512-S59eriX5u3/QhMNq3v/gm8Kd0w8OS6Tz2FS1NG4blv+z0MuQcBRJyFWjdovM0Rad4/P4aUPFtnkNjMjyMlMSYA==}
 
+  jwa@1.4.2:
+    resolution: {integrity: sha512-eeH5JO+21J78qMvTIDdBXidBd6nG2kZjg5Ohz/1fpa28Z4CcsWUzJ1ZZyFq/3z3N17aZy+ZuBoHljASbL1WfOw==}
+
   jwa@2.0.1:
     resolution: {integrity: sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==}
+
+  jws@3.2.3:
+    resolution: {integrity: sha512-byiJ0FLRdLdSVSReO/U4E7RoEyOCKnEnEPMjq3HxWtvzLsV08/i5RQKsFVNkCldrCaPr2vDNAOMsfs8T/Hze7g==}
 
   jws@4.0.1:
     resolution: {integrity: sha512-EKI/M/yqPncGUUh44xz0PxSidXFr/+r0pA70+gIYhjv+et7yxM+s29Y+VGDkovRofQem0fs7Uvf4+YmAdyRduA==}
@@ -6156,6 +6214,29 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@activepieces/piece-apollo@0.1.4':
+    dependencies:
+      '@activepieces/pieces-common': 0.11.6
+      '@activepieces/pieces-framework': 0.25.4(zod@4.1.13)
+      '@activepieces/shared': 0.37.0
+      '@sinclair/typebox': 0.34.11
+      ai: 6.0.143(zod@4.1.13)
+      axios: 1.13.5
+      axios-retry: 4.4.1(axios@1.13.5)
+      deepmerge-ts: 7.1.0
+      form-data: 4.0.4
+      mime-types: 2.1.35
+      nanoid: 3.3.8
+      semver: 7.6.0
+      socket.io-client: 4.8.1
+      tslib: 2.6.2
+      zod: 4.1.13
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
   '@activepieces/piece-discord@0.4.4':
     dependencies:
       '@activepieces/pieces-common': 0.11.6
@@ -6204,6 +6285,22 @@ snapshots:
       mailparser: 3.7.5
       mime-types: 2.1.35
       nodemailer: 7.0.11
+      tslib: 2.6.2
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - encoding
+      - supports-color
+      - utf-8-validate
+
+  '@activepieces/piece-google-calendar@0.9.1':
+    dependencies:
+      '@activepieces/pieces-common': 0.12.0
+      '@activepieces/pieces-framework': 0.26.0
+      '@activepieces/shared': 0.50.1
+      dayjs: 1.11.9
+      googleapis: 129.0.0
+      googleapis-common: 7.2.0
       tslib: 2.6.2
     transitivePeerDependencies:
       - bufferutil
@@ -6300,6 +6397,53 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@activepieces/piece-hunter@0.1.3':
+    dependencies:
+      '@activepieces/pieces-common': 0.11.6
+      '@activepieces/pieces-framework': 0.25.4(zod@4.1.13)
+      '@activepieces/shared': 0.37.0
+      '@sinclair/typebox': 0.34.11
+      ai: 6.0.143(zod@4.1.13)
+      axios: 1.13.5
+      axios-retry: 4.4.1(axios@1.13.5)
+      deepmerge-ts: 7.1.0
+      form-data: 4.0.4
+      mime-types: 2.1.35
+      nanoid: 3.3.8
+      semver: 7.6.0
+      socket.io-client: 4.8.1
+      tslib: 2.8.1
+      zod: 4.1.13
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
+  '@activepieces/piece-instantly-ai@0.1.4':
+    dependencies:
+      '@activepieces/pieces-common': 0.11.6
+      '@activepieces/pieces-framework': 0.25.4(zod@4.1.13)
+      '@activepieces/shared': 0.37.0
+      '@sinclair/typebox': 0.34.11
+      ai: 6.0.143(zod@4.1.13)
+      axios: 1.13.5
+      axios-retry: 4.4.1(axios@1.13.5)
+      dayjs: 1.11.9
+      deepmerge-ts: 7.1.0
+      form-data: 4.0.4
+      mime-types: 2.1.35
+      nanoid: 3.3.8
+      semver: 7.6.0
+      socket.io-client: 4.8.1
+      tslib: 2.6.2
+      zod: 4.1.13
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
   '@activepieces/piece-intercom@0.7.0':
     dependencies:
       '@activepieces/pieces-common': 0.12.0
@@ -6358,6 +6502,30 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@activepieces/piece-linkedin@0.2.4':
+    dependencies:
+      '@activepieces/pieces-common': 0.11.6
+      '@activepieces/pieces-framework': 0.25.4(zod@4.1.13)
+      '@activepieces/shared': 0.37.0
+      '@sinclair/typebox': 0.34.11
+      ai: 6.0.143(zod@4.1.13)
+      axios: 1.13.5
+      axios-retry: 4.4.1(axios@1.13.5)
+      deepmerge-ts: 7.1.0
+      form-data: 4.0.4
+      jsonwebtoken: 9.0.1
+      mime-types: 2.1.35
+      nanoid: 3.3.8
+      semver: 7.6.0
+      socket.io-client: 4.8.1
+      tslib: 2.6.2
+      zod: 4.1.13
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
   '@activepieces/piece-mailchimp@0.5.3':
     dependencies:
       '@activepieces/pieces-common': 0.11.6
@@ -6398,6 +6566,29 @@ snapshots:
       - bufferutil
       - debug
       - stream-browserify
+      - supports-color
+      - utf-8-validate
+
+  '@activepieces/piece-neverbounce@0.1.4':
+    dependencies:
+      '@activepieces/pieces-common': 0.11.6
+      '@activepieces/pieces-framework': 0.25.4(zod@4.1.13)
+      '@activepieces/shared': 0.37.0
+      '@sinclair/typebox': 0.34.11
+      ai: 6.0.143(zod@4.1.13)
+      axios: 1.13.5
+      axios-retry: 4.4.1(axios@1.13.5)
+      deepmerge-ts: 7.1.0
+      form-data: 4.0.4
+      mime-types: 2.1.35
+      nanoid: 3.3.8
+      semver: 7.6.0
+      socket.io-client: 4.8.1
+      tslib: 2.8.1
+      zod: 4.1.13
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
       - supports-color
       - utf-8-validate
 
@@ -6484,6 +6675,18 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@activepieces/piece-smartlead@0.0.1':
+    dependencies:
+      '@activepieces/pieces-common': 0.12.0
+      '@activepieces/pieces-framework': 0.26.0
+      '@activepieces/shared': 0.47.0
+      tslib: 2.6.2
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
   '@activepieces/piece-stripe@0.6.5(@types/node@22.19.15)':
     dependencies:
       '@activepieces/pieces-common': 0.11.6
@@ -6521,6 +6724,19 @@ snapshots:
       - supports-color
       - utf-8-validate
       - zod
+
+  '@activepieces/piece-zendesk@0.2.6':
+    dependencies:
+      '@activepieces/pieces-common': 0.12.0
+      '@activepieces/pieces-framework': 0.26.0
+      '@activepieces/shared': 0.47.0
+      dayjs: 1.11.9
+      tslib: 2.6.2
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
 
   '@activepieces/piece-zoom@0.6.1':
     dependencies:
@@ -11241,6 +11457,13 @@ snapshots:
 
   jsonparse@1.3.1: {}
 
+  jsonwebtoken@9.0.1:
+    dependencies:
+      jws: 3.2.3
+      lodash: 4.18.1
+      ms: 2.1.3
+      semver: 7.7.4
+
   jsonwebtoken@9.0.3:
     dependencies:
       jws: 4.0.1
@@ -11258,10 +11481,21 @@ snapshots:
 
   just-diff@6.0.2: {}
 
+  jwa@1.4.2:
+    dependencies:
+      buffer-equal-constant-time: 1.0.1
+      ecdsa-sig-formatter: 1.0.11
+      safe-buffer: 5.2.1
+
   jwa@2.0.1:
     dependencies:
       buffer-equal-constant-time: 1.0.1
       ecdsa-sig-formatter: 1.0.11
+      safe-buffer: 5.2.1
+
+  jws@3.2.3:
+    dependencies:
+      jwa: 1.4.2
       safe-buffer: 5.2.1
 
   jws@4.0.1:

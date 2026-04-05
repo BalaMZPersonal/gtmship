@@ -24,6 +24,8 @@ export type WorkflowBindingSelectorType =
   | "latest_active"
   | "connection_id"
   | "label";
+export type WorkflowAiProviderSlug = "openai" | "anthropic";
+export type WorkflowAiResponseFormat = "text" | "json" | "raw";
 
 /** A single tracked network interaction performed by a workflow. */
 export interface WorkflowAccessOperation {
@@ -174,9 +176,38 @@ export interface WorkflowWebAccess {
   ) => Promise<WorkflowRequestResult<T>>;
 }
 
+export interface WorkflowAiGenerateInput {
+  providerSlug: WorkflowAiProviderSlug;
+  model: string;
+  system?: string;
+  prompt?: string;
+  input?: unknown;
+  responseFormat?: WorkflowAiResponseFormat;
+  temperature?: number;
+  maxOutputTokens?: number;
+}
+
+export interface WorkflowAiGenerateResult<TJson = unknown> {
+  providerSlug: WorkflowAiProviderSlug;
+  model: string;
+  status: number;
+  text: string | null;
+  json: TJson | null;
+  raw: unknown;
+  usage?: Record<string, unknown> | null;
+  stopReason?: string | null;
+}
+
+export interface WorkflowAiAccess {
+  generate: <TJson = unknown>(
+    input: WorkflowAiGenerateInput
+  ) => Promise<WorkflowAiGenerateResult<TJson>>;
+}
+
 export interface WorkflowContext {
   integration: (providerSlug: string) => Promise<WorkflowIntegrationClient>;
   web: WorkflowWebAccess;
+  ai: WorkflowAiAccess;
   requestWriteApproval: (
     request: WorkflowWriteApprovalRequest
   ) => Promise<void>;
@@ -280,6 +311,7 @@ export interface WorkflowRuntimeAuthManifestProvider {
   secretRef?: string;
   authType?: WorkflowProviderAuthType;
   headerName?: string;
+  defaultHeaders?: Record<string, string>;
   baseUrl?: string;
   instanceUrl?: string;
 }
@@ -297,6 +329,7 @@ export interface WorkflowRuntimeSecretValue {
   password?: string;
   authType?: WorkflowProviderAuthType;
   headerName?: string;
+  defaultHeaders?: Record<string, string>;
   baseUrl?: string;
   instanceUrl?: string;
 }

@@ -3,7 +3,14 @@ import {
   parseResponseData,
   resolveIntegrationOperationUrl,
 } from "./auth.js";
+import {
+  buildWorkflowAiRequest,
+  isWorkflowAiProviderSlug,
+  parseWorkflowAiResponse,
+} from "./ai.js";
 import type {
+  WorkflowAiAccess,
+  WorkflowAiGenerateInput,
   WorkflowAccessOperation,
   WorkflowContext,
   WorkflowContextOptions,
@@ -38,6 +45,58 @@ function buildOperation(
     mode,
     description,
     checkpoint,
+  };
+}
+
+function createAiAccess(
+  options: WorkflowContextOptions
+): WorkflowAiAccess {
+  return {
+    generate: async <TJson = unknown>(
+      input: WorkflowAiGenerateInput
+    ) => {
+      if (!isWorkflowAiProviderSlug(input.providerSlug)) {
+        throw new Error(
+          `Unsupported workflow AI provider: ${input.providerSlug}`
+        );
+      }
+
+      const model = input.model.trim();
+      const request = buildWorkflowAiRequest(input);
+      const url = resolveIntegrationOperationUrl(input.providerSlug, request.path, {
+        authServiceUrl: options.authServiceUrl,
+        runtimeAuth: options.runtimeAuth,
+      });
+      const operation = buildOperation(
+        "integration",
+        input.providerSlug,
+        url,
+        "POST",
+        "read",
+        `AI generation via ${input.providerSlug} (${model})`
+      );
+
+      await trackOperation(options, operation);
+      const response = await makeIntegrationRequest(
+        input.providerSlug,
+        "POST",
+        request.path,
+        request.body,
+        {
+          authServiceUrl: options.authServiceUrl,
+          runtime: options.runtime,
+          runtimeAuth: options.runtimeAuth,
+        }
+      );
+
+      return parseWorkflowAiResponse<TJson>({
+        providerSlug: input.providerSlug,
+        model,
+        status: response.status,
+        responseFormat: input.responseFormat,
+        raw: response.data,
+      });
+    },
   };
 }
 
@@ -203,6 +262,7 @@ export function createWorkflowContext(
     ): Promise<WorkflowIntegrationClient> =>
       createIntegrationClient(providerSlug, options),
     web: createWebAccess(options),
+    ai: createAiAccess(options),
     requestWriteApproval: async (
       request: WorkflowWriteApprovalRequest
     ): Promise<void> => {

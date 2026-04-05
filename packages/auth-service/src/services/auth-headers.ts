@@ -48,21 +48,41 @@ function formatApiKeyHeaderValue(
   return token;
 }
 
+function normalizeDefaultHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, headerValue]) =>
+        key.trim().length > 0 &&
+        typeof headerValue === "string" &&
+        headerValue.trim().length > 0
+    )
+  ) as Record<string, string>;
+}
+
 export function buildAuthHeaders(connection: {
   accessToken: string;
   provider: {
     authType: string;
     headerName: string | null;
     apiSchema?: unknown;
+    defaultHeaders?: unknown;
   };
 }): Record<string, string> {
   const token = connection.accessToken;
+  const defaultHeaders = normalizeDefaultHeaders(
+    connection.provider.defaultHeaders
+  );
 
   switch (connection.provider.authType) {
     case "oauth2":
-      return { Authorization: `Bearer ${token}` };
+      return { ...defaultHeaders, Authorization: `Bearer ${token}` };
     case "api_key":
       return {
+        ...defaultHeaders,
         [connection.provider.headerName || "X-API-Key"]: formatApiKeyHeaderValue(
           token,
           connection.provider.headerName,
@@ -71,11 +91,12 @@ export function buildAuthHeaders(connection: {
       };
     case "basic":
       return {
+        ...defaultHeaders,
         Authorization: `Basic ${Buffer.from(
           token.includes(":") ? token : `${token}:`
         ).toString("base64")}`,
       };
     default:
-      return { Authorization: `Bearer ${token}` };
+      return { ...defaultHeaders, Authorization: `Bearer ${token}` };
   }
 }

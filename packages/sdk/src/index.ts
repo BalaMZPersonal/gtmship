@@ -1,8 +1,18 @@
 export { auth } from "./auth.js";
+export {
+  buildWorkflowAiRequest,
+  isWorkflowAiProviderSlug,
+  parseWorkflowAiResponse,
+} from "./ai.js";
 export { createWorkflowContext } from "./context.js";
 export { defineWorkflow } from "./workflow.js";
 export { triggers } from "./triggers.js";
 export type {
+  WorkflowAiAccess,
+  WorkflowAiGenerateInput,
+  WorkflowAiGenerateResult,
+  WorkflowAiProviderSlug,
+  WorkflowAiResponseFormat,
   WorkflowConfig,
   WorkflowResult,
   TriggerConfig,

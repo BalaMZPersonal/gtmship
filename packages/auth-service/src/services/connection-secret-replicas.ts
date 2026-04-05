@@ -47,6 +47,7 @@ interface ConnectionForSecretSync {
     slug: string;
     authType: string;
     headerName: string | null;
+    defaultHeaders: unknown;
     baseUrl: string;
     apiSchema: unknown;
   };
@@ -203,6 +204,7 @@ function buildRuntimeSecretPayload(connection: ConnectionForSecretSync): {
       providerSlug: connection.provider.slug,
       authType: connection.provider.authType,
       headerName: connection.provider.headerName,
+      defaultHeaders: connection.provider.defaultHeaders ?? null,
       baseUrl: connection.instanceUrl || connection.provider.baseUrl,
       accessToken,
       label: connection.label,
@@ -558,6 +560,7 @@ async function loadConnectionForSecretSync(
           slug: true,
           authType: true,
           headerName: true,
+          defaultHeaders: true,
           baseUrl: true,
           apiSchema: true,
         },

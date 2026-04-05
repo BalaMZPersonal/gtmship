@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
+import {
+  CloudWatchLogsClient,
+  FilterLogEventsCommand,
+  type FilteredLogEvent,
+} from "@aws-sdk/client-cloudwatch-logs";
 import { prisma } from "./db.js";
 import { decrypt } from "./crypto.js";
 import {
@@ -23,7 +28,11 @@ const GCP_EXECUTION_LIMIT_DEFAULT = 5;
 const GCP_EXECUTION_LIMIT_MAX = 50;
 const GCP_LOG_LIMIT_DEFAULT = 200;
 const GCP_LOG_LIMIT_MAX = 500;
-const GCP_ENCRYPTED_SETTING_KEYS = new Set(["gcp_service_account_key"]);
+const AWS_LIVE_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const ENCRYPTED_SETTING_KEYS = new Set([
+  "aws_secret_access_key",
+  "gcp_service_account_key",
+]);
 
 interface GcpServiceAccountKey {
   client_email?: string;
@@ -37,6 +46,12 @@ interface GcpSettingsSnapshot {
   serviceAccountKey: GcpServiceAccountKey | null;
 }
 
+interface AwsSettingsSnapshot {
+  accessKeyId: string | null;
+  secretAccessKey: string | null;
+  region: string | null;
+}
+
 interface GcpLivePlatformMetadata {
   computeType: "job" | "service";
   computeName: string | null;
@@ -44,6 +59,15 @@ interface GcpLivePlatformMetadata {
   schedulerJobId: string | null;
   region: string | null;
   gcpProject: string | null;
+}
+
+interface AwsLivePlatformMetadata {
+  computeType: "lambda";
+  computeName: string | null;
+  endpointUrl: string | null;
+  schedulerJobId: string | null;
+  region: string | null;
+  logGroupName: string | null;
 }
 
 interface GcpExecutionSummary {
@@ -303,7 +327,37 @@ function stripCloudRunName(value: string | null): string | null {
   return parts[parts.length - 1] || null;
 }
 
-function deriveGcpPlatformMetadata(
+function stripLambdaName(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("lambda:")) {
+    return trimmed.slice("lambda:".length) || null;
+  }
+
+  const arnMatch = trimmed.match(/:function:([^:/]+)(?::[^/]+)?$/);
+  if (arnMatch?.[1]) {
+    return arnMatch[1];
+  }
+
+  if (trimmed.startsWith("/aws/lambda/")) {
+    return trimmed.slice("/aws/lambda/".length) || null;
+  }
+
+  return trimmed.startsWith("arn:") ? null : trimmed;
+}
+
+function buildAwsLogGroupName(lambdaName: string | null): string | null {
+  return lambdaName ? `/aws/lambda/${lambdaName}` : null;
+}
+
+export function deriveGcpPlatformMetadata(
   deployment: WorkflowDeploymentRow
 ): GcpLivePlatformMetadata {
   const resourceInventory = asRecord(deployment.resourceInventory);
@@ -328,6 +382,46 @@ function deriveGcpPlatformMetadata(
     schedulerJobId,
     region: deployment.region,
     gcpProject: deployment.gcpProject,
+  };
+}
+
+export function deriveAwsPlatformMetadata(
+  deployment: WorkflowDeploymentRow
+): AwsLivePlatformMetadata {
+  const resourceInventory = asRecord(deployment.resourceInventory);
+  const runtimeTarget = asRecord(resourceInventory.runtimeTarget);
+  const platformOutputs = asRecord(resourceInventory.platformOutputs);
+
+  const lambdaArn =
+    toNullableString(platformOutputs.lambdaArn) ||
+    toNullableString(platformOutputs.computeId);
+  const computeName =
+    toNullableString(runtimeTarget.computeName) ||
+    toNullableString(platformOutputs.lambdaName) ||
+    stripLambdaName(lambdaArn) ||
+    stripLambdaName(deployment.endpointUrl);
+  const endpointUrl =
+    deployment.endpointUrl ||
+    toNullableString(runtimeTarget.endpointUrl) ||
+    toNullableString(platformOutputs.endpointToken) ||
+    toNullableString(platformOutputs.apiGatewayUrl);
+  const schedulerJobId =
+    deployment.schedulerId ||
+    toNullableString(runtimeTarget.schedulerId) ||
+    toNullableString(platformOutputs.schedulerJobId);
+  const logGroupName =
+    toNullableString(runtimeTarget.logGroupName) ||
+    toNullableString(platformOutputs.logGroupName) ||
+    toNullableString(platformOutputs.awsLogGroup) ||
+    buildAwsLogGroupName(computeName);
+
+  return {
+    computeType: "lambda",
+    computeName,
+    endpointUrl,
+    schedulerJobId,
+    region: toNullableString(runtimeTarget.region) || deployment.region,
+    logGroupName,
   };
 }
 
@@ -370,7 +464,7 @@ async function loadCloudSettings(keys: string[]): Promise<Record<string, string 
   }
 
   for (const row of rows) {
-    const value = GCP_ENCRYPTED_SETTING_KEYS.has(row.key)
+    const value = ENCRYPTED_SETTING_KEYS.has(row.key)
       ? decrypt(row.value)
       : row.value;
     settings[row.key] = value;
@@ -402,6 +496,44 @@ async function loadGcpSettingsSnapshot(): Promise<GcpSettingsSnapshot> {
     region: settings["gcp_region"] || null,
     serviceAccountKey,
   };
+}
+
+async function loadAwsSettingsSnapshot(): Promise<AwsSettingsSnapshot> {
+  const settings = await loadCloudSettings([
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_region",
+  ]);
+
+  return {
+    accessKeyId: settings["aws_access_key_id"] || null,
+    secretAccessKey: settings["aws_secret_access_key"] || null,
+    region: settings["aws_region"] || null,
+  };
+}
+
+function createAwsLogsClient(
+  settings: AwsSettingsSnapshot,
+  region: string | null
+): CloudWatchLogsClient {
+  return new CloudWatchLogsClient({
+    region: region || settings.region || process.env.AWS_REGION || "us-east-1",
+    ...(settings.accessKeyId && settings.secretAccessKey
+      ? {
+          credentials: {
+            accessKeyId: settings.accessKeyId,
+            secretAccessKey: settings.secretAccessKey,
+          },
+        }
+      : {}),
+  });
+}
+
+function normalizeAwsClientError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : fallback;
+  return /credential/i.test(message)
+    ? "AWS credentials are not configured."
+    : message;
 }
 
 async function getGcpAccessToken(
@@ -572,6 +704,211 @@ async function fetchGcpDeploymentLogs(input: {
       } satisfies DeploymentLogEntry;
     })
     .filter((entry) => Boolean(entry.message));
+}
+
+function extractAwsRequestId(message: string): string | null {
+  const requestIdMatch = message.match(/RequestId:\s*([A-Za-z0-9-]+)/);
+  if (requestIdMatch?.[1]) {
+    return requestIdMatch[1];
+  }
+
+  return null;
+}
+
+function mapAwsMessageToLevel(message: string): "info" | "warn" | "error" {
+  if (
+    /task timed out|status:\s*error|runtime\.exiterror|process exited before completing request|(^|\s)(error|exception|unhandled)(\s|:|$)/i.test(
+      message
+    )
+  ) {
+    return "error";
+  }
+
+  if (/(^|\s)(warn|warning)(\s|:|$)/i.test(message)) {
+    return "warn";
+  }
+
+  return "info";
+}
+
+function mapAwsLogEvent(event: FilteredLogEvent): DeploymentLogEntry {
+  const message = typeof event.message === "string" ? event.message.trim() : "";
+  const timestamp =
+    typeof event.timestamp === "number"
+      ? new Date(event.timestamp).toISOString()
+      : new Date().toISOString();
+  const requestId = extractAwsRequestId(message);
+
+  return {
+    timestamp,
+    level: mapAwsMessageToLevel(message),
+    message,
+    executionName: requestId || undefined,
+    requestId: requestId || undefined,
+  };
+}
+
+async function fetchAwsDeploymentLogs(input: {
+  settings: AwsSettingsSnapshot;
+  region: string | null;
+  logGroupName: string;
+  since: Date;
+  limit: number;
+  executionName?: string | null;
+}): Promise<DeploymentLogEntry[]> {
+  const client = createAwsLogsClient(input.settings, input.region);
+  const response = await client.send(
+    new FilterLogEventsCommand({
+      logGroupName: input.logGroupName,
+      startTime: input.since.getTime(),
+      limit: input.executionName
+        ? Math.min(Math.max(input.limit * 5, input.limit), GCP_LOG_LIMIT_MAX)
+        : input.limit,
+    })
+  );
+
+  const entries = (response.events || [])
+    .map(mapAwsLogEvent)
+    .filter((entry: DeploymentLogEntry) => Boolean(entry.message));
+
+  const filteredEntries = input.executionName
+    ? entries.filter(
+        (entry: DeploymentLogEntry) =>
+          entry.requestId === input.executionName ||
+          entry.executionName === input.executionName ||
+          entry.message.includes(input.executionName as string)
+      )
+    : entries;
+
+  return filteredEntries.slice(-input.limit);
+}
+
+export function buildAwsExecutionSummaries(
+  entries: DeploymentLogEntry[],
+  limit: number
+): GcpExecutionSummary[] {
+  const byRequestId = new Map<
+    string,
+    {
+      requestId: string;
+      startedAt: string | null;
+      completedAt: string | null;
+      lastSeenAt: string | null;
+      sawTerminal: boolean;
+      hasError: boolean;
+    }
+  >();
+
+  const chronologicalEntries = [...entries].sort(
+    (left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp)
+  );
+
+  for (const entry of chronologicalEntries) {
+    const requestId = entry.requestId || entry.executionName || null;
+    if (!requestId) {
+      continue;
+    }
+
+    const current = byRequestId.get(requestId) || {
+      requestId,
+      startedAt: null,
+      completedAt: null,
+      lastSeenAt: null,
+      sawTerminal: false,
+      hasError: false,
+    };
+
+    if (!current.startedAt) {
+      current.startedAt = entry.timestamp;
+    }
+    current.lastSeenAt = entry.timestamp;
+
+    if (/^(END|REPORT) RequestId:/i.test(entry.message)) {
+      current.completedAt = entry.timestamp;
+      current.sawTerminal = true;
+    }
+
+    if (entry.level === "error") {
+      current.hasError = true;
+      current.completedAt = current.completedAt || entry.timestamp;
+    }
+
+    byRequestId.set(requestId, current);
+  }
+
+  return Array.from(byRequestId.values())
+    .sort(
+      (left, right) =>
+        Date.parse(right.lastSeenAt || "") - Date.parse(left.lastSeenAt || "")
+    )
+    .slice(0, limit)
+    .map((execution) => ({
+      executionName: execution.requestId,
+      fullName: execution.requestId,
+      status: execution.hasError
+        ? "failure"
+        : execution.sawTerminal
+          ? "success"
+          : "running",
+      startedAt: execution.startedAt,
+      completedAt: execution.completedAt,
+      logUri: null,
+      runningCount: execution.hasError || execution.sawTerminal ? 0 : 1,
+      succeededCount: !execution.hasError && execution.sawTerminal ? 1 : 0,
+      failedCount: execution.hasError ? 1 : 0,
+      cancelledCount: 0,
+    }));
+}
+
+async function buildAwsLiveOverview(
+  deployment: WorkflowDeploymentRow,
+  options: {
+    settings: AwsSettingsSnapshot;
+    executionLimit: number;
+  }
+): Promise<{
+  platform: AwsLivePlatformMetadata;
+  recentExecutions: GcpExecutionSummary[];
+  liveError?: string;
+}> {
+  const platform = deriveAwsPlatformMetadata(deployment);
+  if (!platform.logGroupName) {
+    return {
+      platform,
+      recentExecutions: [],
+      liveError: "Lambda log group is not available in deployment metadata.",
+    };
+  }
+
+  try {
+    const entries = await fetchAwsDeploymentLogs({
+      settings: options.settings,
+      region: deployment.region || options.settings.region,
+      logGroupName: platform.logGroupName,
+      since: new Date(Date.now() - AWS_LIVE_LOOKBACK_MS),
+      limit: GCP_LOG_LIMIT_MAX,
+    });
+
+    return {
+      platform: {
+        ...platform,
+        region: deployment.region || options.settings.region || platform.region,
+      },
+      recentExecutions: buildAwsExecutionSummaries(
+        entries,
+        options.executionLimit
+      ),
+    };
+  } catch (error) {
+    return {
+      platform,
+      recentExecutions: [],
+      liveError: normalizeAwsClientError(
+        error,
+        "Failed to load live AWS execution data."
+      ),
+    };
+  }
 }
 
 async function buildGcpLiveOverview(
@@ -836,22 +1173,39 @@ workflowControlPlaneRoutes.get("/deployments", async (req, res) => {
     return;
   }
 
-  const gcpSettings = await loadGcpSettingsSnapshot();
+  let gcpSettingsPromise: Promise<GcpSettingsSnapshot> | null = null;
+  let awsSettingsPromise: Promise<AwsSettingsSnapshot> | null = null;
   const deploymentsWithLive = await Promise.all(
     rows.map(async (deployment) => {
-      if (deployment.provider !== "gcp") {
-        return deployment;
+      if (deployment.provider === "gcp") {
+        gcpSettingsPromise ||= loadGcpSettingsSnapshot();
+        const live = await buildGcpLiveOverview(deployment, {
+          settings: await gcpSettingsPromise,
+          executionLimit,
+        });
+
+        return {
+          ...deployment,
+          ...live,
+        };
       }
 
-      const live = await buildGcpLiveOverview(deployment, {
-        settings: gcpSettings,
-        executionLimit,
-      });
+      if (deployment.provider === "aws") {
+        awsSettingsPromise ||= loadAwsSettingsSnapshot();
+        const live = await buildAwsLiveOverview(deployment, {
+          settings: await awsSettingsPromise,
+          executionLimit,
+        });
 
-      return {
-        ...deployment,
-        ...live,
-      };
+        return {
+          ...deployment,
+          ...live,
+        };
+      }
+
+      {
+        return deployment;
+      }
     })
   );
 
@@ -970,6 +1324,20 @@ workflowControlPlaneRoutes.get("/deployments/:id", async (req, res) => {
     }
   }
 
+  if (includeLive && deployment.provider === "aws") {
+    const awsSettings = await loadAwsSettingsSnapshot();
+    const live = await buildAwsLiveOverview(deployment, {
+      settings: awsSettings,
+      executionLimit,
+    });
+
+    payload.platform = live.platform;
+    payload.recentExecutions = live.recentExecutions;
+    if (live.liveError) {
+      payload.liveError = live.liveError;
+    }
+  }
+
   res.json(payload);
 });
 
@@ -1016,6 +1384,55 @@ workflowControlPlaneRoutes.get("/deployments/:id/logs", async (req, res) => {
   const deployment = deploymentRows[0];
   if (!deployment) {
     res.status(404).json({ error: "Workflow deployment not found." });
+    return;
+  }
+
+  if (deployment.provider === "aws") {
+    const platform = deriveAwsPlatformMetadata(deployment);
+    if (!platform.logGroupName) {
+      res.json({
+        deploymentId: deployment.id,
+        provider: deployment.provider,
+        platform,
+        entries: [],
+        liveError: "Lambda log group is missing in deployment metadata.",
+      });
+      return;
+    }
+
+    const awsSettings = await loadAwsSettingsSnapshot();
+
+    try {
+      const entries = await fetchAwsDeploymentLogs({
+        settings: awsSettings,
+        region: deployment.region || awsSettings.region,
+        logGroupName: platform.logGroupName,
+        since,
+        limit,
+        executionName,
+      });
+
+      res.json({
+        deploymentId: deployment.id,
+        provider: deployment.provider,
+        platform: {
+          ...platform,
+          region: deployment.region || awsSettings.region || platform.region,
+        },
+        entries,
+      });
+    } catch (error) {
+      res.json({
+        deploymentId: deployment.id,
+        provider: deployment.provider,
+        platform,
+        entries: [],
+        liveError: normalizeAwsClientError(
+          error,
+          "Failed to load deployment logs."
+        ),
+      });
+    }
     return;
   }
 

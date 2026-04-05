@@ -95,9 +95,11 @@ function formatDateTime(value?: string | null): string {
 
 function describeDeployment(deployment: WorkflowDeploymentOverview): string {
   const computeType =
-    deployment.platform?.computeType === "job"
-      ? "Cloud Run Job"
-      : "Cloud Run Service";
+    deployment.provider === "aws" || deployment.platform?.computeType === "lambda"
+      ? "Lambda Function"
+      : deployment.platform?.computeType === "job"
+        ? "Cloud Run Job"
+        : "Cloud Run Service";
   const computeName = deployment.platform?.computeName || "unknown";
   return `${deployment.workflowId} • ${computeType} (${computeName})`;
 }
@@ -252,12 +254,12 @@ export default function LogsPage() {
   }, [queryWorkflow, queryWorkflowSlug, workflowId]);
 
   const visibleGcpDeployments = useMemo(() => {
-    if (provider !== "gcp") {
+    if (!provider) {
       return [];
     }
 
     return getScopedWorkflowDeployments(gcpDeployments, {
-      provider: "gcp",
+      provider,
       workflowId: workflowLookup.workflowId,
       workflowSlug: workflowLookup.workflowSlug,
     });
@@ -298,7 +300,7 @@ export default function LogsPage() {
   };
 
   const loadDeployments = useCallback(async () => {
-    if (!providerReady || provider !== "gcp") {
+    if (!providerReady || !provider) {
       setGcpDeployments([]);
       setDeploymentError("");
       return;
@@ -311,7 +313,7 @@ export default function LogsPage() {
         const deployments = await api.getWorkflowDeploymentsForWorkflow({
           workflowId: workflowLookup.workflowId,
           workflowSlug: workflowLookup.workflowSlug,
-          provider: "gcp",
+          provider,
           includeLive: true,
           executionLimit: 10,
         });
@@ -321,7 +323,7 @@ export default function LogsPage() {
       let nextDeployments = await fetchDeployments();
       if (nextDeployments.length === 0) {
         await api.reconcileWorkflowDeployments({
-          provider: "gcp",
+          provider,
           workflow: queryWorkflowSlug || workflowId.trim() || undefined,
         });
         nextDeployments = await fetchDeployments();
@@ -333,7 +335,7 @@ export default function LogsPage() {
       setDeploymentError(
         loadError instanceof Error
           ? loadError.message
-          : "Failed to load GCP deployments."
+          : "Failed to load deployments."
       );
     } finally {
       setDeploymentsLoading(false);
@@ -341,7 +343,7 @@ export default function LogsPage() {
   }, [provider, providerReady, queryWorkflowSlug, workflowId, workflowLookup]);
 
   useEffect(() => {
-    if (provider !== "gcp") {
+    if (!provider) {
       return;
     }
 
@@ -385,12 +387,7 @@ export default function LogsPage() {
     setError("");
     setLiveError("");
     try {
-      if (provider === "gcp") {
-        if (!selectedDeployment) {
-          setLogs([]);
-          return;
-        }
-
+      if (selectedDeployment) {
         const response = await api.getWorkflowDeploymentLogs(
           selectedDeployment.id,
           {
@@ -401,6 +398,11 @@ export default function LogsPage() {
         );
         setLogs(Array.isArray(response.entries) ? response.entries : []);
         setLiveError(response.liveError || "");
+        return;
+      }
+
+      if (provider === "gcp") {
+        setLogs([]);
         return;
       }
 
@@ -457,7 +459,7 @@ export default function LogsPage() {
 
     intervalRef.current = setInterval(() => {
       void fetchLogs();
-      if (provider === "gcp") {
+      if (provider) {
         void loadDeployments();
       }
     }, 10000);
@@ -487,8 +489,8 @@ export default function LogsPage() {
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-zinc-400 sm:text-base">
                 Review workflow executions from your cloud deployment, narrow the
-                stream to a specific workflow or time window, and jump into GCP
-                deployments when recent execution metadata is available.
+                stream to a specific workflow or time window, and jump into
+                deployment-scoped logs when recent execution metadata is available.
               </p>
             </div>
 
@@ -556,7 +558,7 @@ export default function LogsPage() {
                 <div className="grid gap-4 xl:grid-cols-[minmax(0,1.7fr)_220px_auto] xl:items-end">
                   <div>
                     <label className="mb-2 block text-xs text-zinc-500">
-                      {provider === "gcp" ? "Workflow filter" : "Workflow ID"}
+                      Workflow filter
                     </label>
                     <div className="relative">
                       <Search
@@ -570,7 +572,7 @@ export default function LogsPage() {
                         placeholder={
                           provider === "gcp"
                             ? "Filter deployments by workflow..."
-                            : "Filter AWS logs by workflow..."
+                            : "Filter AWS deployments or legacy logs by workflow..."
                         }
                         className={`${fieldClassName} pl-9`}
                       />
@@ -625,7 +627,7 @@ export default function LogsPage() {
                   </div>
                 </div>
 
-                {provider === "gcp" ? (
+                {provider ? (
                   <div className="border-t border-zinc-800 pt-6">
                     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.8fr)]">
                       <div>
@@ -692,9 +694,12 @@ export default function LogsPage() {
                               {describeDeployment(selectedDeployment)}
                             </p>
                             <p className="mt-1 text-sm text-zinc-500">
-                              {selectedDeployment.platform?.gcpProject ||
-                                selectedDeployment.gcpProject ||
-                                "Unknown project"}
+                              {provider === "gcp"
+                                ? selectedDeployment.platform?.gcpProject ||
+                                  selectedDeployment.gcpProject ||
+                                  "Unknown project"
+                                : selectedDeployment.platform?.logGroupName ||
+                                  "Unknown log group"}
                               {" • "}
                               {selectedDeployment.platform?.region ||
                                 selectedDeployment.region ||
@@ -775,7 +780,7 @@ export default function LogsPage() {
             </div>
           ) : logs.length === 0 ? (
             <div className="flex items-center justify-center py-20 text-sm text-zinc-500">
-              {provider === "gcp" && !selectedDeploymentId
+              {visibleGcpDeployments.length > 0 && !selectedDeploymentId
                 ? "Select a deployment to view logs."
                 : "No logs found for this filter set."}
             </div>

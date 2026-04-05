@@ -18,6 +18,11 @@ import { fetchAndFilterOpenApiSpec } from "./openapi-spec";
 import { buildWorkflowArtifact } from "./build";
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
 import {
+  didUserExplicitlyRequestBuild,
+  formatBuildStatusMessage,
+  formatPreviewStatusMessage,
+} from "./status-messaging";
+import {
   getProviderDetail,
   listActiveConnections,
   testConnection,
@@ -202,11 +207,12 @@ Critical behavior:
 7. The command runner is a single-command sandbox using execFile (NOT a shell). These will NOT work: pipes (|), redirection (> >>), chaining (&& ;), subshells ($(...)), globbing (*). Each executeCommand call runs exactly one command. To test an endpoint: executeCommand('curl -s http://localhost:4000/proxy/gmail/gmail/v1/users/me/profile --max-time 10'). To process output from a previous call, run a separate executeCommand with jq, python3 -c, or node -e.
 8. The current draft, if any, is available in the scratch workspace as draft.ts and sample-payload.json.
 9. The saved workflow runtime itself MUST stay constrained to WorkflowContext helpers. Do not try to give the saved workflow shell access, child_process, fs, raw fetch, or external imports.
-10. Before your final answer, you must either:
-    - produce a ready draft by calling generateWorkflowDraft, validateWorkflowDraft, previewWorkflowDraft, and buildWorkflowDraft when the user asks to finish, ship, or build the workflow, or
-    - clearly explain the blocker after verifying it with tools.
-11. If validation, preview, or build exposes a code issue, analyze it and call generateWorkflowDraft again with repair instructions.
-12. Intelligent Error Recovery — When preview, validation, or build fails with an API-related error:
+10. Unless the latest user message explicitly asks to build, package, ship, or deploy, stop after generateWorkflowDraft and explain the current draft/preview state. Do not call buildWorkflowDraft on your own.
+11. Never pass approved write checkpoints through the chat tools. Users must approve write checkpoints only from the Preview or Build sections of the Workflow Studio UI.
+12. If preview returns needs_approval, say so clearly and stop. Do not continue preview approvals or call buildWorkflowDraft automatically after needs_approval.
+13. There is no deploy tool in this chat flow. Never say a workflow was deployed, published, or live unless a later tool explicitly confirms a real deployment.
+14. If validation, preview, or build exposes a code issue, analyze it and call generateWorkflowDraft again with repair instructions.
+15. Intelligent Error Recovery — When preview, validation, or build fails with an API-related error:
     a. Identify which specific API call failed. Check preview operations for non-2xx responseStatus values and error messages referencing endpoints or providers.
     b. Test the failing endpoint in isolation using executeCommand with curl through the auth proxy:
        curl http://localhost:4000/proxy/<provider-slug>/<the-failing-path>
@@ -216,13 +222,12 @@ Critical behavior:
     f. If isolated test succeeds but workflow still fails: the issue is in code logic (wrong field access, missing data transform). Include the actual response shape from the test in repair instructions.
     g. Call generateWorkflowDraft with detailed repair instructions including test results and documentation findings.
     Never retry generateWorkflowDraft with the same information. Always add new evidence from isolated testing or documentation research.
-13. If the issue is external, such as missing access or invalid credentials, explain that clearly and stop rewriting code.
-14. If connections are still missing or blocked after a recheck, stop and summarize exactly which providers are still not ready.
-15. A preview result of needs_approval is considered ready if the only remaining work is one or more declared write checkpoint approvals.
-16. Do not remove or weaken legitimate write checkpoints just to avoid preview-only approvals. Workflow Studio preview can require multiple sequential approvals in the UI.
-17. If any tool returns an error, treat that step as failed. Do not say the workflow is done or describe changes as completed unless a later tool result confirms success.
-18. A generateWorkflowDraft error means the draft was not updated. Retry with clearer repair instructions or explain the failure.
-19. Memory usage:
+16. If the issue is external, such as missing access or invalid credentials, explain that clearly and stop rewriting code.
+17. If connections are still missing or blocked after a recheck, stop and summarize exactly which providers are still not ready.
+18. Do not remove or weaken legitimate write checkpoints just to avoid preview-only approvals. Workflow Studio preview can require multiple sequential approvals in the UI.
+19. If any tool returns an error, treat that step as failed. Do not say the workflow is done or describe changes as completed unless a later tool result confirms success.
+20. A generateWorkflowDraft error means the draft was not updated. Retry with clearer repair instructions or explain the failure.
+21. Memory usage:
     a. At the start of every conversation, call recallMemories with scope "all" and relevant provider names to load both app-level and this workflow's prior context.
     b. After successfully grounding API endpoints, save provider-level knowledge (base URL, auth type, API quirks) as scope "app" — it's reusable across workflows. Save workflow-specific endpoint usage (which endpoints THIS workflow calls, field mappings) as scope "workflow".
     c. After a successful build/preview, save the working approach as scope "workflow" — these details are specific to this workflow and should not leak into other workflows.
@@ -236,6 +241,9 @@ export async function createWorkflowAgentResponse(
 ): Promise<Response> {
   const body = routeRequestSchema.parse(rawBody);
   const requestMessages = body.messages as WorkflowStudioMessage[];
+  const userExplicitlyRequestedBuild = didUserExplicitlyRequestBuild(
+    requestMessages
+  );
 
   let draft =
     body.currentArtifact && typeof body.currentArtifact === "object"
@@ -571,11 +579,9 @@ export async function createWorkflowAgentResponse(
 
       previewWorkflowDraft: tool({
         description:
-          "Run preview for the current workflow draft with optional approved write checkpoints.",
-        parameters: z.object({
-          approvedCheckpoints: z.array(z.string()).optional(),
-        }),
-        execute: async ({ approvedCheckpoints }) => {
+          "Run preview for the current workflow draft without approving any write checkpoints.",
+        parameters: z.object({}),
+        execute: async () => {
           try {
             if (!draft) {
               return { error: "No draft exists yet. Generate the workflow first." };
@@ -587,7 +593,7 @@ export async function createWorkflowAgentResponse(
                 code: draft.code,
                 samplePayload: draft.samplePayload,
               },
-              approvedCheckpoints || []
+              []
             );
 
             if (preview.status === "error") {
@@ -608,6 +614,7 @@ export async function createWorkflowAgentResponse(
 
             return {
               preview,
+              assistantMessage: formatPreviewStatusMessage(preview),
               artifact: withTranscript(draft, requestMessages),
             };
           } catch (error) {
@@ -628,20 +635,32 @@ export async function createWorkflowAgentResponse(
 
       buildWorkflowDraft: tool({
         description:
-          "Run the full build workflow for the current draft: validation, preview, bundling, and packaging.",
-        parameters: z.object({
-          approvedCheckpoints: z.array(z.string()).optional(),
-        }),
-        execute: async ({ approvedCheckpoints }) => {
+          "Run the full build workflow for the current draft when the user has explicitly asked to build or package it.",
+        parameters: z.object({}),
+        execute: async () => {
           try {
             if (!draft) {
               return { error: "No draft exists yet. Generate the workflow first." };
             }
 
+            if (!userExplicitlyRequestedBuild) {
+              const approvalSuffix =
+                draft.preview?.status === "needs_approval"
+                  ? ` Preview is still waiting for approval at checkpoint "${draft.preview.pendingApproval?.checkpoint || "unknown"}" in the Preview section.`
+                  : "";
+
+              return {
+                skipped: true,
+                assistantMessage:
+                  "Build not started. The agent only runs builds when the user explicitly asks for one. Use the Build tab or ask me to build/package the workflow." +
+                  approvalSuffix,
+                artifact: withTranscript(draft, requestMessages),
+              };
+            }
+
             const defaults = await loadProjectDeploymentDefaults();
             const build = await buildWorkflowArtifact({
               artifact: draft,
-              approvedCheckpoints: approvedCheckpoints || [],
               defaults,
             });
 
@@ -655,6 +674,7 @@ export async function createWorkflowAgentResponse(
 
             return {
               build,
+              assistantMessage: formatBuildStatusMessage(build),
               artifact: withTranscript(draft, requestMessages),
             };
           } catch (error) {

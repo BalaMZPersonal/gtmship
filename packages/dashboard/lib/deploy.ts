@@ -1,3 +1,8 @@
+import type {
+  WorkflowDeploymentPlan,
+  WorkflowDeployAuthMode,
+} from "@/lib/workflow-studio/types";
+
 export type CloudProvider = "aws" | "gcp";
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
 
@@ -76,14 +81,16 @@ export interface DashboardDeployInfraItem {
 }
 
 export type GcpComputeType = "job" | "service";
+export type WorkflowDeploymentComputeType = GcpComputeType | "lambda";
 
 export interface WorkflowDeploymentPlatform {
-  computeType?: GcpComputeType | null;
+  computeType?: WorkflowDeploymentComputeType | null;
   computeName?: string | null;
   endpointUrl?: string | null;
   schedulerJobId?: string | null;
   region?: string | null;
   gcpProject?: string | null;
+  logGroupName?: string | null;
 }
 
 export interface WorkflowExecutionHistoryEntry {
@@ -141,10 +148,184 @@ export interface WorkflowDeploymentTargeting {
   gcpProject?: string | null;
 }
 
+export interface WorkflowSecretSyncEntry {
+  key: string;
+  workflowId: string;
+  workflowTitle: string;
+  providerSlug: string;
+  connectionId: string;
+  secretRef: string;
+}
+
+export interface WorkflowSecretSyncSummary {
+  authMode: WorkflowDeployAuthMode;
+  backendKind: string | null;
+  backendTarget: string | null;
+  secretPrefix: string | null;
+  runtimeAccess: string | null;
+  workflowCount: number;
+  secretCount: number;
+  entries: WorkflowSecretSyncEntry[];
+}
+
 export function isDashboardDeploySuccess(
   value: DashboardDeployResponse
 ): value is DashboardDeploySuccess {
   return (value as DashboardDeploySuccess).success === true;
+}
+
+function normalizeTextValue(value?: string | null): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function dedupeTextValues(values: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(values.map((value) => normalizeTextValue(value)).filter(Boolean))
+  );
+}
+
+function summarizeTextValues(
+  values: Array<string | null | undefined>
+): string | null {
+  const unique = dedupeTextValues(values);
+  return unique.length > 0 ? unique.join(", ") : null;
+}
+
+function formatPlanTitle(plan: WorkflowDeploymentPlan): string {
+  return (
+    normalizeTextValue(plan.workflowTitle) ||
+    normalizeTextValue(plan.workflowName) ||
+    plan.workflowId
+  );
+}
+
+function buildPlanSecretSyncEntries(
+  plan: WorkflowDeploymentPlan
+): WorkflowSecretSyncEntry[] {
+  if (plan.authMode !== "secret_manager") {
+    return [];
+  }
+
+  const workflowTitle = formatPlanTitle(plan);
+  const manifestProviders = plan.auth?.manifest?.providers || [];
+  if (manifestProviders.length === 0) {
+    return [];
+  }
+
+  return manifestProviders.map((provider, index) => ({
+    key: [
+      plan.workflowId,
+      provider.providerSlug,
+      provider.connectionId || "pending-connection",
+      provider.secretRef || "pending-secret-ref",
+      String(index),
+    ].join(":"),
+    workflowId: plan.workflowId,
+    workflowTitle,
+    providerSlug: provider.providerSlug,
+    connectionId:
+      normalizeTextValue(provider.connectionId) || "Pending connection resolution",
+    secretRef:
+      normalizeTextValue(provider.secretRef) || "Pending secret target",
+  }));
+}
+
+export function buildWorkflowSecretSyncSummary(
+  plans: WorkflowDeploymentPlan[]
+): WorkflowSecretSyncSummary | null {
+  const secretManagerPlans = plans.filter(
+    (plan) => plan.authMode === "secret_manager"
+  );
+  if (secretManagerPlans.length === 0) {
+    return null;
+  }
+
+  const dedupedEntries = new Map<string, WorkflowSecretSyncEntry>();
+  for (const plan of secretManagerPlans) {
+    for (const entry of buildPlanSecretSyncEntries(plan)) {
+      const entryKey = [
+        entry.workflowId,
+        entry.providerSlug,
+        entry.connectionId,
+        entry.secretRef,
+      ].join(":");
+      if (!dedupedEntries.has(entryKey)) {
+        dedupedEntries.set(entryKey, {
+          ...entry,
+          key: entryKey,
+        });
+      }
+    }
+  }
+
+  return {
+    authMode: "secret_manager",
+    backendKind: summarizeTextValues(
+      secretManagerPlans.map((plan) => plan.auth?.backend?.kind)
+    ),
+    backendTarget: summarizeTextValues(
+      secretManagerPlans.map(
+        (plan) => plan.auth?.backend?.projectId || plan.auth?.backend?.region
+      )
+    ),
+    secretPrefix: summarizeTextValues(
+      secretManagerPlans.map((plan) => plan.auth?.backend?.secretPrefix)
+    ),
+    runtimeAccess: summarizeTextValues(
+      secretManagerPlans.map((plan) => plan.auth?.runtimeAccess)
+    ),
+    workflowCount: new Set(secretManagerPlans.map((plan) => plan.workflowId)).size,
+    secretCount: dedupedEntries.size,
+    entries: Array.from(dedupedEntries.values()).sort((left, right) =>
+      `${left.workflowTitle}:${left.providerSlug}`.localeCompare(
+        `${right.workflowTitle}:${right.providerSlug}`
+      )
+    ),
+  };
+}
+
+export function extractDashboardErrorMessage(
+  payload: string,
+  fallback: string
+): string {
+  let current = payload.trim();
+  if (!current) {
+    return fallback;
+  }
+
+  for (let index = 0; index < 3; index += 1) {
+    try {
+      const parsed = JSON.parse(current) as unknown;
+      if (typeof parsed === "string") {
+        const nested = parsed.trim();
+        if (!nested) {
+          break;
+        }
+        current = nested;
+        continue;
+      }
+
+      if (parsed && typeof parsed === "object") {
+        const record = parsed as Record<string, unknown>;
+        const nested =
+          typeof record.error === "string"
+            ? record.error
+            : typeof record.message === "string"
+              ? record.message
+              : "";
+        if (!nested.trim()) {
+          break;
+        }
+        current = nested.trim();
+        continue;
+      }
+    } catch {
+      break;
+    }
+    break;
+  }
+
+  return current || fallback;
 }
 
 const awsInfra: DashboardDeployInfraItem[] = [
@@ -164,7 +345,11 @@ export function getDeploymentInfra(
   options: DeploymentInfraOptions = {}
 ) {
   if (provider === "aws") {
-    return awsInfra;
+    const infra = [...awsInfra];
+    if (options.includeScheduler) {
+      infra.push({ label: "EventBridge Scheduler", key: "schedulerJobId" });
+    }
+    return infra;
   }
 
   const computeLabel =
@@ -309,13 +494,14 @@ export function resolveSelectedExecutionName(
 }
 
 export function buildDeploymentLogsHref(input: {
+  provider?: CloudProvider;
   deploymentId: string;
   workflowId?: string | null;
   workflowSlug?: string | null;
   executionName?: string | null;
 }): string {
   const params = new URLSearchParams({
-    provider: "gcp",
+    provider: input.provider || "gcp",
     deploymentId: input.deploymentId,
   });
   const workflowRefs = getWorkflowDeploymentRefs(input);

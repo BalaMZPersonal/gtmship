@@ -9,6 +9,7 @@ import {
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
 import { buildMermaidGenerationPrompt } from "./mermaid-prompt";
 import { previewWorkflowArtifact } from "./preview";
+import { formatDraftStatusMessage } from "./status-messaging";
 import { slugifyWorkflowTitle } from "./storage";
 import { ContextManager, GENERATION_TOKEN_BUDGET } from "./context-manager";
 import { compactWorkflowTranscriptIfNeeded } from "./transcript-compaction-server";
@@ -849,6 +850,7 @@ async function generateCodeDraftOnce(
     "- The `samplePayload` field must be valid JSON and should satisfy any required payload inputs so preview can run successfully.",
     "- A preview outcome of `needs_approval` is acceptable when the only remaining work is one or more declared write checkpoint approvals.",
     "- Do not remove legitimate write checkpoints just to avoid preview-only approvals. The studio UI can resume through multiple checkpoint approvals in sequence.",
+    "- The model-authored `assistantMessage` must describe only the generated draft. Never claim the workflow was built, packaged, deployed, published, or run live.",
     "",
     "Use this exact module shape for the generated code:",
     [
@@ -1633,7 +1635,9 @@ export async function generateWorkflowArtifact(input: {
   });
 
   return {
-    assistantMessage: codeDraft.assistantMessage,
+    assistantMessage: latestPreview
+      ? formatDraftStatusMessage(latestPreview)
+      : codeDraft.assistantMessage,
     artifact,
   };
 }

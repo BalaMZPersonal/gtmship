@@ -3,6 +3,8 @@ export {
   getDeployStatus,
   destroyStack,
   type AwsConfig,
+  type AwsResourceNeeds,
+  type AwsRuntimeTarget,
   type DeployResult,
   type DeployStatus,
 } from "./aws.js";
@@ -72,7 +74,12 @@ export {
   type WorkflowWebhookTriggerConfiguration,
 } from "./planner.js";
 
-import { deployToAws, type DeployResult } from "./aws.js";
+import {
+  deployToAws,
+  type AwsResourceNeeds,
+  type AwsRuntimeTarget,
+  type DeployResult,
+} from "./aws.js";
 import { deployToGcp, type GcpDeployResult, type GcpResourceNeeds } from "./gcp.js";
 
 export interface DeployConfig {
@@ -80,6 +87,8 @@ export interface DeployConfig {
   region: string;
   compute: "lambda" | "ecs" | "cloud-run";
   projectName: string;
+  /** Workflow identifier for per-workflow resource scoping. */
+  workflowId?: string;
   /** Optional DB password — auto-generated if omitted. */
   dbPassword?: string;
   /** Optional path to zipped Lambda handler code. */
@@ -90,6 +99,8 @@ export interface DeployConfig {
   serviceCodePath?: string;
   /** Resource needs derived from workflow plans. When omitted, deploys a Cloud Run Service with no extras. */
   gcpNeeds?: GcpResourceNeeds;
+  /** Resource needs derived from workflow plans for AWS deployments. */
+  awsNeeds?: AwsResourceNeeds;
   /** Runtime environment variables to inject into the compute target. */
   runtimeEnvVars?: Record<string, string>;
 }
@@ -101,6 +112,15 @@ export interface UnifiedDeployResult {
   databaseEndpoint: string;
   storageBucket: string;
   schedulerJobId: string;
+  runtimeTarget?: {
+    computeType: "service" | "job" | "lambda";
+    computeName: string;
+    endpointUrl: string;
+    schedulerJobId?: string;
+    region: string;
+    gcpProject?: string;
+    logGroupName?: string;
+  };
   gcpTarget?: {
     kind: "service" | "job";
     name: string;
@@ -124,21 +144,29 @@ export async function deploy(
         region: config.region,
         projectName: config.projectName,
         compute: config.compute as "lambda" | "ecs",
+        workflowId: config.workflowId,
         dbPassword: config.dbPassword,
         lambdaCodePath: config.lambdaCodePath,
+        needs: config.awsNeeds,
         runtimeEnvVars: config.runtimeEnvVars,
       });
 
       return {
         provider: "aws",
-        apiEndpoint: result.apiGatewayUrl,
+        apiEndpoint: result.endpointToken,
         computeId: result.lambdaArn,
         databaseEndpoint: result.rdsEndpoint,
         storageBucket: result.s3Bucket,
-        schedulerJobId: "",
+        schedulerJobId: result.schedulerJobId,
+        runtimeTarget: result.runtimeTarget,
         rawOutputs: {
           apiGatewayUrl: result.apiGatewayUrl,
           lambdaArn: result.lambdaArn,
+          lambdaName: result.lambdaName,
+          logGroupName: result.logGroupName,
+          awsLogGroup: result.logGroupName,
+          endpointToken: result.endpointToken,
+          schedulerJobId: result.schedulerJobId,
           rdsEndpoint: result.rdsEndpoint,
           s3Bucket: result.s3Bucket,
         },
@@ -161,6 +189,7 @@ export async function deploy(
         region: config.region,
         projectName: config.projectName,
         gcpProject: config.gcpProject,
+        workflowId: config.workflowId,
         needs,
         dbPassword: config.dbPassword,
         serviceCodePath: config.serviceCodePath,
@@ -174,6 +203,14 @@ export async function deploy(
         databaseEndpoint: result.cloudSqlEndpoint,
         storageBucket: result.gcsBucket,
         schedulerJobId: result.schedulerJobId,
+        runtimeTarget: {
+          computeType: result.runtimeTarget.kind,
+          computeName: result.runtimeTarget.name,
+          endpointUrl: result.runtimeTarget.endpointUrl,
+          schedulerJobId: result.runtimeTarget.schedulerJobId,
+          region: config.region,
+          gcpProject: config.gcpProject,
+        },
         gcpTarget: {
           kind: result.runtimeTarget.kind,
           name: result.runtimeTarget.name,

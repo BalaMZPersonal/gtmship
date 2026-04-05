@@ -24,17 +24,47 @@ export interface AwsConfig {
   region: string;
   projectName: string;
   compute: "lambda" | "ecs";
+  /** Workflow identifier for per-workflow stack scoping. */
+  workflowId?: string;
   /** Optional DB password. A random one is generated if omitted. */
   dbPassword?: string;
   /** Optional path to the zipped Lambda handler code. */
   lambdaCodePath?: string;
   /** Runtime environment variables to inject into the Lambda function. */
   runtimeEnvVars?: Record<string, string>;
+  /** Resource needs derived from the workflow plan. */
+  needs?: AwsResourceNeeds;
+}
+
+export interface AwsResourceNeeds {
+  publicIngress?: boolean;
+  cloudScheduler?: boolean;
+  scheduleCron?: string;
+  scheduleTimezone?: string;
+  secretManager?: boolean;
+  database?: boolean;
+  storage?: boolean;
+  memory?: number | string;
+  cpu?: number | string;
+}
+
+export interface AwsRuntimeTarget {
+  computeType: "lambda";
+  computeName: string;
+  endpointUrl: string;
+  schedulerJobId?: string;
+  region: string;
+  logGroupName: string;
 }
 
 export interface DeployResult {
   apiGatewayUrl: string;
   lambdaArn: string;
+  lambdaName: string;
+  logGroupName: string;
+  schedulerJobId: string;
+  endpointToken: string;
+  runtimeTarget: AwsRuntimeTarget;
   rdsEndpoint: string;
   s3Bucket: string;
 }
@@ -52,6 +82,10 @@ export interface DeployStatus {
 const PULUMI_PROJECT = "gtmship";
 const DB_NAME = "gtmship";
 const DB_USERNAME = "gtmship_admin";
+const DEFAULT_LAMBDA_MEMORY_MB = 256;
+const MIN_LAMBDA_MEMORY_MB = 128;
+const MAX_LAMBDA_MEMORY_MB = 10240;
+const SINGLE_VCPU_MEMORY_MB = 1769;
 
 // ---------------------------------------------------------------------------
 // Pulumi inline program
@@ -59,6 +93,9 @@ const DB_USERNAME = "gtmship_admin";
 
 function createPulumiProgram(config: AwsConfig) {
   return async (): Promise<Record<string, pulumi.Output<string>>> => {
+    const needs = config.needs || {};
+    const lambdaMemorySize = resolveLambdaMemorySizeMb(needs);
+
     // -----------------------------------------------------------------------
     // VPC — 2 public + 2 private subnets, single NAT gateway to save cost
     // -----------------------------------------------------------------------
@@ -116,60 +153,67 @@ function createPulumiProgram(config: AwsConfig) {
     // RDS PostgreSQL
     // -----------------------------------------------------------------------
 
-    const dbSubnetGroup = new aws.rds.SubnetGroup("gtmship-db-subnets", {
-      subnetIds: vpc.privateSubnetIds,
-      tags: { Project: config.projectName },
-    });
-
     const dbPassword = config.dbPassword ?? generatePassword(24);
+    const dbSubnetGroup = needs.database
+      ? new aws.rds.SubnetGroup("gtmship-db-subnets", {
+          subnetIds: vpc.privateSubnetIds,
+          tags: { Project: config.projectName },
+        })
+      : null;
 
-    const db = new aws.rds.Instance("gtmship-db", {
-      engine: "postgres",
-      engineVersion: "16",
-      instanceClass: "db.t3.micro",
-      allocatedStorage: 20,
-      maxAllocatedStorage: 50,
-      dbName: DB_NAME,
-      username: DB_USERNAME,
-      password: dbPassword,
-      dbSubnetGroupName: dbSubnetGroup.name,
-      vpcSecurityGroupIds: [rdsSg.id],
-      skipFinalSnapshot: true,
-      publiclyAccessible: false,
-      storageEncrypted: true,
-      tags: { Project: config.projectName },
-    });
+    const db = needs.database
+      ? new aws.rds.Instance("gtmship-db", {
+          engine: "postgres",
+          engineVersion: "16",
+          instanceClass: "db.t3.micro",
+          allocatedStorage: 20,
+          maxAllocatedStorage: 50,
+          dbName: DB_NAME,
+          username: DB_USERNAME,
+          password: dbPassword,
+          dbSubnetGroupName: dbSubnetGroup?.name,
+          vpcSecurityGroupIds: [rdsSg.id],
+          skipFinalSnapshot: true,
+          publiclyAccessible: false,
+          storageEncrypted: true,
+          tags: { Project: config.projectName },
+        })
+      : null;
 
     // -----------------------------------------------------------------------
     // S3 Bucket — workflow artifacts
     // -----------------------------------------------------------------------
 
-    const bucket = new aws.s3.BucketV2("gtmship-artifacts", {
-      forceDestroy: true,
-      tags: { Project: config.projectName },
-    });
+    const bucket = needs.storage
+      ? new aws.s3.BucketV2("gtmship-artifacts", {
+          forceDestroy: true,
+          tags: { Project: config.projectName },
+        })
+      : null;
 
-    new aws.s3.BucketServerSideEncryptionConfigurationV2(
-      "gtmship-artifacts-sse",
-      {
-        bucket: bucket.id,
-        rules: [
-          {
-            applyServerSideEncryptionByDefault: {
-              sseAlgorithm: "AES256",
+    if (bucket) {
+      new aws.s3.BucketServerSideEncryptionConfigurationV2(
+        "gtmship-artifacts-sse",
+        {
+          bucket: bucket.id,
+          rules: [
+            {
+              applyServerSideEncryptionByDefault: {
+                sseAlgorithm: "AES256",
+              },
             },
-          },
-        ],
-      },
-    );
+          ],
+        },
+      );
 
-    new aws.s3.BucketPublicAccessBlock("gtmship-artifacts-pab", {
-      bucket: bucket.id,
-      blockPublicAcls: true,
-      blockPublicPolicy: true,
-      ignorePublicAcls: true,
-      restrictPublicBuckets: true,
-    });
+      new aws.s3.BucketPublicAccessBlock("gtmship-artifacts-pab", {
+        bucket: bucket.id,
+        blockPublicAcls: true,
+        blockPublicPolicy: true,
+        ignorePublicAcls: true,
+        restrictPublicBuckets: true,
+      });
+    }
 
     // -----------------------------------------------------------------------
     // IAM Role for Lambda — least-privilege
@@ -204,36 +248,29 @@ function createPulumiProgram(config: AwsConfig) {
     });
 
     // S3 + RDS connect — scoped inline policy
-    new aws.iam.RolePolicy(
-      "gtmship-lambda-inline",
-      {
+    const lambdaPolicyStatements = buildAwsPolicyStatements({
+      bucketArn: bucket ? "__dynamic_bucket__" : null,
+      dbArn: db ? "__dynamic_db__" : null,
+      secretManager: Boolean(needs.secretManager),
+    });
+
+    if (lambdaPolicyStatements.length > 0) {
+      new aws.iam.RolePolicy("gtmship-lambda-inline", {
         role: lambdaRole.id,
-        policy: pulumi.all([bucket.arn, db.arn]).apply(([bucketArn, dbArn]) =>
-          JSON.stringify({
-            Version: "2012-10-17",
-            Statement: [
-              {
-                Sid: "S3WorkflowArtifacts",
-                Effect: "Allow",
-                Action: [
-                  "s3:GetObject",
-                  "s3:PutObject",
-                  "s3:DeleteObject",
-                  "s3:ListBucket",
-                ],
-                Resource: [bucketArn, `${bucketArn}/*`],
-              },
-              {
-                Sid: "RdsConnect",
-                Effect: "Allow",
-                Action: ["rds-db:connect"],
-                Resource: [dbArn],
-              },
-            ],
-          }),
-        ),
-      },
-    );
+        policy: pulumi
+          .all([bucket?.arn, db?.arn])
+          .apply(([bucketArn, dbArn]) =>
+            JSON.stringify({
+              Version: "2012-10-17",
+              Statement: buildAwsPolicyStatements({
+                bucketArn: bucketArn || null,
+                dbArn: dbArn || null,
+                secretManager: Boolean(needs.secretManager),
+              }),
+            }),
+          ),
+      });
+    }
 
     // -----------------------------------------------------------------------
     // Lambda Function — workflow runtime
@@ -245,7 +282,7 @@ function createPulumiProgram(config: AwsConfig) {
       handler: "index.handler",
       role: lambdaRole.arn,
       timeout: 60,
-      memorySize: 256,
+      memorySize: lambdaMemorySize,
       code: config.lambdaCodePath
         ? new pulumi.asset.FileArchive(config.lambdaCodePath)
         : new pulumi.asset.AssetArchive({
@@ -266,67 +303,143 @@ function createPulumiProgram(config: AwsConfig) {
       },
       environment: {
         variables: {
-          DATABASE_URL: pulumi.interpolate`postgresql://${DB_USERNAME}:${dbPassword}@${db.endpoint}/${DB_NAME}`,
-          S3_BUCKET: bucket.bucket,
           NODE_OPTIONS: "--enable-source-maps",
+          ...(db
+            ? {
+                DATABASE_URL: pulumi.interpolate`postgresql://${DB_USERNAME}:${dbPassword}@${db.endpoint}/${DB_NAME}`,
+              }
+            : {}),
+          ...(bucket ? { S3_BUCKET: bucket.bucket } : {}),
           ...(config.runtimeEnvVars || {}),
         },
       },
       tags: { Project: config.projectName },
     });
 
+    const logGroupName = lambdaFn.name.apply(buildAwsLogGroupName);
+
     // -----------------------------------------------------------------------
     // API Gateway v2 (HTTP API) — webhook ingress
     // -----------------------------------------------------------------------
 
-    const api = new aws.apigatewayv2.Api("gtmship-api", {
-      protocolType: "HTTP",
-      description: `GTMShip webhook ingress for ${config.projectName}`,
-      tags: { Project: config.projectName },
-    });
+    const api = needs.publicIngress
+      ? new aws.apigatewayv2.Api("gtmship-api", {
+          protocolType: "HTTP",
+          description: `GTMShip webhook ingress for ${config.projectName}`,
+          tags: { Project: config.projectName },
+        })
+      : null;
 
-    new aws.lambda.Permission(
-      "gtmship-api-lambda-permission",
-      {
+    if (api) {
+      new aws.lambda.Permission("gtmship-api-lambda-permission", {
         action: "lambda:InvokeFunction",
         function: lambdaFn.arn,
         principal: "apigateway.amazonaws.com",
         sourceArn: pulumi.interpolate`${api.executionArn}/*/*`,
-      },
-    );
+      });
 
-    const integration = new aws.apigatewayv2.Integration(
-      "gtmship-api-integration",
-      {
+      const integration = new aws.apigatewayv2.Integration(
+        "gtmship-api-integration",
+        {
+          apiId: api.id,
+          integrationType: "AWS_PROXY",
+          integrationUri: lambdaFn.invokeArn,
+          payloadFormatVersion: "2.0",
+        },
+      );
+
+      new aws.apigatewayv2.Route("gtmship-api-route", {
         apiId: api.id,
-        integrationType: "AWS_PROXY",
-        integrationUri: lambdaFn.invokeArn,
-        payloadFormatVersion: "2.0",
-      },
-    );
+        routeKey: "$default",
+        target: pulumi.interpolate`integrations/${integration.id}`,
+      });
 
-    new aws.apigatewayv2.Route("gtmship-api-route", {
-      apiId: api.id,
-      routeKey: "$default",
-      target: pulumi.interpolate`integrations/${integration.id}`,
-    });
+      new aws.apigatewayv2.Stage("gtmship-api-stage", {
+        apiId: api.id,
+        name: "$default",
+        autoDeploy: true,
+        tags: { Project: config.projectName },
+      });
+    }
 
-    new aws.apigatewayv2.Stage("gtmship-api-stage", {
-      apiId: api.id,
-      name: "$default",
-      autoDeploy: true,
-      tags: { Project: config.projectName },
-    });
+    // -----------------------------------------------------------------------
+    // EventBridge Scheduler — schedule trigger
+    // -----------------------------------------------------------------------
+
+    const schedulerRole =
+      needs.cloudScheduler && needs.scheduleCron
+        ? new aws.iam.Role("gtmship-scheduler-role", {
+            assumeRolePolicy: JSON.stringify({
+              Version: "2012-10-17",
+              Statement: [
+                {
+                  Effect: "Allow",
+                  Principal: { Service: "scheduler.amazonaws.com" },
+                  Action: "sts:AssumeRole",
+                },
+              ],
+            }),
+            tags: { Project: config.projectName },
+          })
+        : null;
+
+    if (schedulerRole) {
+      new aws.iam.RolePolicy("gtmship-scheduler-invoke", {
+        role: schedulerRole.id,
+        policy: lambdaFn.arn.apply((lambdaArn) =>
+          JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+              {
+                Effect: "Allow",
+                Action: ["lambda:InvokeFunction"],
+                Resource: [lambdaArn],
+              },
+            ],
+          }),
+        ),
+      });
+    }
+
+    const schedulerJob =
+      schedulerRole && needs.scheduleCron
+        ? new aws.scheduler.Schedule("gtmship-schedule", {
+            scheduleExpression: toEventBridgeScheduleExpression(
+              needs.scheduleCron,
+            ),
+            scheduleExpressionTimezone: needs.scheduleTimezone || "UTC",
+            flexibleTimeWindow: { mode: "OFF" },
+            target: {
+              arn: lambdaFn.arn,
+              roleArn: schedulerRole.arn,
+              input: JSON.stringify({
+                source: "aws.scheduler",
+              }),
+            },
+          })
+        : null;
+
+    const apiGatewayUrl = api?.apiEndpoint || pulumi.output("");
+    const schedulerJobId = schedulerJob?.name || pulumi.output("");
+    const endpointToken = pulumi
+      .all([apiGatewayUrl, lambdaFn.name])
+      .apply(([apiEndpoint, lambdaName]) =>
+        buildAwsEndpointToken(apiEndpoint, lambdaName),
+      );
 
     // -----------------------------------------------------------------------
     // Stack outputs
     // -----------------------------------------------------------------------
 
     return {
-      apiGatewayUrl: api.apiEndpoint,
+      apiGatewayUrl,
       lambdaArn: lambdaFn.arn,
-      rdsEndpoint: db.endpoint,
-      s3Bucket: bucket.bucket,
+      lambdaName: lambdaFn.name,
+      logGroupName,
+      schedulerJobId,
+      endpointToken,
+      rdsEndpoint: db?.endpoint || pulumi.output(""),
+      s3Bucket: bucket?.bucket || pulumi.output(""),
     };
   };
 }
@@ -341,8 +454,9 @@ function createPulumiProgram(config: AwsConfig) {
 export async function deployToAws(config: AwsConfig): Promise<DeployResult> {
   console.log(`Deploying GTMShip to AWS ${config.region}...`);
 
+  const stackName = buildAwsStackName(config.projectName, config.workflowId);
   const stack = await LocalWorkspace.createOrSelectStack({
-    stackName: config.projectName,
+    stackName,
     projectName: PULUMI_PROJECT,
     program: createPulumiProgram(config),
   });
@@ -359,11 +473,35 @@ export async function deployToAws(config: AwsConfig): Promise<DeployResult> {
 
   const outputs = result.outputs;
 
+  const apiGatewayUrl = (outputs["apiGatewayUrl"]?.value as string) || "";
+  const lambdaArn = (outputs["lambdaArn"]?.value as string) || "";
+  const lambdaName =
+    (outputs["lambdaName"]?.value as string) || extractLambdaName(lambdaArn) || "";
+  const logGroupName =
+    (outputs["logGroupName"]?.value as string) ||
+    (lambdaName ? buildAwsLogGroupName(lambdaName) : "");
+  const schedulerJobId = (outputs["schedulerJobId"]?.value as string) || "";
+  const endpointToken =
+    (outputs["endpointToken"]?.value as string) ||
+    buildAwsEndpointToken(apiGatewayUrl, lambdaName);
+
   return {
-    apiGatewayUrl: outputs["apiGatewayUrl"]?.value as string,
-    lambdaArn: outputs["lambdaArn"]?.value as string,
-    rdsEndpoint: outputs["rdsEndpoint"]?.value as string,
-    s3Bucket: outputs["s3Bucket"]?.value as string,
+    apiGatewayUrl,
+    lambdaArn,
+    lambdaName,
+    logGroupName,
+    schedulerJobId,
+    endpointToken,
+    runtimeTarget: {
+      computeType: "lambda",
+      computeName: lambdaName,
+      endpointUrl: endpointToken,
+      schedulerJobId: schedulerJobId || undefined,
+      region: config.region,
+      logGroupName,
+    },
+    rdsEndpoint: (outputs["rdsEndpoint"]?.value as string) || "",
+    s3Bucket: (outputs["s3Bucket"]?.value as string) || "",
   };
 }
 
@@ -437,4 +575,219 @@ function generatePassword(length: number): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+}
+
+function sanitizeWorkflowSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function buildAwsStackName(projectName: string, workflowId?: string): string {
+  const normalizedWorkflowId = workflowId ? sanitizeWorkflowSlug(workflowId) : "";
+  return normalizedWorkflowId ? `${projectName}-${normalizedWorkflowId}` : projectName;
+}
+
+function buildAwsPolicyStatements(input: {
+  bucketArn: string | null;
+  dbArn: string | null;
+  secretManager: boolean;
+}): Array<Record<string, unknown>> {
+  const statements: Array<Record<string, unknown>> = [];
+
+  if (input.bucketArn) {
+    statements.push({
+      Sid: "S3WorkflowArtifacts",
+      Effect: "Allow",
+      Action: [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+      ],
+      Resource: [input.bucketArn, `${input.bucketArn}/*`],
+    });
+  }
+
+  if (input.dbArn) {
+    statements.push({
+      Sid: "RdsConnect",
+      Effect: "Allow",
+      Action: ["rds-db:connect"],
+      Resource: [input.dbArn],
+    });
+  }
+
+  if (input.secretManager) {
+    statements.push({
+      Sid: "SecretsManagerAccess",
+      Effect: "Allow",
+      Action: [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+      ],
+      Resource: ["*"],
+    });
+  }
+
+  return statements;
+}
+
+function toMemoryMb(value: number | string | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampLambdaMemory(Math.ceil(value));
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return clampLambdaMemory(Math.ceil(numeric));
+  }
+
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)(mi|mib|gi|gib|mb|gb)$/);
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  const unit = match[2];
+  if (!Number.isFinite(amount)) {
+    return null;
+  }
+
+  if (unit === "gi" || unit === "gib" || unit === "gb") {
+    return clampLambdaMemory(Math.ceil(amount * 1024));
+  }
+
+  return clampLambdaMemory(Math.ceil(amount));
+}
+
+function toCpuUnits(value: number | string | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.endsWith("m")) {
+    const milli = Number(trimmed.slice(0, -1));
+    return Number.isFinite(milli) && milli > 0 ? milli / 1000 : null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function clampLambdaMemory(value: number): number {
+  return Math.max(
+    MIN_LAMBDA_MEMORY_MB,
+    Math.min(MAX_LAMBDA_MEMORY_MB, value),
+  );
+}
+
+function resolveLambdaMemorySizeMb(needs: AwsResourceNeeds): number {
+  const requestedMemory = toMemoryMb(needs.memory) || DEFAULT_LAMBDA_MEMORY_MB;
+  const requestedCpu = toCpuUnits(needs.cpu);
+  const cpuDerivedMemory = requestedCpu
+    ? clampLambdaMemory(Math.ceil(requestedCpu * SINGLE_VCPU_MEMORY_MB))
+    : 0;
+
+  return Math.max(requestedMemory, cpuDerivedMemory);
+}
+
+function toEventBridgeScheduleExpression(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("AWS schedule triggers require a cron expression.");
+  }
+
+  if (
+    trimmed.startsWith("cron(") ||
+    trimmed.startsWith("rate(") ||
+    trimmed.startsWith("at(")
+  ) {
+    return trimmed;
+  }
+
+  const fields = trimmed.split(/\s+/).filter(Boolean);
+  if (fields.length === 5) {
+    const [minute, hour, dayOfMonthRaw, month, dayOfWeekRaw] = fields;
+    let dayOfMonth = dayOfMonthRaw;
+    let dayOfWeek = dayOfWeekRaw;
+
+    if (dayOfMonth === "*" && dayOfWeek === "*") {
+      dayOfWeek = "?";
+    } else if (dayOfMonth === "*") {
+      dayOfMonth = "?";
+    } else if (dayOfWeek === "*") {
+      dayOfWeek = "?";
+    } else {
+      throw new Error(
+        `AWS schedule cron "${trimmed}" is not supported. Use a schedule where either day-of-month or day-of-week is "*".`,
+      );
+    }
+
+    return `cron(${minute} ${hour} ${dayOfMonth} ${month} ${dayOfWeek} *)`;
+  }
+
+  if (fields.length === 6) {
+    return `cron(${trimmed})`;
+  }
+
+  throw new Error(
+    `AWS schedule cron "${trimmed}" is not supported. Expected a 5-field standard cron expression.`,
+  );
+}
+
+function buildAwsLogGroupName(lambdaName: string): string {
+  return `/aws/lambda/${lambdaName}`;
+}
+
+function buildAwsEndpointToken(
+  apiGatewayUrl: string | null | undefined,
+  lambdaName: string | null | undefined,
+): string {
+  const httpEndpoint = apiGatewayUrl?.trim();
+  if (httpEndpoint) {
+    return httpEndpoint;
+  }
+
+  const normalizedLambdaName = lambdaName?.trim();
+  return normalizedLambdaName ? `lambda:${normalizedLambdaName}` : "";
+}
+
+function extractLambdaName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("lambda:")) {
+    return trimmed.slice("lambda:".length) || null;
+  }
+
+  const arnMatch = trimmed.match(/:function:([^:/]+)(?::[^/]+)?$/);
+  if (arnMatch?.[1]) {
+    return arnMatch[1];
+  }
+
+  return trimmed.startsWith("arn:") ? null : trimmed;
 }

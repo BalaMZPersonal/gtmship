@@ -125,6 +125,7 @@ export async function initCommand(name: string) {
     chalk.blue(`\n  Next steps:
     cd ${name}
     npm install
+    gtmship setup
     gtmship dev
   `)
   );

@@ -8,6 +8,14 @@ import { buildCommand } from "./commands/build.js";
 import { deployCommand } from "./commands/deploy.js";
 import { logsCommand } from "./commands/logs.js";
 import { triggersCommand } from "./commands/triggers.js";
+import { registerConnectionsCommand } from "./commands/connections.js";
+import { registerProvidersCommand } from "./commands/providers.js";
+import { registerWorkflowsCommand } from "./commands/workflows.js";
+import { registerDeploymentsCommand } from "./commands/deployments.js";
+import { registerSettingsCommand } from "./commands/settings.js";
+import { registerMemoriesCommand } from "./commands/memories.js";
+import { registerOAuthProvidersCommand } from "./commands/oauth-providers.js";
+import { registerSetupCommand } from "./commands/setup.js";
 
 const program = new Command();
 
@@ -74,5 +82,14 @@ program
   .description("Show trigger configuration and webhook URLs")
   .option("--workflow <id>", "Filter by workflow ID")
   .action(triggersCommand);
+
+registerConnectionsCommand(program);
+registerProvidersCommand(program);
+registerWorkflowsCommand(program);
+registerDeploymentsCommand(program);
+registerSettingsCommand(program);
+registerMemoriesCommand(program);
+registerOAuthProvidersCommand(program);
+registerSetupCommand(program);
 
 program.parse();

@@ -2,7 +2,7 @@
  * GCP Deployment Engine — needs-based provisioning
  *
  * Only creates the resources the workflow actually requires:
- * - Service Account + IAM (always)
+ * - Runtime service account + IAM (workflow-managed or legacy-shared reuse)
  * - Cloud Run Job OR Service (based on execution kind)
  * - Cloud Scheduler (for schedule triggers)
  * - Secret Manager IAM (for secret_manager auth mode)
@@ -29,7 +29,7 @@ export interface GcpResourceNeeds {
   scheduleCron?: string;
   /** Timezone for Cloud Scheduler. */
   scheduleTimezone?: string;
-  /** Whether the workflow uses secret_manager auth mode (grants Secret Manager IAM). */
+  /** Whether the workflow uses secret_manager auth mode (requires Secret Manager access). */
   secretManager?: boolean;
   /** Whether a Cloud SQL database is needed. */
   database?: boolean;
@@ -47,6 +47,8 @@ export interface GcpConfig {
   region: string;
   projectName: string;
   gcpProject: string;
+  /** Unique workflow identifier — used to scope resource names per workflow. */
+  workflowId?: string;
   /** What resources the workflow actually needs. */
   needs: GcpResourceNeeds;
   /** Optional DB password. A random one is generated if omitted. */
@@ -80,57 +82,66 @@ export interface GcpRuntimeTarget {
 const PULUMI_PROJECT = "gtmship";
 const DB_NAME = "gtmship";
 const DB_USERNAME = "gtmship_admin";
+const LEGACY_SHARED_GCP_RUNTIME_SERVICE_ACCOUNT_ID = "gtmship-cloudrun";
+const WORKFLOW_GCP_RUNTIME_SERVICE_ACCOUNT_PREFIX = "gtmship-cr";
 
 const DEFAULT_MEMORY = "512Mi";
 const DEFAULT_CPU = "1";
+
+interface GcpRuntimeIdentity {
+  email: string;
+  source: "legacy-shared";
+}
 
 // ---------------------------------------------------------------------------
 // Pulumi inline program
 // ---------------------------------------------------------------------------
 
-function createPulumiProgram(config: GcpConfig) {
+function createPulumiProgram(
+  config: GcpConfig,
+  runtimeIdentity?: GcpRuntimeIdentity,
+) {
   return async (): Promise<Record<string, pulumi.Output<string>>> => {
     const needs = config.needs;
     const outputs: Record<string, pulumi.Output<string>> = {};
 
+    // Derive workflow-scoped prefix for resource names
+    const slug = config.workflowId
+      ? sanitizeWorkflowSlug(config.workflowId)
+      : null;
+    const rn = (base: string) => (slug ? `${base}-${slug}` : base);
+
     // -----------------------------------------------------------------------
-    // Service Account + IAM (always created)
+    // Runtime service account
+    // Reuse the legacy shared identity when a legacy stack already exists so
+    // per-workflow stacks don't need to rewrite project IAM on every deploy.
     // -----------------------------------------------------------------------
 
-    const serviceAccount = new gcp.serviceaccount.Account(
-      "gtmship-cloudrun-sa",
-      {
-        accountId: "gtmship-cloudrun",
-        displayName: `GTMShip Cloud Run SA (${config.projectName})`,
-      },
-    );
+    let runtimeServiceAccountEmail: pulumi.Input<string>;
 
-    // Cloud Logging Writer (always)
-    new gcp.projects.IAMMember("gtmship-sa-logging", {
-      project: config.gcpProject,
-      role: "roles/logging.logWriter",
-      member: pulumi.interpolate`serviceAccount:${serviceAccount.email}`,
-    });
+    if (runtimeIdentity) {
+      runtimeServiceAccountEmail = runtimeIdentity.email;
+    } else {
+      const serviceAccount = new gcp.serviceaccount.Account(
+        rn("gtmship-sa"),
+        {
+          accountId: rn(WORKFLOW_GCP_RUNTIME_SERVICE_ACCOUNT_PREFIX),
+          displayName: `GTMShip Cloud Run SA (${config.workflowId || config.projectName})`,
+        },
+      );
 
-    // Secret Manager access (when auth mode is secret_manager)
-    if (needs.secretManager) {
-      new gcp.projects.IAMMember("gtmship-sa-secrets", {
-        project: config.gcpProject,
-        role: "roles/secretmanager.secretAccessor",
-        member: pulumi.interpolate`serviceAccount:${serviceAccount.email}`,
-      });
+      runtimeServiceAccountEmail = serviceAccount.email;
+
+      // Secret Manager access is only required when the runtime resolves
+      // secrets directly from GCP Secret Manager.
+      if (needs.secretManager) {
+        new gcp.projects.IAMMember(rn("gtmship-sa-sec"), {
+          project: config.gcpProject,
+          role: "roles/secretmanager.secretAccessor",
+          member: pulumi.interpolate`serviceAccount:${runtimeServiceAccountEmail}`,
+        });
+      }
     }
-
-    // -----------------------------------------------------------------------
-    // Artifact Registry — repo created by CLI (gcloud) during build step.
-    // Grant the Cloud Run SA permission to pull images from it.
-    // -----------------------------------------------------------------------
-
-    new gcp.projects.IAMMember("gtmship-sa-artifact-reader", {
-      project: config.gcpProject,
-      role: "roles/artifactregistry.reader",
-      member: pulumi.interpolate`serviceAccount:${serviceAccount.email}`,
-    });
 
     // -----------------------------------------------------------------------
     // Cloud SQL (only when database is needed)
@@ -139,24 +150,24 @@ function createPulumiProgram(config: GcpConfig) {
     let sqlInstance: gcp.sql.DatabaseInstance | undefined;
 
     if (needs.database) {
-      const network = new gcp.compute.Network("gtmship-network", {
+      const network = new gcp.compute.Network(rn("gtmship-net"), {
         autoCreateSubnetworks: false,
-        description: `GTMShip VPC for ${config.projectName}`,
+        description: `GTMShip VPC for ${config.workflowId || config.projectName}`,
       });
 
-      new gcp.compute.Subnetwork("gtmship-subnet", {
+      new gcp.compute.Subnetwork(rn("gtmship-sub"), {
         ipCidrRange: "10.0.0.0/24",
         region: config.region,
         network: network.id,
         privateIpGoogleAccess: true,
       });
 
-      const router = new gcp.compute.Router("gtmship-router", {
+      const router = new gcp.compute.Router(rn("gtmship-rtr"), {
         region: config.region,
         network: network.id,
       });
 
-      new gcp.compute.RouterNat("gtmship-nat", {
+      new gcp.compute.RouterNat(rn("gtmship-nat"), {
         router: router.name,
         region: config.region,
         natIpAllocateOption: "AUTO_ONLY",
@@ -164,7 +175,7 @@ function createPulumiProgram(config: GcpConfig) {
       });
 
       const privateIpRange = new gcp.compute.GlobalAddress(
-        "gtmship-private-ip-range",
+        rn("gtmship-pip"),
         {
           purpose: "VPC_PEERING",
           addressType: "INTERNAL",
@@ -174,7 +185,7 @@ function createPulumiProgram(config: GcpConfig) {
       );
 
       const privateConnection = new gcp.servicenetworking.Connection(
-        "gtmship-private-connection",
+        rn("gtmship-pc"),
         {
           network: network.id,
           service: "servicenetworking.googleapis.com",
@@ -185,7 +196,7 @@ function createPulumiProgram(config: GcpConfig) {
       const dbPassword = config.dbPassword ?? generatePassword(24);
 
       sqlInstance = new gcp.sql.DatabaseInstance(
-        "gtmship-db",
+        rn("gtmship-db"),
         {
           databaseVersion: "POSTGRES_16",
           region: config.region,
@@ -202,21 +213,21 @@ function createPulumiProgram(config: GcpConfig) {
         { dependsOn: [privateConnection] },
       );
 
-      new gcp.sql.Database("gtmship-database", {
+      new gcp.sql.Database(rn("gtmship-database"), {
         instance: sqlInstance.name,
         name: DB_NAME,
       });
 
-      new gcp.sql.User("gtmship-db-user", {
+      new gcp.sql.User(rn("gtmship-dbu"), {
         instance: sqlInstance.name,
         name: DB_USERNAME,
         password: dbPassword,
       });
 
-      new gcp.projects.IAMMember("gtmship-sa-cloudsql", {
+      new gcp.projects.IAMMember(rn("gtmship-sa-sql"), {
         project: config.gcpProject,
         role: "roles/cloudsql.client",
-        member: pulumi.interpolate`serviceAccount:${serviceAccount.email}`,
+        member: pulumi.interpolate`serviceAccount:${runtimeServiceAccountEmail}`,
       });
 
       outputs["cloudSqlEndpoint"] = sqlInstance.privateIpAddress;
@@ -227,17 +238,17 @@ function createPulumiProgram(config: GcpConfig) {
     // -----------------------------------------------------------------------
 
     if (needs.storage) {
-      const bucket = new gcp.storage.Bucket("gtmship-artifacts", {
+      const bucket = new gcp.storage.Bucket(rn("gtmship-art"), {
         location: config.region,
         forceDestroy: true,
         uniformBucketLevelAccess: true,
         labels: { project: config.projectName.toLowerCase() },
       });
 
-      new gcp.projects.IAMMember("gtmship-sa-storage", {
+      new gcp.projects.IAMMember(rn("gtmship-sa-sto"), {
         project: config.gcpProject,
         role: "roles/storage.objectAdmin",
-        member: pulumi.interpolate`serviceAccount:${serviceAccount.email}`,
+        member: pulumi.interpolate`serviceAccount:${runtimeServiceAccountEmail}`,
       });
 
       outputs["gcsBucket"] = bucket.name;
@@ -252,11 +263,11 @@ function createPulumiProgram(config: GcpConfig) {
       "us-docker.pkg.dev/cloudrun/container/hello";
 
     if (needs.executionKind === "job") {
-      const cloudRunJob = new gcp.cloudrunv2.Job("gtmship-job", {
+      const cloudRunJob = new gcp.cloudrunv2.Job(rn("gtmship-job"), {
         location: config.region,
         template: {
           template: {
-            serviceAccount: serviceAccount.email,
+            serviceAccount: runtimeServiceAccountEmail,
             containers: [
               {
                 image: containerImage,
@@ -284,7 +295,7 @@ function createPulumiProgram(config: GcpConfig) {
 
       // Cloud Scheduler to trigger the job
       if (needs.cloudScheduler && needs.scheduleCron) {
-        const schedulerJob = new gcp.cloudscheduler.Job("gtmship-scheduler", {
+        const schedulerJob = new gcp.cloudscheduler.Job(rn("gtmship-sched"), {
           region: config.region,
           schedule: needs.scheduleCron,
           timeZone: needs.scheduleTimezone || "UTC",
@@ -292,7 +303,7 @@ function createPulumiProgram(config: GcpConfig) {
             uri: pulumi.interpolate`https://${config.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${config.gcpProject}/jobs/${cloudRunJob.name}:run`,
             httpMethod: "POST",
             oauthToken: {
-              serviceAccountEmail: serviceAccount.email,
+              serviceAccountEmail: runtimeServiceAccountEmail,
             },
           },
         });
@@ -304,13 +315,13 @@ function createPulumiProgram(config: GcpConfig) {
       // Cloud Run Service (for webhook/long-running workflows)
       // -----------------------------------------------------------------------
 
-      const cloudRunService = new gcp.cloudrunv2.Service("gtmship-service", {
+      const cloudRunService = new gcp.cloudrunv2.Service(rn("gtmship-svc"), {
         location: config.region,
         ingress: needs.publicIngress
           ? "INGRESS_TRAFFIC_ALL"
           : "INGRESS_TRAFFIC_INTERNAL_ONLY",
         template: {
-          serviceAccount: serviceAccount.email,
+          serviceAccount: runtimeServiceAccountEmail,
           containers: [
             {
               image: containerImage,
@@ -333,7 +344,7 @@ function createPulumiProgram(config: GcpConfig) {
 
       // Allow unauthenticated access only when public ingress is needed (webhook triggers)
       if (needs.publicIngress) {
-        new gcp.cloudrunv2.ServiceIamMember("gtmship-service-public", {
+        new gcp.cloudrunv2.ServiceIamMember(rn("gtmship-svc-pub"), {
           project: config.gcpProject,
           location: config.region,
           name: cloudRunService.name,
@@ -370,10 +381,21 @@ export async function deployToGcp(
 
   console.log(`Deploying to GCP ${config.region}: ${parts.join(", ")}`);
 
+  const stackName = config.workflowId
+    ? `${config.projectName}-${sanitizeWorkflowSlug(config.workflowId)}`
+    : config.projectName;
+  const runtimeIdentity = await resolveGcpRuntimeIdentity(config, stackName);
+
+  if (runtimeIdentity?.source === "legacy-shared") {
+    console.log(
+      `Reusing legacy shared GCP runtime service account ${runtimeIdentity.email} to preserve existing project IAM bindings...`,
+    );
+  }
+
   const stack = await LocalWorkspace.createOrSelectStack({
-    stackName: config.projectName,
+    stackName,
     projectName: PULUMI_PROJECT,
-    program: createPulumiProgram(config),
+    program: createPulumiProgram(config, runtimeIdentity),
   });
 
   console.log("Configuring GCP project and region...");
@@ -412,10 +434,14 @@ export async function deployToGcp(
  */
 export async function getGcpDeployStatus(
   projectName: string,
+  workflowId?: string,
 ): Promise<DeployStatus> {
+  const stackName = workflowId
+    ? `${projectName}-${sanitizeWorkflowSlug(workflowId)}`
+    : projectName;
   try {
     const stack = await LocalWorkspace.selectStack({
-      stackName: projectName,
+      stackName,
       projectName: PULUMI_PROJECT,
       program: async () => {},
     });
@@ -444,11 +470,14 @@ export async function getGcpDeployStatus(
 /**
  * Destroy all GCP resources managed by the stack and remove the stack.
  */
-export async function destroyGcpStack(projectName: string): Promise<void> {
-  console.log(`Destroying GCP stack "${projectName}"...`);
+export async function destroyGcpStack(projectName: string, workflowId?: string): Promise<void> {
+  const stackName = workflowId
+    ? `${projectName}-${sanitizeWorkflowSlug(workflowId)}`
+    : projectName;
+  console.log(`Destroying GCP stack "${stackName}"...`);
 
   const stack = await LocalWorkspace.selectStack({
-    stackName: projectName,
+    stackName,
     projectName: PULUMI_PROJECT,
     program: async () => {},
   });
@@ -460,14 +489,68 @@ export async function destroyGcpStack(projectName: string): Promise<void> {
   });
 
   console.log("Removing stack from state...");
-  await stack.workspace.removeStack(projectName);
+  await stack.workspace.removeStack(stackName);
 
-  console.log(`GCP stack "${projectName}" destroyed and removed.`);
+  console.log(`GCP stack "${stackName}" destroyed and removed.`);
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Sanitize a workflow ID into a valid GCP resource name suffix. */
+function sanitizeWorkflowSlug(workflowId: string, maxLen = 18): string {
+  return workflowId
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, maxLen);
+}
+
+async function resolveGcpRuntimeIdentity(
+  config: GcpConfig,
+  stackName: string,
+): Promise<GcpRuntimeIdentity | undefined> {
+  // Database/storage flows still grant additional runtime roles, so keep the
+  // reuse path narrow to the current per-workflow Cloud Run migration.
+  if (!config.workflowId || config.needs.database || config.needs.storage) {
+    return undefined;
+  }
+
+  if (stackName === config.projectName) {
+    return undefined;
+  }
+
+  if (!(await gcpStackExists(config.projectName))) {
+    return undefined;
+  }
+
+  return {
+    email: buildServiceAccountEmail(
+      config.gcpProject,
+      LEGACY_SHARED_GCP_RUNTIME_SERVICE_ACCOUNT_ID,
+    ),
+    source: "legacy-shared",
+  };
+}
+
+async function gcpStackExists(stackName: string): Promise<boolean> {
+  try {
+    await LocalWorkspace.selectStack({
+      stackName,
+      projectName: PULUMI_PROJECT,
+      program: async () => {},
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildServiceAccountEmail(projectId: string, accountId: string): string {
+  return `${accountId}@${projectId}.iam.gserviceaccount.com`;
+}
 
 /** Generate a random alphanumeric password of the given length. */
 function generatePassword(length: number): string {

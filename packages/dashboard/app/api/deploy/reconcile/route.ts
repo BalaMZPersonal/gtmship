@@ -61,7 +61,29 @@ function stripCloudRunName(value?: string | null): string | null {
   return trimmed;
 }
 
-function buildPlatformOutputs(input: {
+function stripLambdaName(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("lambda:")) {
+    return trimmed.slice("lambda:".length) || null;
+  }
+
+  const arnMatch = trimmed.match(/:function:([^:/]+)(?::[^/]+)?$/);
+  if (arnMatch?.[1]) {
+    return arnMatch[1];
+  }
+
+  return trimmed.startsWith("arn:") ? null : trimmed;
+}
+
+function buildAwsLogGroupName(lambdaName?: string | null): string {
+  return lambdaName ? `/aws/lambda/${lambdaName}` : "";
+}
+
+function buildGcpPlatformOutputs(input: {
   output?: string | null;
   apiEndpoint?: string | null;
   schedulerJobId?: string | null;
@@ -106,6 +128,60 @@ function buildPlatformOutputs(input: {
   };
 }
 
+function buildAwsPlatformOutputs(input: {
+  output?: string | null;
+  apiEndpoint?: string | null;
+  computeId?: string | null;
+  schedulerJobId?: string | null;
+  stackOutputs?: Record<string, string>;
+}): Record<string, string> {
+  const outputText = input.output || "";
+  const stackOutputs = input.stackOutputs || {};
+  const apiGatewayUrl =
+    stackOutputs.apiGatewayUrl ||
+    input.apiEndpoint ||
+    extractOutputValue(outputText, "apiGatewayUrl") ||
+    "";
+  const lambdaArn =
+    stackOutputs.lambdaArn ||
+    input.computeId ||
+    extractOutputValue(outputText, "lambdaArn") ||
+    "";
+  const lambdaName =
+    stackOutputs.lambdaName ||
+    extractOutputValue(outputText, "lambdaName") ||
+    stripLambdaName(lambdaArn) ||
+    stripLambdaName(input.apiEndpoint) ||
+    "";
+  const endpointToken =
+    stackOutputs.endpointToken ||
+    (apiGatewayUrl || (lambdaName ? `lambda:${lambdaName}` : "")) ||
+    extractOutputValue(outputText, "endpointToken") ||
+    "";
+  const schedulerJobId =
+    stackOutputs.schedulerJobId ||
+    input.schedulerJobId ||
+    extractOutputValue(outputText, "schedulerJobId") ||
+    "";
+  const logGroupName =
+    stackOutputs.awsLogGroup ||
+    stackOutputs.logGroupName ||
+    extractOutputValue(outputText, "awsLogGroup") ||
+    extractOutputValue(outputText, "logGroupName") ||
+    buildAwsLogGroupName(lambdaName);
+
+  return {
+    ...stackOutputs,
+    apiGatewayUrl,
+    lambdaArn,
+    lambdaName,
+    endpointToken,
+    schedulerJobId,
+    logGroupName,
+    awsLogGroup: stackOutputs.awsLogGroup || logGroupName,
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -113,13 +189,6 @@ export async function POST(request: Request) {
     const workflow = readQueryString(searchParams.get("workflow"));
     const region = readQueryString(searchParams.get("region"));
     const gcpProject = readQueryString(searchParams.get("gcpProject"));
-
-    if (provider !== "gcp") {
-      return NextResponse.json(
-        { error: "Deployment reconcile currently supports GCP only." },
-        { status: 400 }
-      );
-    }
 
     const listing = await listStoredWorkflows();
     if (!listing.projectRootConfigured) {
@@ -156,7 +225,7 @@ export async function POST(request: Request) {
       if (
         !deploymentRun ||
         deploymentRun.status !== "success" ||
-        deploymentRun.provider !== "gcp"
+        deploymentRun.provider !== provider
       ) {
         continue;
       }
@@ -164,27 +233,55 @@ export async function POST(request: Request) {
       const plan = buildWorkflowDeploymentPlanForArtifact({
         artifact: record.artifact,
         connections,
-        provider: "gcp",
+        provider,
         region: region || deploymentRun.region || undefined,
-        gcpProject: gcpProject || deploymentRun.gcpProject || undefined,
+        gcpProject:
+          provider === "gcp"
+            ? gcpProject || deploymentRun.gcpProject || undefined
+            : undefined,
         authStrategy,
       });
 
-      const platformOutputs = buildPlatformOutputs({
-        output: deploymentRun.output,
-        apiEndpoint: deploymentRun.apiEndpoint,
-        schedulerJobId: deploymentRun.schedulerJobId,
-        stackOutputs: {},
-        executionKind: plan.executionKind,
-      });
+      const platformOutputs =
+        provider === "gcp"
+          ? buildGcpPlatformOutputs({
+              output: deploymentRun.output,
+              apiEndpoint: deploymentRun.apiEndpoint,
+              schedulerJobId: deploymentRun.schedulerJobId,
+              stackOutputs: {},
+              executionKind: plan.executionKind,
+            })
+          : buildAwsPlatformOutputs({
+              output: deploymentRun.output,
+              apiEndpoint: deploymentRun.apiEndpoint,
+              computeId: deploymentRun.computeId,
+              schedulerJobId: deploymentRun.schedulerJobId,
+              stackOutputs: {},
+            });
 
-      const endpointUrl = platformOutputs.gcpEndpointUrl || null;
+      const endpointUrl =
+        provider === "gcp"
+          ? platformOutputs.gcpEndpointUrl || null
+          : platformOutputs.endpointToken || platformOutputs.apiGatewayUrl || null;
       const schedulerId = platformOutputs.schedulerJobId || null;
       const resolvedRegion = region || deploymentRun.region || plan.region;
       const resolvedProject =
         gcpProject || deploymentRun.gcpProject || plan.gcpProject || null;
 
-      if (!endpointUrl && !platformOutputs.gcpComputeName) {
+      if (
+        provider === "gcp" &&
+        !endpointUrl &&
+        !platformOutputs.gcpComputeName
+      ) {
+        continue;
+      }
+
+      if (
+        provider === "aws" &&
+        !endpointUrl &&
+        !platformOutputs.lambdaName &&
+        !platformOutputs.lambdaArn
+      ) {
         continue;
       }
 
@@ -192,7 +289,7 @@ export async function POST(request: Request) {
         workflowId: plan.workflowId,
         provider: plan.provider,
         region: resolvedRegion,
-        gcpProject: resolvedProject,
+        gcpProject: provider === "gcp" ? resolvedProject : null,
         executionKind: plan.executionKind,
         endpointUrl,
         schedulerId,
@@ -221,15 +318,28 @@ export async function POST(request: Request) {
           trigger: plan.trigger,
           auth: plan.auth,
           authManifest: plan.auth?.manifest,
-          runtimeTarget: {
-            computeType:
-              platformOutputs.gcpTargetKind === "job" ? "job" : "service",
-            computeName: platformOutputs.gcpComputeName || null,
-            endpointUrl,
-            schedulerId,
-            gcpProject: resolvedProject,
-            region: resolvedRegion,
-          },
+          runtimeTarget:
+            provider === "gcp"
+              ? {
+                  computeType:
+                    platformOutputs.gcpTargetKind === "job" ? "job" : "service",
+                  computeName: platformOutputs.gcpComputeName || null,
+                  endpointUrl,
+                  schedulerId,
+                  gcpProject: resolvedProject,
+                  region: resolvedRegion,
+                }
+              : {
+                  computeType: "lambda",
+                  computeName: platformOutputs.lambdaName || null,
+                  endpointUrl,
+                  schedulerId,
+                  region: resolvedRegion,
+                  logGroupName:
+                    platformOutputs.awsLogGroup ||
+                    platformOutputs.logGroupName ||
+                    null,
+                },
           platformOutputs,
         },
         status: "active",

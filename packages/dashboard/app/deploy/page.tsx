@@ -7,11 +7,15 @@ import {
   Cloud,
   ExternalLink,
   Loader2,
+  RefreshCw,
   Rocket,
 } from "lucide-react";
 import Link from "next/link";
+import { DeploymentSecretSyncCard } from "@/components/deployment-secret-sync-card";
+import { SetupPrompt } from "@/components/setup-prompt";
 import { api } from "@/lib/api";
 import {
+  buildWorkflowSecretSyncSummary,
   type DashboardDeployInfraKey,
   type DashboardDeploySuccess,
   type GcpComputeType,
@@ -83,6 +87,17 @@ function formatDateTime(value?: string | null): string {
   return date.toLocaleString();
 }
 
+function formatProviderComputeLabel(
+  provider: WorkflowDeployProvider,
+  computeType?: string | null
+): string {
+  if (provider === "aws") {
+    return "Lambda Function";
+  }
+
+  return computeType === "job" ? "Cloud Run Job" : "Cloud Run Service";
+}
+
 export default function DeployPage() {
   const [provider, setProvider] = useState<WorkflowDeployProvider>("aws");
   const [region, setRegion] = useState("us-east-1");
@@ -101,6 +116,9 @@ export default function DeployPage() {
   const [workflowList, setWorkflowList] = useState<WorkflowListItem[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState("");
   const [deploymentOverviewLoading, setDeploymentOverviewLoading] = useState(false);
+  const [deploymentOverviewAction, setDeploymentOverviewAction] = useState<
+    "refresh" | "retry"
+  >("refresh");
   const [deploymentOverviewError, setDeploymentOverviewError] = useState("");
   const [deploymentOverviews, setDeploymentOverviews] = useState<
     WorkflowDeploymentOverview[]
@@ -127,17 +145,26 @@ export default function DeployPage() {
     );
   }, [selectedWorkflow, workflowList]);
 
-  const filteredDeploymentOverviews = useMemo(() => {
-    if (provider !== "gcp") {
-      return [];
-    }
+  const selectedPlans = useMemo(
+    () =>
+      plans.filter(
+        (plan) => !selectedWorkflowId || plan.workflowId === selectedWorkflowId
+      ),
+    [plans, selectedWorkflowId]
+  );
 
+  const selectedPlanSecretSummary = useMemo(
+    () => buildWorkflowSecretSyncSummary(selectedPlans),
+    [selectedPlans]
+  );
+
+  const filteredDeploymentOverviews = useMemo(() => {
     return getScopedWorkflowDeployments(deploymentOverviews, {
-      provider: "gcp",
+      provider,
       workflowId: selectedWorkflowId,
       workflowSlug: selectedWorkflow,
       region,
-      gcpProject,
+      gcpProject: provider === "gcp" ? gcpProject : undefined,
     });
   }, [
     deploymentOverviews,
@@ -147,20 +174,28 @@ export default function DeployPage() {
     selectedWorkflow,
     selectedWorkflowId,
   ]);
+  const hasDeploymentSyncWarning = filteredDeploymentOverviews.some((deployment) =>
+    Boolean(deployment.liveError)
+  );
 
   const primaryDeploymentOverview = filteredDeploymentOverviews[0] || null;
   const gcpComputeType: GcpComputeType | null =
-    primaryDeploymentOverview?.platform?.computeType ||
-    (primaryDeploymentOverview?.executionKind === "job" ? "job" : "service");
+    provider === "gcp"
+      ? primaryDeploymentOverview?.platform?.computeType === "job"
+        ? "job"
+        : primaryDeploymentOverview?.platform?.computeType === "service"
+          ? "service"
+          : primaryDeploymentOverview?.executionKind === "job"
+            ? "job"
+            : "service"
+      : null;
   const infra = getDeploymentInfra(provider, {
     gcpComputeType,
-    includeScheduler:
-      provider === "gcp" &&
-      Boolean(
-        result?.schedulerJobId ||
-          primaryDeploymentOverview?.platform?.schedulerJobId ||
-          primaryDeploymentOverview?.schedulerId
-      ),
+    includeScheduler: Boolean(
+      result?.schedulerJobId ||
+        primaryDeploymentOverview?.platform?.schedulerJobId ||
+        primaryDeploymentOverview?.schedulerId
+    ),
   });
 
   // Load saved settings and workflow list on mount
@@ -229,50 +264,52 @@ export default function DeployPage() {
     }
   }
 
-  const loadDeploymentOverviews = useCallback(async () => {
-    if (provider !== "gcp") {
-      setDeploymentOverviews([]);
+  const loadDeploymentOverviews = useCallback(
+    async (options: { forceReconcile?: boolean } = {}) => {
+      const forceReconcile = options.forceReconcile === true;
+
+      setDeploymentOverviewLoading(true);
+      setDeploymentOverviewAction(forceReconcile ? "retry" : "refresh");
       setDeploymentOverviewError("");
-      return;
-    }
+      try {
+        const fetchOverviews = async () => {
+          const overviews = await api.getWorkflowDeploymentsForWorkflow({
+            workflowId: selectedWorkflowId || undefined,
+            workflowSlug: selectedWorkflow || undefined,
+            provider,
+            includeLive: true,
+            executionLimit: 5,
+          });
+          return Array.isArray(overviews) ? overviews : [];
+        };
 
-    setDeploymentOverviewLoading(true);
-    setDeploymentOverviewError("");
-    try {
-      const fetchOverviews = async () => {
-        const overviews = await api.getWorkflowDeploymentsForWorkflow({
-          workflowId: selectedWorkflowId || undefined,
-          workflowSlug: selectedWorkflow || undefined,
-          provider: "gcp",
-          includeLive: true,
-          executionLimit: 5,
-        });
-        return Array.isArray(overviews) ? overviews : [];
-      };
+        let overviews = forceReconcile ? [] : await fetchOverviews();
+        if (forceReconcile || overviews.length === 0) {
+          await api.reconcileWorkflowDeployments({
+            provider,
+            region,
+            gcpProject:
+              provider === "gcp" ? gcpProject.trim() || undefined : undefined,
+            workflow: selectedWorkflow || undefined,
+          });
+          overviews = await fetchOverviews();
+        }
 
-      let overviews = await fetchOverviews();
-      if (overviews.length === 0) {
-        await api.reconcileWorkflowDeployments({
-          provider: "gcp",
-          region,
-          gcpProject: gcpProject.trim() || undefined,
-          workflow: selectedWorkflow || undefined,
-        });
-        overviews = await fetchOverviews();
+        setDeploymentOverviews(overviews);
+      } catch (overviewError) {
+        setDeploymentOverviews([]);
+        setDeploymentOverviewError(
+          overviewError instanceof Error
+            ? overviewError.message
+            : "Failed to load deployment overview."
+        );
+      } finally {
+        setDeploymentOverviewLoading(false);
+        setDeploymentOverviewAction("refresh");
       }
-
-      setDeploymentOverviews(overviews);
-    } catch (overviewError) {
-      setDeploymentOverviews([]);
-      setDeploymentOverviewError(
-        overviewError instanceof Error
-          ? overviewError.message
-          : "Failed to load deployment overview."
-      );
-    } finally {
-      setDeploymentOverviewLoading(false);
-    }
-  }, [gcpProject, provider, region, selectedWorkflow, selectedWorkflowId]);
+    },
+    [gcpProject, provider, region, selectedWorkflow, selectedWorkflowId]
+  );
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -306,7 +343,7 @@ export default function DeployPage() {
       } else {
         setStatus("success");
         setResult(res);
-        void loadDeploymentOverviews();
+        void loadDeploymentOverviews({ forceReconcile: true });
       }
     } catch (err) {
       setStatus("error");
@@ -321,7 +358,7 @@ export default function DeployPage() {
       return deployedValue.trim();
     }
 
-    if (provider === "gcp" && primaryDeploymentOverview) {
+    if (primaryDeploymentOverview) {
       if (key === "apiEndpoint") {
         return (
           primaryDeploymentOverview.platform?.endpointUrl ||
@@ -352,6 +389,8 @@ export default function DeployPage() {
           Review the deployment plan before shipping workflows.
         </p>
       </div>
+
+      <SetupPrompt className="mb-6" />
 
       <div className="rounded-lg border border-zinc-800 p-6 space-y-5">
         <div>
@@ -444,6 +483,16 @@ export default function DeployPage() {
           )}
         </button>
 
+        {selectedPlanSecretSummary ? (
+          <DeploymentSecretSyncCard
+            summary={selectedPlanSecretSummary}
+            title="Secrets Included In This Deploy"
+            description="These connection secret references are pushed alongside the current deployment."
+            maxEntries={6}
+            showWorkflowLabel={selectedPlanSecretSummary.workflowCount > 1}
+          />
+        ) : null}
+
         {status === "success" ? (
           <div className="flex items-center gap-2 rounded-md border border-green-800 bg-green-900/20 px-4 py-3 text-sm text-green-400">
             <CheckCircle size={14} />
@@ -484,154 +533,226 @@ export default function DeployPage() {
         </div>
       </div>
 
-      {provider === "gcp" ? (
-        <div className="mt-6 rounded-lg border border-zinc-800 p-6">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-medium">GCP Deployment Status</h3>
+      <div className="mt-6 rounded-lg border border-zinc-800 p-6">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-medium">
+            {provider === "gcp" ? "GCP Deployment Status" : "AWS Deployment Status"}
+          </h3>
+          <div className="flex items-center gap-2">
+            {(deploymentOverviewError || hasDeploymentSyncWarning) ? (
+              <button
+                onClick={() =>
+                  void loadDeploymentOverviews({ forceReconcile: true })
+                }
+                disabled={deploymentOverviewLoading}
+                className="flex items-center gap-1 rounded-md border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+              >
+                <RefreshCw size={12} />
+                {deploymentOverviewLoading && deploymentOverviewAction === "retry"
+                  ? "Retrying..."
+                  : "Retry status sync"}
+              </button>
+            ) : null}
             <button
               onClick={() => void loadDeploymentOverviews()}
               disabled={deploymentOverviewLoading}
               className="rounded-md border border-zinc-700 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-zinc-900 disabled:opacity-50"
             >
-              {deploymentOverviewLoading ? "Refreshing..." : "Refresh"}
+              {deploymentOverviewLoading && deploymentOverviewAction === "refresh"
+                ? "Refreshing..."
+                : "Refresh"}
             </button>
           </div>
+        </div>
 
-          {deploymentOverviewError ? (
-            <div className="rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
-              {deploymentOverviewError}
+        {deploymentOverviewError ? (
+          <div className="rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+            <div className="flex items-center justify-between gap-3">
+              <p>{deploymentOverviewError}</p>
+              <button
+                onClick={() =>
+                  void loadDeploymentOverviews({ forceReconcile: true })
+                }
+                disabled={deploymentOverviewLoading}
+                className="whitespace-nowrap rounded-md border border-red-900/60 px-2 py-1 text-[11px] text-red-100 transition-colors hover:bg-red-900/20 disabled:opacity-50"
+              >
+                {deploymentOverviewLoading && deploymentOverviewAction === "retry"
+                  ? "Retrying..."
+                  : "Retry status sync"}
+              </button>
             </div>
-          ) : null}
+          </div>
+        ) : null}
 
-          {!deploymentOverviewLoading && filteredDeploymentOverviews.length === 0 && !deploymentOverviewError ? (
-            <p className="text-xs text-zinc-500">
-              No GCP deployment records found for the current filters.
-            </p>
-          ) : null}
+        {!deploymentOverviewLoading &&
+        filteredDeploymentOverviews.length === 0 &&
+        !deploymentOverviewError ? (
+          <p className="text-xs text-zinc-500">
+            {provider === "gcp"
+              ? "No GCP deployment records found for the current filters."
+              : "No AWS deployment records found for the current filters."}
+          </p>
+        ) : null}
 
-          <div className="space-y-3">
-            {filteredDeploymentOverviews.map((deployment) => {
-              const executions = deployment.recentExecutions || [];
-              const latestExecution: WorkflowExecutionHistoryEntry | null =
-                executions[0] || null;
-              return (
-                <div
-                  key={deployment.id}
-                  className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-white">
-                        {workflowNameBySlug.get(deployment.workflowId) || deployment.workflowId}
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        {deployment.platform?.computeType === "job"
-                          ? "Cloud Run Job"
-                          : "Cloud Run Service"}
-                        {" • "}
-                        {deployment.platform?.computeName || "Unknown compute target"}
-                      </p>
-                    </div>
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
-                        latestExecution?.status || deployment.status
-                      )}`}
-                    >
-                      {(latestExecution?.status || deployment.status || "unknown").toUpperCase()}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
-                    <p>
-                      <span className="text-zinc-500">Region:</span>{" "}
-                      {deployment.platform?.region || deployment.region || "N/A"}
+        <div className="space-y-3">
+          {filteredDeploymentOverviews.map((deployment) => {
+            const executions = deployment.recentExecutions || [];
+            const latestExecution: WorkflowExecutionHistoryEntry | null =
+              executions[0] || null;
+            const planSecretSyncSummary = buildWorkflowSecretSyncSummary(
+              selectedPlans.filter(
+                (plan) => plan.workflowId === deployment.workflowId
+              )
+            );
+            return (
+              <div
+                key={deployment.id}
+                className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">
+                      {workflowNameBySlug.get(deployment.workflowId) || deployment.workflowId}
                     </p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {formatProviderComputeLabel(
+                        provider,
+                        deployment.platform?.computeType || deployment.executionKind
+                      )}
+                      {" • "}
+                      {deployment.platform?.computeName || "Unknown compute target"}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
+                      latestExecution?.status || deployment.status
+                    )}`}
+                  >
+                    {(latestExecution?.status || deployment.status || "unknown").toUpperCase()}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
+                  <p>
+                    <span className="text-zinc-500">Region:</span>{" "}
+                    {deployment.platform?.region || deployment.region || "N/A"}
+                  </p>
+                  {provider === "gcp" ? (
                     <p>
                       <span className="text-zinc-500">Project:</span>{" "}
                       {deployment.platform?.gcpProject ||
                         deployment.gcpProject ||
                         "N/A"}
                     </p>
-                    <p>
-                      <span className="text-zinc-500">Scheduler:</span>{" "}
-                      {deployment.platform?.schedulerJobId ||
-                        deployment.schedulerId ||
-                        "Not configured"}
-                    </p>
-                    <p>
-                      <span className="text-zinc-500">Last deployed:</span>{" "}
-                      {formatDateTime(deployment.deployedAt || deployment.updatedAt)}
-                    </p>
-                  </div>
-
-                  {deployment.platform?.endpointUrl ? (
-                    <p className="mt-2 break-all text-xs text-zinc-400">
-                      <span className="text-zinc-500">Endpoint:</span>{" "}
-                      {deployment.platform.endpointUrl}
-                    </p>
-                  ) : null}
-
-                  {deployment.liveError ? (
-                    <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
-                      {deployment.liveError}
-                    </div>
-                  ) : null}
-
-                  {executions.length > 0 ? (
-                    <div className="mt-3 space-y-2">
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                        Recent Runs
-                      </p>
-                      {executions.map((execution, index) => (
-                        <div
-                          key={`${deployment.id}-run-${execution.executionName || index}`}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-300"
-                        >
-                          <div className="space-y-1">
-                            <p className="break-all text-zinc-200">
-                              {execution.executionName || "execution"}
-                            </p>
-                            <p className="text-zinc-500">
-                              {formatDateTime(execution.startedAt)}
-                              {" -> "}
-                              {formatDateTime(execution.completedAt)}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
-                                execution.status
-                              )}`}
-                            >
-                              {(execution.status || "unknown").toUpperCase()}
-                            </span>
-                            <Link
-                              href={buildDeploymentLogsHref({
-                                deploymentId: deployment.id,
-                                workflowId: deployment.workflowId,
-                                workflowSlug: selectedWorkflow || undefined,
-                                executionName:
-                                  execution.executionName || undefined,
-                              })}
-                              className="text-[11px] text-blue-300 hover:text-blue-200"
-                            >
-                              Logs
-                            </Link>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   ) : (
-                    <p className="mt-3 text-xs text-zinc-500">
-                      No recent executions reported yet.
+                    <p>
+                      <span className="text-zinc-500">Log Group:</span>{" "}
+                      {deployment.platform?.logGroupName || "N/A"}
                     </p>
                   )}
+                  <p>
+                    <span className="text-zinc-500">Scheduler:</span>{" "}
+                    {deployment.platform?.schedulerJobId ||
+                      deployment.schedulerId ||
+                      "Not configured"}
+                  </p>
+                  <p>
+                    <span className="text-zinc-500">Last deployed:</span>{" "}
+                    {formatDateTime(deployment.deployedAt || deployment.updatedAt)}
+                  </p>
                 </div>
-              );
-            })}
-          </div>
+
+                {deployment.platform?.endpointUrl ? (
+                  <p className="mt-2 break-all text-xs text-zinc-400">
+                    <span className="text-zinc-500">Endpoint:</span>{" "}
+                    {deployment.platform.endpointUrl}
+                  </p>
+                ) : null}
+
+                {deployment.liveError ? (
+                  <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                    <div className="flex items-center justify-between gap-3">
+                      <p>{deployment.liveError}</p>
+                      <button
+                        onClick={() =>
+                          void loadDeploymentOverviews({ forceReconcile: true })
+                        }
+                        disabled={deploymentOverviewLoading}
+                        className="whitespace-nowrap rounded-md border border-amber-900/60 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-900/20 disabled:opacity-50"
+                      >
+                        {deploymentOverviewLoading &&
+                        deploymentOverviewAction === "retry"
+                          ? "Retrying..."
+                          : "Retry status sync"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {planSecretSyncSummary ? (
+                  <DeploymentSecretSyncCard
+                    summary={planSecretSyncSummary}
+                    title="Secret Sync"
+                    description="Connection secret references that will be synced for this workflow."
+                    className="mt-3"
+                  />
+                ) : null}
+
+                {executions.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                      Recent Runs
+                    </p>
+                    {executions.map((execution, index) => (
+                      <div
+                        key={`${deployment.id}-run-${execution.executionName || index}`}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-300"
+                      >
+                        <div className="space-y-1">
+                          <p className="break-all text-zinc-200">
+                            {execution.executionName || "execution"}
+                          </p>
+                          <p className="text-zinc-500">
+                            {formatDateTime(execution.startedAt)}
+                            {" -> "}
+                            {formatDateTime(execution.completedAt)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
+                              execution.status
+                            )}`}
+                          >
+                            {(execution.status || "unknown").toUpperCase()}
+                          </span>
+                          <Link
+                            href={buildDeploymentLogsHref({
+                              provider,
+                              deploymentId: deployment.id,
+                              workflowId: deployment.workflowId,
+                              workflowSlug: selectedWorkflow || undefined,
+                              executionName:
+                                execution.executionName || undefined,
+                            })}
+                            className="text-[11px] text-blue-300 hover:text-blue-200"
+                          >
+                            Logs
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-zinc-500">
+                    No recent executions reported yet.
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
-      ) : null}
+      </div>
 
       <div className="mt-6 rounded-lg border border-zinc-800 p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -663,9 +784,9 @@ export default function DeployPage() {
         ) : null}
 
         <div className="space-y-3">
-          {plans
-            .filter((plan) => !selectedWorkflowId || plan.workflowId === selectedWorkflowId)
-            .map((plan) => (
+          {selectedPlans.map((plan) => {
+            const planSecretSyncSummary = buildWorkflowSecretSyncSummary([plan]);
+            return (
               <div
                 key={plan.workflowId}
                 className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4"
@@ -729,6 +850,15 @@ export default function DeployPage() {
                   )}
                 </div>
 
+                {planSecretSyncSummary ? (
+                  <DeploymentSecretSyncCard
+                    summary={planSecretSyncSummary}
+                    title="Secret Sync"
+                    description="These connection secret references are included when this workflow deploys."
+                    className="mt-3"
+                  />
+                ) : null}
+
                 {plan.warnings.length > 0 ? (
                   <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2">
                     <p className="text-[11px] uppercase tracking-wide text-amber-200">
@@ -742,15 +872,17 @@ export default function DeployPage() {
                   </div>
                 ) : null}
               </div>
-            ))}
+            );
+          })}
         </div>
       </div>
 
       <div className="mt-6">
         <Link
           href={
-            provider === "gcp" && primaryDeploymentOverview
+            primaryDeploymentOverview
               ? buildDeploymentLogsHref({
+                  provider,
                   deploymentId: primaryDeploymentOverview.id,
                   workflowId: primaryDeploymentOverview.workflowId,
                   workflowSlug: selectedWorkflow || undefined,

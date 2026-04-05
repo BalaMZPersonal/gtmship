@@ -16,7 +16,9 @@ import {
   FileJson,
   Save,
   Link2,
+  Package,
   CheckCircle,
+  AlertCircle,
   XCircle,
   Loader2,
   ExternalLink,
@@ -84,6 +86,8 @@ export function ToolRenderer({
       return <ValidationRenderer args={args} state={state} result={result} />;
     case "previewWorkflowDraft":
       return <PreviewRenderer args={args} state={state} result={result} />;
+    case "buildWorkflowDraft":
+      return <BuildRenderer args={args} state={state} result={result} />;
     case "buildProviderConfig":
       return <ConfigRenderer args={args} state={state} result={result} title="Validating config" />;
     case "saveProvider":
@@ -1334,6 +1338,7 @@ function PreviewRenderer({
       error?: string;
       pendingApproval?: { checkpoint?: string; target?: string };
     };
+    assistantMessage?: string;
     error?: string;
   } | undefined;
   const preview = res?.preview;
@@ -1344,8 +1349,11 @@ function PreviewRenderer({
         <Globe size={12} className="text-blue-400" />
         <span className="text-zinc-400">Previewing draft</span>
         {state === "call" && <Loader2 size={12} className="animate-spin text-zinc-500 ml-auto" />}
-        {preview?.status === "success" || preview?.status === "needs_approval" ? (
+        {preview?.status === "success" ? (
           <CheckCircle size={12} className="text-green-400 ml-auto" />
+        ) : null}
+        {preview?.status === "needs_approval" ? (
+          <AlertCircle size={12} className="text-amber-400 ml-auto" />
         ) : null}
         {preview?.status === "error" || res?.error ? (
           <XCircle size={12} className="text-red-400 ml-auto" />
@@ -1355,9 +1363,85 @@ function PreviewRenderer({
         {res?.error ? <p className="text-red-400">{res.error}</p> : null}
         {preview?.status ? <p>Status: {preview.status}</p> : null}
         {preview?.error ? <p className="text-red-400">{preview.error}</p> : null}
+        {res?.assistantMessage ? <p>{res.assistantMessage}</p> : null}
         {preview?.pendingApproval ? (
           <p className="text-amber-300">
             Waiting for approval: {preview.pendingApproval.checkpoint} → {preview.pendingApproval.target}. More declared checkpoints may appear after this one is approved.
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function BuildRenderer({
+  state,
+  result,
+}: {
+  args: Record<string, unknown>;
+  state: string;
+  result: unknown;
+}) {
+  const res = result as {
+    build?: {
+      status?: string;
+      provider?: string;
+      region?: string;
+      gcpProject?: string;
+      builtAt?: string;
+      error?: string;
+      artifact?: {
+        workflowId?: string;
+        artifactPath?: string;
+        imageUri?: string;
+      };
+      preview?: {
+        status?: string;
+        pendingApproval?: { checkpoint?: string; target?: string };
+      };
+    };
+    assistantMessage?: string;
+    skipped?: boolean;
+    error?: string;
+  } | undefined;
+  const build = res?.build;
+  const previewStatus = build?.preview?.status;
+  const needsApproval = previewStatus === "needs_approval";
+  const showSuccess = build?.status === "success" && !needsApproval;
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 overflow-hidden my-2">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 text-xs">
+        <Package size={12} className="text-blue-400" />
+        <span className="text-zinc-400">Building draft</span>
+        {state === "call" && <Loader2 size={12} className="animate-spin text-zinc-500 ml-auto" />}
+        {showSuccess ? (
+          <CheckCircle size={12} className="text-green-400 ml-auto" />
+        ) : null}
+        {res?.skipped || needsApproval ? (
+          <AlertCircle size={12} className="text-amber-400 ml-auto" />
+        ) : null}
+        {build?.status === "error" || res?.error ? (
+          <XCircle size={12} className="text-red-400 ml-auto" />
+        ) : null}
+      </div>
+      <div className="px-3 py-2 space-y-1 text-xs text-zinc-400">
+        {build?.status ? <p>Status: {build.status}</p> : null}
+        {previewStatus ? <p>Preview during build: {previewStatus}</p> : null}
+        {build?.provider ? <p>Provider: {String(build.provider).toUpperCase()}</p> : null}
+        {build?.artifact?.workflowId ? <p>Workflow: {build.artifact.workflowId}</p> : null}
+        {build?.artifact?.artifactPath ? (
+          <p className="break-all">Artifact: {build.artifact.artifactPath}</p>
+        ) : null}
+        {build?.artifact?.imageUri ? (
+          <p className="break-all">Image: {build.artifact.imageUri}</p>
+        ) : null}
+        {build?.error ? <p className="text-red-400">{build.error}</p> : null}
+        {res?.error ? <p className="text-red-400">{res.error}</p> : null}
+        {res?.assistantMessage ? <p>{res.assistantMessage}</p> : null}
+        {build?.preview?.pendingApproval ? (
+          <p className="text-amber-300">
+            Waiting for approval: {build.preview.pendingApproval.checkpoint} → {build.preview.pendingApproval.target}
           </p>
         ) : null}
       </div>

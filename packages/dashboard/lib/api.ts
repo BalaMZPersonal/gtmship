@@ -9,8 +9,10 @@ import type {
 } from "@/lib/deploy";
 import {
   dedupeWorkflowDeploymentsById,
+  extractDashboardErrorMessage,
   getWorkflowDeploymentRefs,
 } from "@/lib/deploy";
+import type { SetupStatusResponse } from "@/lib/setup";
 import type { ConnectionAuthStrategyStatus } from "@/lib/workflow-studio/types";
 
 export interface MemoryRecord {
@@ -183,6 +185,21 @@ export const api = {
     >,
   deleteSetting: (key: string) =>
     request(`/settings/${key}`, { method: "DELETE" }),
+  getSetupStatus: () =>
+    request("/setup") as Promise<SetupStatusResponse>,
+  updateSetupState: (input: {
+    dismissed?: boolean;
+    steps?: Partial<
+      Record<
+        "ai" | "cloud" | "secret_storage" | "workspace" | "oauth_apps",
+        { skipped?: boolean; choice?: string }
+      >
+    >;
+  }) =>
+    request("/setup", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }) as Promise<SetupStatusResponse>,
   searchAiModels: (input: {
     provider: AiProvider;
     apiKey?: string;
@@ -347,8 +364,11 @@ export const api = {
     );
 
     if (!response.ok) {
-      const message = await response.text();
-      throw new Error(message || "Failed to reconcile workflow deployments.");
+      const message = extractDashboardErrorMessage(
+        await response.text(),
+        "Failed to reconcile workflow deployments."
+      );
+      throw new Error(message);
     }
 
     return response.json() as Promise<{

@@ -30,6 +30,7 @@ import {
   Search,
 } from "lucide-react";
 import { awsRegions, gcpRegions } from "@/lib/cloud-regions";
+import { SetupPrompt } from "@/components/setup-prompt";
 
 const secretSettingKeys = [
   "anthropic_api_key",
@@ -968,6 +969,8 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-7xl p-8">
       <div className="space-y-6">
+        <SetupPrompt />
+
         <section className="relative overflow-hidden rounded-[28px] border border-zinc-800 bg-gradient-to-br from-zinc-900 via-zinc-950 to-zinc-950">
           <div className="absolute right-0 top-0 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
           <div className="absolute bottom-0 left-8 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl" />

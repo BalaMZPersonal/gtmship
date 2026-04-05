@@ -42,6 +42,7 @@ import { cn } from "@/lib/utils";
 import { api, type MemoryRecord } from "@/lib/api";
 import {
   buildDeploymentLogsHref,
+  buildWorkflowSecretSyncSummary,
   type DashboardDeployInfraKey,
   type GcpComputeType,
   type ResolvedCloudDeploySettings,
@@ -53,6 +54,7 @@ import {
   loadCloudDeploySettings,
   resolveWorkflowDeployTarget,
 } from "@/lib/deploy";
+import { DeploymentSecretSyncCard } from "@/components/deployment-secret-sync-card";
 import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { ToolRenderer } from "@/components/agent/tool-renderers";
 import { buildWorkflowPlanFromArtifact } from "@/lib/workflow-studio/deploy-plan";
@@ -247,6 +249,17 @@ function formatDateTime(value?: string | null): string {
   }
 
   return date.toLocaleString();
+}
+
+function formatProviderComputeLabel(
+  provider: "aws" | "gcp",
+  computeType?: string | null
+): string {
+  if (provider === "aws") {
+    return "Lambda Function";
+  }
+
+  return computeType === "job" ? "Cloud Run Job" : "Cloud Run Service";
 }
 
 function truncateIssueContext(value: string | undefined, maxChars = 3000): string {
@@ -1656,6 +1669,9 @@ export function WorkflowStudio() {
   const [liveDeploymentOverview, setLiveDeploymentOverview] =
     useState<WorkflowDeploymentOverview | null>(null);
   const [liveDeploymentLoading, setLiveDeploymentLoading] = useState(false);
+  const [liveDeploymentAction, setLiveDeploymentAction] = useState<
+    "refresh" | "retry"
+  >("refresh");
   const [liveDeploymentError, setLiveDeploymentError] = useState("");
   const [cloudSettings, setCloudSettings] =
     useState<ResolvedCloudDeploySettings | null>(null);
@@ -1745,26 +1761,35 @@ export function WorkflowStudio() {
     currentArtifact,
     effectiveDeployTarget
   );
+  const deploymentSecretSyncSummary = buildWorkflowSecretSyncSummary([
+    deploymentPlan,
+  ]);
   const selectedWorkflowId =
     listing?.workflows.find((workflow) => workflow.slug === selectedSlug)?.workflowId ||
     deploymentPlan.workflowId ||
     currentArtifact.slug;
   const liveGcpComputeType: GcpComputeType | null =
-    liveDeploymentOverview?.platform?.computeType ||
-    (liveDeploymentOverview?.executionKind === "job" ? "job" : "service");
+    effectiveProvider === "gcp"
+      ? liveDeploymentOverview?.platform?.computeType === "job"
+        ? "job"
+        : liveDeploymentOverview?.platform?.computeType === "service"
+          ? "service"
+          : liveDeploymentOverview?.executionKind === "job"
+            ? "job"
+            : "service"
+      : null;
   const deployInfra = getDeploymentInfra(effectiveDeployTarget.provider, {
     gcpComputeType: liveGcpComputeType,
-    includeScheduler:
-      effectiveDeployTarget.provider === "gcp" &&
-      Boolean(
-        deployResult?.schedulerJobId ||
-          liveDeploymentOverview?.platform?.schedulerJobId ||
-          liveDeploymentOverview?.schedulerId
-      ),
+    includeScheduler: Boolean(
+      deployResult?.schedulerJobId ||
+        liveDeploymentOverview?.platform?.schedulerJobId ||
+        liveDeploymentOverview?.schedulerId
+    ),
   });
   const missingGcpProject =
     effectiveDeployTarget.provider === "gcp" &&
     !effectiveDeployTarget.gcpProject;
+  const hasLiveDeploymentSyncWarning = Boolean(liveDeploymentOverview?.liveError);
   const deployDisabled =
     !artifact ||
     !listing?.projectRootConfigured ||
@@ -1883,72 +1908,78 @@ export function WorkflowStudio() {
 
   function resetLiveDeploymentState() {
     setLiveDeploymentOverview(null);
+    setLiveDeploymentAction("refresh");
     setLiveDeploymentError("");
   }
 
-  const loadLiveDeploymentOverview = useCallback(async () => {
-    if (effectiveProvider !== "gcp") {
-      resetLiveDeploymentState();
-      return;
-    }
-
-    if (!selectedWorkflowId) {
-      resetLiveDeploymentState();
-      return;
-    }
-
-    setLiveDeploymentLoading(true);
-    setLiveDeploymentError("");
-    try {
-      const fetchDeployments = async () => {
-        const deployments = await api.getWorkflowDeploymentsForWorkflow({
-          workflowId: selectedWorkflowId || undefined,
-          workflowSlug: selectedSlug || undefined,
-          provider: "gcp",
-          includeLive: true,
-          executionLimit: 5,
-        });
-        return Array.isArray(deployments) ? deployments : [];
-      };
-
-      let matches = await fetchDeployments();
-      if (matches.length === 0) {
-        await api.reconcileWorkflowDeployments({
-          provider: "gcp",
-          region: effectiveRegion,
-          gcpProject: effectiveGcpProject.trim() || undefined,
-          workflow: selectedSlug || undefined,
-        });
-        matches = await fetchDeployments();
+  const loadLiveDeploymentOverview = useCallback(
+    async (options: { forceReconcile?: boolean } = {}) => {
+      const forceReconcile = options.forceReconcile === true;
+      if (!selectedWorkflowId) {
+        resetLiveDeploymentState();
+        return;
       }
 
-      const bestMatch =
-        getScopedWorkflowDeployments(matches, {
-          provider: "gcp",
-          workflowId: selectedWorkflowId,
-          workflowSlug: selectedSlug,
-          region: effectiveRegion,
-          gcpProject: effectiveGcpProject,
-        })[0] || null;
+      setLiveDeploymentLoading(true);
+      setLiveDeploymentAction(forceReconcile ? "retry" : "refresh");
+      setLiveDeploymentError("");
+      try {
+        const fetchDeployments = async () => {
+          const deployments = await api.getWorkflowDeploymentsForWorkflow({
+            workflowId: selectedWorkflowId || undefined,
+            workflowSlug: selectedSlug || undefined,
+            provider: effectiveProvider,
+            includeLive: true,
+            executionLimit: 5,
+          });
+          return Array.isArray(deployments) ? deployments : [];
+        };
 
-      setLiveDeploymentOverview(bestMatch);
-    } catch (liveError) {
-      setLiveDeploymentOverview(null);
-      setLiveDeploymentError(
-        liveError instanceof Error
-          ? liveError.message
-          : "Failed to load live deployment details."
-      );
-    } finally {
-      setLiveDeploymentLoading(false);
-    }
-  }, [
-    effectiveGcpProject,
-    effectiveProvider,
-    effectiveRegion,
-    selectedSlug,
-    selectedWorkflowId,
-  ]);
+        let matches = forceReconcile ? [] : await fetchDeployments();
+        if (forceReconcile || matches.length === 0) {
+          await api.reconcileWorkflowDeployments({
+            provider: effectiveProvider,
+            region: effectiveRegion,
+            gcpProject:
+              effectiveProvider === "gcp"
+                ? effectiveGcpProject.trim() || undefined
+                : undefined,
+            workflow: selectedSlug || undefined,
+          });
+          matches = await fetchDeployments();
+        }
+
+        const bestMatch =
+          getScopedWorkflowDeployments(matches, {
+            provider: effectiveProvider,
+            workflowId: selectedWorkflowId,
+            workflowSlug: selectedSlug,
+            region: effectiveRegion,
+            gcpProject:
+              effectiveProvider === "gcp" ? effectiveGcpProject : undefined,
+          })[0] || null;
+
+        setLiveDeploymentOverview(bestMatch);
+      } catch (liveError) {
+        setLiveDeploymentOverview(null);
+        setLiveDeploymentError(
+          liveError instanceof Error
+            ? liveError.message
+            : "Failed to load live deployment details."
+        );
+      } finally {
+        setLiveDeploymentLoading(false);
+        setLiveDeploymentAction("refresh");
+      }
+    },
+    [
+      effectiveGcpProject,
+      effectiveProvider,
+      effectiveRegion,
+      selectedSlug,
+      selectedWorkflowId,
+    ]
+  );
 
   const sendIssueToChat = useCallback(
     async (prompt: string) => {
@@ -2596,7 +2627,7 @@ export function WorkflowStudio() {
         return;
       }
 
-      void loadLiveDeploymentOverview();
+      void loadLiveDeploymentOverview({ forceReconcile: true });
     } catch (deployError) {
       setError(
         deployError instanceof Error ? deployError.message : "Deployment failed."
@@ -2661,7 +2692,7 @@ export function WorkflowStudio() {
       return deployedValue.trim();
     }
 
-    if (effectiveProvider === "gcp" && liveDeploymentOverview) {
+    if (liveDeploymentOverview) {
       if (key === "apiEndpoint") {
         return (
           liveDeploymentOverview.platform?.endpointUrl ||
@@ -3478,6 +3509,15 @@ export function WorkflowStudio() {
                         </p>
                       ) : null}
 
+                      {deploymentSecretSyncSummary ? (
+                        <DeploymentSecretSyncCard
+                          summary={deploymentSecretSyncSummary}
+                          title="Secrets Included In This Deploy"
+                          description="These connection secret references are shipped with this workflow deployment."
+                          className="mt-4"
+                        />
+                      ) : null}
+
                       {deployStatus === "success" ? (
                         <div className="mt-4 rounded-md border border-emerald-900/40 bg-emerald-950/20 px-3 py-3">
                           <div className="flex items-center gap-2 text-sm text-emerald-200">
@@ -3511,137 +3551,207 @@ export function WorkflowStudio() {
                         </div>
                       ) : null}
 
-                      {effectiveProvider === "gcp" ? (
-                        <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-950/50 px-3 py-3">
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                              Live GCP Deployment
-                            </p>
+                      <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-950/50 px-3 py-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                            {effectiveProvider === "gcp"
+                              ? "Live GCP Deployment"
+                              : "Live AWS Deployment"}
+                          </p>
+                          <div className="flex items-center gap-2">
+                            {(liveDeploymentError || hasLiveDeploymentSyncWarning) ? (
+                              <button
+                                onClick={() =>
+                                  void loadLiveDeploymentOverview({
+                                    forceReconcile: true,
+                                  })
+                                }
+                                disabled={liveDeploymentLoading}
+                                className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
+                              >
+                                <RefreshCw size={12} />
+                                {liveDeploymentLoading &&
+                                liveDeploymentAction === "retry"
+                                  ? "Retrying..."
+                                  : "Retry status sync"}
+                              </button>
+                            ) : null}
                             <button
                               onClick={() => void loadLiveDeploymentOverview()}
                               disabled={liveDeploymentLoading}
                               className="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
                             >
-                              {liveDeploymentLoading ? "Refreshing..." : "Refresh"}
+                              {liveDeploymentLoading &&
+                              liveDeploymentAction === "refresh"
+                                ? "Refreshing..."
+                                : "Refresh"}
                             </button>
                           </div>
-
-                          {liveDeploymentError ? (
-                            <div className="rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
-                              {liveDeploymentError}
-                            </div>
-                          ) : null}
-
-                          {!liveDeploymentLoading && !liveDeploymentOverview && !liveDeploymentError ? (
-                            <p className="text-xs text-zinc-500">
-                              No deployment record found for this workflow yet.
-                            </p>
-                          ) : null}
-
-                          {liveDeploymentOverview ? (
-                            <div className="space-y-3">
-                              <div className="grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
-                                <p>
-                                  <span className="text-zinc-500">Compute:</span>{" "}
-                                  {liveDeploymentOverview.platform?.computeType === "job"
-                                    ? "Cloud Run Job"
-                                    : "Cloud Run Service"}{" "}
-                                  ({liveDeploymentOverview.platform?.computeName || "unknown"})
-                                </p>
-                                <p>
-                                  <span className="text-zinc-500">Scheduler:</span>{" "}
-                                  {liveDeploymentOverview.platform?.schedulerJobId ||
-                                    liveDeploymentOverview.schedulerId ||
-                                    "Not configured"}
-                                </p>
-                                <p>
-                                  <span className="text-zinc-500">Last deployed:</span>{" "}
-                                  {formatDateTime(
-                                    liveDeploymentOverview.deployedAt ||
-                                      liveDeploymentOverview.updatedAt
-                                  )}
-                                </p>
-                                <p>
-                                  <span className="text-zinc-500">Status:</span>{" "}
-                                  {(
-                                    liveDeploymentOverview.recentExecutions?.[0]?.status ||
-                                    liveDeploymentOverview.status ||
-                                    "unknown"
-                                  ).toUpperCase()}
-                                </p>
-                              </div>
-
-                              {liveDeploymentOverview.platform?.endpointUrl ? (
-                                <p className="break-all text-xs text-zinc-400">
-                                  <span className="text-zinc-500">Endpoint:</span>{" "}
-                                  {liveDeploymentOverview.platform.endpointUrl}
-                                </p>
-                              ) : null}
-
-                              {liveDeploymentOverview.liveError ? (
-                                <div className="rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
-                                  {liveDeploymentOverview.liveError}
-                                </div>
-                              ) : null}
-
-                              {(liveDeploymentOverview.recentExecutions || []).length > 0 ? (
-                                <div className="space-y-2">
-                                  <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                                    Recent Runs
-                                  </p>
-                                  {(liveDeploymentOverview.recentExecutions || []).map(
-                                    (
-                                      execution: WorkflowExecutionHistoryEntry,
-                                      index: number
-                                    ) => (
-                                      <div
-                                        key={`${liveDeploymentOverview.id}-run-${execution.executionName || index}`}
-                                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-300"
-                                      >
-                                        <div className="space-y-1">
-                                          <p className="break-all text-zinc-200">
-                                            {execution.executionName || "execution"}
-                                          </p>
-                                          <p className="text-zinc-500">
-                                            {formatDateTime(execution.startedAt)}
-                                            {" -> "}
-                                            {formatDateTime(execution.completedAt)}
-                                          </p>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                          <span
-                                            className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
-                                              execution.status
-                                            )}`}
-                                          >
-                                            {(execution.status || "unknown").toUpperCase()}
-                                          </span>
-                                          <a
-                                            href={buildDeploymentLogsHref({
-                                              deploymentId: liveDeploymentOverview.id,
-                                              workflowId: selectedWorkflowId,
-                                              workflowSlug: selectedSlug,
-                                              executionName:
-                                                execution.executionName || undefined,
-                                            })}
-                                            className="text-[11px] text-blue-300 hover:text-blue-200"
-                                          >
-                                            Logs
-                                          </a>
-                                        </div>
-                                      </div>
-                                    )
-                                  )}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-zinc-500">
-                                  No recent executions reported yet.
-                                </p>
-                              )}
-                            </div>
-                          ) : null}
                         </div>
-                      ) : null}
+
+                        {liveDeploymentError ? (
+                          <div className="rounded-md border border-red-900/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+                            <div className="flex items-center justify-between gap-3">
+                              <p>{liveDeploymentError}</p>
+                              <button
+                                onClick={() =>
+                                  void loadLiveDeploymentOverview({
+                                    forceReconcile: true,
+                                  })
+                                }
+                                disabled={liveDeploymentLoading}
+                                className="whitespace-nowrap rounded-md border border-red-900/60 px-2 py-1 text-[11px] text-red-100 transition-colors hover:bg-red-900/20 disabled:opacity-50"
+                              >
+                                {liveDeploymentLoading &&
+                                liveDeploymentAction === "retry"
+                                  ? "Retrying..."
+                                  : "Retry status sync"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {!liveDeploymentLoading &&
+                        !liveDeploymentOverview &&
+                        !liveDeploymentError ? (
+                          <p className="text-xs text-zinc-500">
+                            No deployment record found for this workflow yet.
+                          </p>
+                        ) : null}
+
+                        {liveDeploymentOverview ? (
+                          <div className="space-y-3">
+                            <div className="grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
+                              <p>
+                                <span className="text-zinc-500">Compute:</span>{" "}
+                                {formatProviderComputeLabel(
+                                  effectiveProvider,
+                                  liveDeploymentOverview.platform?.computeType ||
+                                    liveDeploymentOverview.executionKind
+                                )}{" "}
+                                ({liveDeploymentOverview.platform?.computeName || "unknown"})
+                              </p>
+                              <p>
+                                <span className="text-zinc-500">Scheduler:</span>{" "}
+                                {liveDeploymentOverview.platform?.schedulerJobId ||
+                                  liveDeploymentOverview.schedulerId ||
+                                  "Not configured"}
+                              </p>
+                              <p>
+                                <span className="text-zinc-500">
+                                  {effectiveProvider === "gcp" ? "Project" : "Log Group"}:
+                                </span>{" "}
+                                {effectiveProvider === "gcp"
+                                  ? liveDeploymentOverview.platform?.gcpProject ||
+                                    liveDeploymentOverview.gcpProject ||
+                                    "N/A"
+                                  : liveDeploymentOverview.platform?.logGroupName ||
+                                    "N/A"}
+                              </p>
+                              <p>
+                                <span className="text-zinc-500">Last deployed:</span>{" "}
+                                {formatDateTime(
+                                  liveDeploymentOverview.deployedAt ||
+                                    liveDeploymentOverview.updatedAt
+                                )}
+                              </p>
+                              <p>
+                                <span className="text-zinc-500">Status:</span>{" "}
+                                {(
+                                  liveDeploymentOverview.recentExecutions?.[0]?.status ||
+                                  liveDeploymentOverview.status ||
+                                  "unknown"
+                                ).toUpperCase()}
+                              </p>
+                            </div>
+
+                            {liveDeploymentOverview.platform?.endpointUrl ? (
+                              <p className="break-all text-xs text-zinc-400">
+                                <span className="text-zinc-500">Endpoint:</span>{" "}
+                                {liveDeploymentOverview.platform.endpointUrl}
+                              </p>
+                            ) : null}
+
+                            {liveDeploymentOverview.liveError ? (
+                              <div className="rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p>{liveDeploymentOverview.liveError}</p>
+                                  <button
+                                    onClick={() =>
+                                      void loadLiveDeploymentOverview({
+                                        forceReconcile: true,
+                                      })
+                                    }
+                                    disabled={liveDeploymentLoading}
+                                    className="whitespace-nowrap rounded-md border border-amber-900/60 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-900/20 disabled:opacity-50"
+                                  >
+                                    {liveDeploymentLoading &&
+                                    liveDeploymentAction === "retry"
+                                      ? "Retrying..."
+                                      : "Retry status sync"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {(liveDeploymentOverview.recentExecutions || []).length > 0 ? (
+                              <div className="space-y-2">
+                                <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                                  Recent Runs
+                                </p>
+                                {(liveDeploymentOverview.recentExecutions || []).map(
+                                  (
+                                    execution: WorkflowExecutionHistoryEntry,
+                                    index: number
+                                  ) => (
+                                    <div
+                                      key={`${liveDeploymentOverview.id}-run-${execution.executionName || index}`}
+                                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-800 px-3 py-2 text-xs text-zinc-300"
+                                    >
+                                      <div className="space-y-1">
+                                        <p className="break-all text-zinc-200">
+                                          {execution.executionName || "execution"}
+                                        </p>
+                                        <p className="text-zinc-500">
+                                          {formatDateTime(execution.startedAt)}
+                                          {" -> "}
+                                          {formatDateTime(execution.completedAt)}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className={`rounded-full border px-2 py-0.5 text-[10px] ${deploymentStatusTone(
+                                            execution.status
+                                          )}`}
+                                        >
+                                          {(execution.status || "unknown").toUpperCase()}
+                                        </span>
+                                        <a
+                                          href={buildDeploymentLogsHref({
+                                            provider: effectiveProvider,
+                                            deploymentId: liveDeploymentOverview.id,
+                                            workflowId: selectedWorkflowId,
+                                            workflowSlug: selectedSlug,
+                                            executionName:
+                                              execution.executionName || undefined,
+                                          })}
+                                          className="text-[11px] text-blue-300 hover:text-blue-200"
+                                        >
+                                          Logs
+                                        </a>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-zinc-500">
+                                No recent executions reported yet.
+                              </p>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
 
                       {deployStatus === "error" ? (
                         <div className="mt-4 rounded-md border border-rose-900/40 bg-rose-950/20 px-3 py-3 text-sm text-rose-100">
@@ -4180,6 +4290,15 @@ export function WorkflowStudio() {
                           </span>
                         ))}
                       </div>
+
+                      {deploymentSecretSyncSummary ? (
+                        <DeploymentSecretSyncCard
+                          summary={deploymentSecretSyncSummary}
+                          title="Secret Sync"
+                          description="These connection secret references are included when this workflow deploys."
+                          className="mt-3"
+                        />
+                      ) : null}
 
                       {deploymentPlan.warnings.length > 0 ? (
                         <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">

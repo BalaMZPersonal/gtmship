@@ -83,6 +83,9 @@ importers:
       '@activepieces/pieces-framework':
         specifier: ^0.26.0
         version: 0.26.0
+      '@aws-sdk/client-cloudwatch-logs':
+        specifier: ^3.0.0
+        version: 3.1022.0
       '@aws-sdk/client-secrets-manager':
         specifier: ^3.840.0
         version: 3.1022.0

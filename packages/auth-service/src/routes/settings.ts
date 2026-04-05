@@ -9,6 +9,7 @@ import {
   validateSecretManagerReadiness,
 } from "../services/auth-strategy.js";
 import { enforceAuthModeOnExistingDeployments } from "../services/workflow-deployment-auth.js";
+import { SETUP_STATE_SETTING_KEY } from "../services/setup.js";
 
 export const settingsRoutes: Router = Router();
 
@@ -16,7 +17,13 @@ const SENSITIVE_KEYS = ["anthropic_api_key", "openai_api_key", "aws_secret_acces
 
 // Get all settings
 settingsRoutes.get("/", async (_req, res) => {
-  const settings = await prisma.setting.findMany();
+  const settings = await prisma.setting.findMany({
+    where: {
+      key: {
+        not: SETUP_STATE_SETTING_KEY,
+      },
+    },
+  });
   const safe = settings.map((s) => ({
     key: s.key,
     value: SENSITIVE_KEYS.includes(s.key)

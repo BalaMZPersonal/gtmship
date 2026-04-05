@@ -16,26 +16,51 @@ export async function triggersCommand(options: TriggersOptions) {
   const gcpProject = config?.deploy?.gcpProject;
   const projectName = config?.name || "gtmship";
 
-  let apiEndpoint = "";
-  try {
-    const status =
-      provider === "gcp"
-        ? await getGcpDeployStatus(projectName)
-        : await getDeployStatus(projectName);
+  // Load workflow plans first (without baseUrl) so we know the workflow IDs
+  const rawWorkflowPlans = loadWorkflowPlans(process.cwd(), {
+    providerOverride: provider,
+    regionOverride: region,
+    gcpProjectOverride: gcpProject,
+    workflowId: options.workflow,
+  });
 
-    if (status.isDeployed) {
-      apiEndpoint = status.outputs["apiGatewayUrl"] || status.outputs["serviceUrl"] || "";
+  // Look up per-workflow deploy status to find endpoints
+  const endpointsByWorkflow: Record<string, string> = {};
+  for (const wp of rawWorkflowPlans) {
+    try {
+      const status =
+        provider === "gcp"
+          ? await getGcpDeployStatus(projectName, wp.workflowId)
+          : await getDeployStatus(projectName);
+      if (status.isDeployed) {
+        const endpoint = status.outputs["apiGatewayUrl"] || status.outputs["serviceUrl"] || "";
+        if (endpoint) endpointsByWorkflow[wp.workflowId] = endpoint;
+      }
+    } catch {
+      // Try legacy shared stack as fallback
+      try {
+        const status =
+          provider === "gcp"
+            ? await getGcpDeployStatus(projectName)
+            : await getDeployStatus(projectName);
+        if (status.isDeployed) {
+          const endpoint = status.outputs["apiGatewayUrl"] || status.outputs["serviceUrl"] || "";
+          if (endpoint) endpointsByWorkflow[wp.workflowId] = endpoint;
+        }
+      } catch {
+        // No deployed status available
+      }
     }
-  } catch {
-    // Fall back to local planning only.
   }
+
+  const firstEndpoint = Object.values(endpointsByWorkflow)[0] || "";
 
   const workflowPlans = loadWorkflowPlans(process.cwd(), {
     providerOverride: provider,
     regionOverride: region,
     gcpProjectOverride: gcpProject,
     workflowId: options.workflow,
-    baseUrl: apiEndpoint || undefined,
+    baseUrl: firstEndpoint || undefined,
   });
 
   if (workflowPlans.length === 0) {
@@ -50,7 +75,7 @@ export async function triggersCommand(options: TriggersOptions) {
     return;
   }
 
-  if (!apiEndpoint) {
+  if (!firstEndpoint) {
     console.log(
       chalk.gray(
         "  No deployed endpoint detected yet. Showing planned trigger metadata.\n",

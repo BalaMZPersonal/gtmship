@@ -302,6 +302,15 @@ async function syncWorkflowControlPlane(
     computeId: string;
     apiEndpoint: string;
     schedulerJobId?: string;
+    runtimeTarget?: {
+      computeType: "service" | "job" | "lambda";
+      computeName: string;
+      endpointUrl: string;
+      schedulerJobId?: string;
+      region: string;
+      gcpProject?: string;
+      logGroupName?: string;
+    };
     gcpTarget?: {
       kind: "service" | "job";
       name: string;
@@ -321,11 +330,17 @@ async function syncWorkflowControlPlane(
         deployments: workflowPlans.map((workflowPlan) => {
           const plan = workflowPlan.plan;
           const endpointUrl =
-            context.gcpTarget?.endpointUrl || context.apiEndpoint || null;
+            context.provider === "gcp"
+              ? context.gcpTarget?.endpointUrl || context.apiEndpoint || null
+              : context.runtimeTarget?.endpointUrl || context.apiEndpoint || null;
           const schedulerId =
-            context.gcpTarget?.schedulerJobId ||
-            context.schedulerJobId ||
-            null;
+            context.provider === "gcp"
+              ? context.gcpTarget?.schedulerJobId ||
+                context.schedulerJobId ||
+                null
+              : context.runtimeTarget?.schedulerJobId ||
+                context.schedulerJobId ||
+                null;
           const runtimeTarget =
             context.provider === "gcp"
               ? {
@@ -340,11 +355,14 @@ async function syncWorkflowControlPlane(
                   region: plan.region || context.gcpTarget?.region || null,
                 }
               : {
-                  computeType: "lambda",
-                  computeName: context.computeId || null,
+                  computeType: context.runtimeTarget?.computeType || "lambda",
+                  computeName:
+                    context.runtimeTarget?.computeName || context.computeId || null,
                   endpointUrl,
-                  schedulerId: null,
-                  region: plan.region || context.region,
+                  schedulerId,
+                  region:
+                    context.runtimeTarget?.region || plan.region || context.region,
+                  logGroupName: context.runtimeTarget?.logGroupName || null,
                 };
 
           return {
@@ -526,29 +544,6 @@ export async function deployCommand(options: DeployOptions) {
   }
   console.log("");
 
-  // Derive resource needs from workflow plans
-  const hasSchedule = workflowPlans.some((wp) => wp.plan.trigger.type === "schedule");
-  const hasJob = workflowPlans.some((wp) => wp.plan.executionKind === "job");
-  const hasSecretManager = workflowPlans.some((wp) => wp.plan.authMode === "secret_manager");
-  const schedulePlan = workflowPlans.find((wp) => wp.plan.trigger.type === "schedule")?.plan;
-
-  const memoryPlan = workflowPlans.find((wp) => wp.plan.memory)?.plan;
-  const cpuPlan = workflowPlans.find((wp) => wp.plan.cpu)?.plan;
-  const hasWebhook = workflowPlans.some((wp) => wp.plan.trigger.type === "webhook");
-
-  const gcpNeeds = provider === "gcp" ? {
-    executionKind: (hasJob ? "job" : "service") as "job" | "service",
-    cloudScheduler: hasSchedule,
-    scheduleCron: schedulePlan?.trigger.cron,
-    scheduleTimezone: schedulePlan?.trigger.timezone,
-    secretManager: hasSecretManager,
-    publicIngress: hasWebhook,
-    database: false,
-    storage: false,
-    memory: memoryPlan?.memory,
-    cpu: cpuPlan?.cpu,
-  } : undefined;
-
   // -------------------------------------------------------------------------
   // Validate GCP resource constraints before building
   // -------------------------------------------------------------------------
@@ -608,44 +603,6 @@ export async function deployCommand(options: DeployOptions) {
     process.exit(1);
   }
 
-  const lambdaCodePath =
-    provider === "aws" ? buildArtifacts[0]?.artifactPath : undefined;
-  const serviceCodePath =
-    provider === "gcp" ? (buildArtifacts[0]?.imageUri || buildArtifacts[0]?.artifactPath) : undefined;
-
-  // -------------------------------------------------------------------------
-  // Build runtime environment variables
-  // -------------------------------------------------------------------------
-
-  const executionKind = gcpNeeds?.executionKind || "service";
-  const runtimeAuthPlan = workflowPlans[0]?.plan;
-  const runtimeBackend = runtimeAuthPlan?.auth?.backend;
-  const runtimeEnvVars: Record<string, string> = {
-    GTMSHIP_RUNTIME_MODE:
-      provider === "aws"
-        ? "lambda"
-        : executionKind === "job"
-          ? "cloud-run-job"
-          : "cloud-run-service",
-    GTMSHIP_WORKFLOW_ID: workflowPlans[0]?.workflowId || "",
-    GTMSHIP_RUNTIME_AUTH_MODE: runtimeAuthPlan?.authMode || "proxy",
-    ...(runtimeAuthPlan?.authMode === "secret_manager" &&
-    runtimeBackend?.kind
-      ? {
-          GTMSHIP_SECRET_BACKEND_KIND: runtimeBackend.kind,
-          ...(runtimeBackend.region
-            ? { GTMSHIP_SECRET_BACKEND_REGION: runtimeBackend.region }
-            : {}),
-          ...(runtimeBackend.projectId
-            ? { GTMSHIP_SECRET_BACKEND_PROJECT_ID: runtimeBackend.projectId }
-            : {}),
-          GTMSHIP_RUNTIME_AUTH_MANIFEST: JSON.stringify(
-            runtimeAuthPlan?.auth?.manifest || { providers: [] },
-          ),
-        }
-      : {}),
-  };
-
   // Ensure Pulumi local backend doesn't prompt for a passphrase
   if (!process.env.PULUMI_CONFIG_PASSPHRASE && !process.env.PULUMI_CONFIG_PASSPHRASE_FILE) {
     process.env.PULUMI_CONFIG_PASSPHRASE = "";
@@ -655,126 +612,196 @@ export async function deployCommand(options: DeployOptions) {
   await resolveCredentials(provider, authUrl);
   credSpinner.succeed("Cloud credentials resolved");
 
-  const deploySpinner = ora(
-    `Deploying to ${provider.toUpperCase()} ${region}...`,
-  ).start();
+  // -------------------------------------------------------------------------
+  // Deploy each workflow individually
+  // -------------------------------------------------------------------------
 
-  try {
-    const { deploy } = await import("@gtmship/deploy-engine");
+  const { deploy } = await import("@gtmship/deploy-engine");
+  type UnifiedDeployResult = Awaited<ReturnType<typeof deploy>>;
+  const deployResults: Array<{ workflowId: string; result: UnifiedDeployResult }> = [];
+  let deployFailures = 0;
 
-    const result = await deploy({
-      provider,
-      region,
-      compute: compute as "lambda" | "ecs" | "cloud-run",
-      projectName,
-      gcpProject,
-      gcpNeeds,
-      lambdaCodePath,
-      serviceCodePath,
-      runtimeEnvVars,
-    });
+  for (const wp of workflowPlans) {
+    const artifact = buildArtifacts.find((a) => a.workflowId === wp.workflowId);
+    if (!artifact) {
+      console.log(chalk.yellow(`  Skipping ${wp.workflowId}: no build artifact found.`));
+      continue;
+    }
 
-    deploySpinner.succeed("Infrastructure deployed successfully");
-    console.log("");
+    const plan = wp.plan;
 
-    console.log(chalk.green("  Deployment Summary"));
-    console.log(chalk.green("  " + "─".repeat(50)));
-    console.log(
-      chalk.white(`  API Endpoint:   ${chalk.cyan(result.apiEndpoint)}`),
-    );
-    console.log(
-      chalk.white(`  Compute:        ${chalk.gray(result.computeId)}`),
-    );
-    console.log(
-      chalk.white(
-        `  Database:       ${chalk.gray(result.databaseEndpoint)}`,
-      ),
-    );
-    console.log(
-      chalk.white(`  Storage:        ${chalk.gray(result.storageBucket)}`),
-    );
-    console.log("");
+    // Per-workflow GCP needs
+    const gcpNeeds = provider === "gcp" ? {
+      executionKind: plan.executionKind as "job" | "service",
+      cloudScheduler: plan.trigger.type === "schedule",
+      scheduleCron: plan.trigger.cron,
+      scheduleTimezone: plan.trigger.timezone,
+      secretManager: plan.authMode === "secret_manager",
+      publicIngress: plan.trigger.type === "webhook",
+      database: false,
+      storage: false,
+      memory: plan.memory,
+      cpu: plan.cpu,
+    } : undefined;
+    const awsNeeds = provider === "aws" ? {
+      publicIngress: plan.trigger.type === "webhook",
+      cloudScheduler: plan.trigger.type === "schedule",
+      scheduleCron: plan.trigger.cron,
+      scheduleTimezone: plan.trigger.timezone,
+      secretManager: plan.authMode === "secret_manager",
+      database: false,
+      storage: false,
+      memory: plan.memory,
+      cpu: plan.cpu,
+    } : undefined;
+
+    const lambdaCodePath = provider === "aws" ? artifact.artifactPath : undefined;
+    const serviceCodePath = provider === "gcp"
+      ? (artifact.imageUri || artifact.artifactPath)
+      : undefined;
+
+    // Per-workflow runtime env vars
+    const runtimeBackend = plan.auth?.backend;
+    const runtimeEnvVars: Record<string, string> = {
+      GTMSHIP_RUNTIME_MODE:
+        provider === "aws"
+          ? "lambda"
+          : plan.executionKind === "job"
+            ? "cloud-run-job"
+            : "cloud-run-service",
+      GTMSHIP_WORKFLOW_ID: wp.workflowId,
+      GTMSHIP_RUNTIME_AUTH_MODE: plan.authMode || "proxy",
+      ...(plan.authMode === "secret_manager" && runtimeBackend?.kind
+        ? {
+            GTMSHIP_SECRET_BACKEND_KIND: runtimeBackend.kind,
+            ...(runtimeBackend.region
+              ? { GTMSHIP_SECRET_BACKEND_REGION: runtimeBackend.region }
+              : {}),
+            ...(runtimeBackend.projectId
+              ? { GTMSHIP_SECRET_BACKEND_PROJECT_ID: runtimeBackend.projectId }
+              : {}),
+            GTMSHIP_RUNTIME_AUTH_MANIFEST: JSON.stringify(
+              plan.auth?.manifest || { providers: [] },
+            ),
+          }
+        : {}),
+    };
+
+    const deploySpinner = ora(
+      `Deploying ${wp.workflowId} to ${provider.toUpperCase()} ${region}...`,
+    ).start();
 
     try {
-      const deployedWorkflowPlans = applyAuthStrategyToWorkflowPlans(
+      const result = await deploy({
+        provider,
+        region,
+        compute: compute as "lambda" | "ecs" | "cloud-run",
+        projectName,
+        workflowId: wp.workflowId,
+        gcpProject,
+        gcpNeeds,
+        awsNeeds,
+        lambdaCodePath,
+        serviceCodePath,
+        runtimeEnvVars,
+      });
+
+      deploySpinner.succeed(`${wp.workflowId} deployed successfully`);
+      deployResults.push({ workflowId: wp.workflowId, result });
+
+      // Sync this workflow's deployment to the control plane
+      try {
+        const deployedPlans = applyAuthStrategyToWorkflowPlans(
           loadWorkflowPlans(process.cwd(), {
             providerOverride: provider,
             regionOverride: region,
             gcpProjectOverride: gcpProject,
-            workflowId: options.workflow,
+            workflowId: wp.workflowId,
             baseUrl: result.apiEndpoint,
             connections,
           }),
-          authStrategy
+          authStrategy,
         );
-      const syncedCount = await syncWorkflowControlPlane(
-        authUrl,
-        deployedWorkflowPlans,
-        {
-            rawOutputs: result.rawOutputs,
-            provider,
-            region,
-            gcpProject,
-            computeId: result.computeId,
-            apiEndpoint: result.apiEndpoint,
-            schedulerJobId: result.schedulerJobId || undefined,
-            gcpTarget: result.gcpTarget,
-          },
-      );
+        await syncWorkflowControlPlane(authUrl, deployedPlans, {
+          rawOutputs: result.rawOutputs,
+          provider,
+          region,
+          gcpProject,
+          computeId: result.computeId,
+          apiEndpoint: result.apiEndpoint,
+          schedulerJobId: result.schedulerJobId || undefined,
+          runtimeTarget: result.runtimeTarget,
+          gcpTarget: result.gcpTarget,
+        });
+      } catch (syncErr) {
+        console.log(
+          chalk.yellow(
+            `  Control Plane sync skipped for ${wp.workflowId}: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`,
+          ),
+        );
+      }
+    } catch (err) {
+      deploySpinner.fail(`${wp.workflowId} deployment failed`);
       console.log(
-        chalk.gray(
-          `  Control Plane: synced ${syncedCount} workflow deployment record${syncedCount === 1 ? "" : "s"}`,
+        chalk.red(
+          `  ${err instanceof Error ? err.message : String(err)}`,
         ),
       );
-      console.log("");
-    } catch (error) {
-      console.log(
-        chalk.yellow(
-          `  Control Plane sync skipped: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      );
-      console.log("");
+      deployFailures++;
     }
+  }
 
-    console.log(chalk.green("  Workflow Triggers"));
-    console.log(chalk.green("  " + "─".repeat(50)));
-    for (const workflowPlan of applyAuthStrategyToWorkflowPlans(
-        loadWorkflowPlans(process.cwd(), {
-          providerOverride: provider,
-          regionOverride: region,
-          gcpProjectOverride: gcpProject,
-          workflowId: options.workflow,
-          baseUrl: result.apiEndpoint,
-          connections,
-        }),
-        authStrategy
-      )) {
-      const triggerSummary =
-        workflowPlan.plan.trigger.endpoint ||
-        workflowPlan.plan.trigger.cron ||
-        workflowPlan.plan.trigger.eventName ||
-        workflowPlan.plan.trigger.description;
-      console.log(
-        chalk.white(
-          `  ${workflowPlan.plan.workflowId}: ${chalk.cyan(triggerSummary)}`,
-        ),
-      );
-    }
-    console.log("");
+  cleanupCredentials();
 
+  if (deployResults.length === 0) {
+    console.log(chalk.red("\n  All deployments failed."));
+    process.exit(1);
+  }
+
+  // -------------------------------------------------------------------------
+  // Summary
+  // -------------------------------------------------------------------------
+
+  console.log("");
+  console.log(chalk.green("  Deployment Summary"));
+  console.log(chalk.green("  " + "─".repeat(50)));
+  for (const { workflowId, result } of deployResults) {
     console.log(
-      chalk.gray("  View logs with: gtmship logs --provider " + provider),
+      chalk.white(`  ${workflowId}: ${chalk.cyan(result.apiEndpoint || result.computeId)}`),
     );
-    console.log(chalk.gray("  View triggers with: gtmship triggers"));
-  } catch (err) {
-    deploySpinner.fail("Deployment failed");
+  }
+  if (deployFailures > 0) {
+    console.log(chalk.yellow(`  ${deployFailures} workflow(s) failed to deploy.`));
+  }
+  console.log("");
+
+  console.log(chalk.green("  Workflow Triggers"));
+  console.log(chalk.green("  " + "─".repeat(50)));
+  for (const workflowPlan of applyAuthStrategyToWorkflowPlans(
+      loadWorkflowPlans(process.cwd(), {
+        providerOverride: provider,
+        regionOverride: region,
+        gcpProjectOverride: gcpProject,
+        workflowId: options.workflow,
+        connections,
+      }),
+      authStrategy
+    )) {
+    const triggerSummary =
+      workflowPlan.plan.trigger.endpoint ||
+      workflowPlan.plan.trigger.cron ||
+      workflowPlan.plan.trigger.eventName ||
+      workflowPlan.plan.trigger.description;
     console.log(
-      chalk.red(
-        `\n  ${err instanceof Error ? err.message : String(err)}`,
+      chalk.white(
+        `  ${workflowPlan.plan.workflowId}: ${chalk.cyan(triggerSummary)}`,
       ),
     );
-    process.exit(1);
-  } finally {
-    cleanupCredentials();
   }
+  console.log("");
+
+  console.log(
+    chalk.gray("  View logs with: gtmship logs --provider " + provider),
+  );
+  console.log(chalk.gray("  View triggers with: gtmship triggers"));
 }

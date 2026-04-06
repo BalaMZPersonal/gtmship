@@ -12,6 +12,103 @@ import {
   confirmAction,
   type OutputOptions,
 } from "../lib/output.js";
+import {
+  fetchConnectionAuthStrategyStatus,
+  fetchConnectionSecretReplicas,
+  formatSecretBackendTarget,
+  isSecretManagerMode,
+  summarizeConfiguredSecretBackends,
+  summarizeConnectionSecretReplicas,
+  triggerConnectionSecretReplicaSync,
+  type CliConnectionSecretReplica,
+  type CliSecretBackendKind,
+} from "../lib/connection-auth.js";
+
+function renderConnectionSecretReplicas(
+  replicas: CliConnectionSecretReplica[]
+): void {
+  printTable(
+    replicas.map((replica) => ({
+      backend: formatSecretBackendTarget({
+        kind: replica.backendKind,
+        region: replica.backendRegion,
+        projectId: replica.backendProjectId,
+      }),
+      status: replica.status,
+      synced: replica.lastSyncedAt || "",
+      runtime_ref: replica.runtimeSecretRef,
+      error: replica.lastError || "",
+    })),
+    [
+      { key: "backend", label: "Backend" },
+      { key: "status", label: "Status" },
+      { key: "synced", label: "Last Synced" },
+      { key: "runtime_ref", label: "Runtime Ref" },
+      { key: "error", label: "Last Error" },
+    ],
+  );
+}
+
+async function printBackgroundSecretSyncStatus(connectionId: string): Promise<void> {
+  const strategy = await fetchConnectionAuthStrategyStatus();
+  if (!strategy || !isSecretManagerMode(strategy)) {
+    return;
+  }
+
+  const backendSummary = summarizeConfiguredSecretBackends(
+    strategy.configuredBackends
+  );
+
+  try {
+    const replicas = await fetchConnectionSecretReplicas(connectionId);
+    const summary = summarizeConnectionSecretReplicas(replicas);
+    const replicaTargets = Array.from(
+      new Set(
+        replicas.map((replica) =>
+          formatSecretBackendTarget({
+            kind: replica.backendKind,
+            region: replica.backendRegion,
+            projectId: replica.backendProjectId,
+          })
+        )
+      )
+    );
+    const targetSummary =
+      replicaTargets.length > 0 ? replicaTargets.join(", ") : backendSummary;
+
+    if (summary.error > 0) {
+      printWarning(
+        `Connection saved locally, but ${summary.error} secret replica sync${summary.error === 1 ? "" : "s"} failed.`
+      );
+      console.log(
+        chalk.gray(`  Inspect replicas with: gtmship connections replicas ${connectionId}`)
+      );
+      return;
+    }
+
+    if (summary.pending > 0 || replicas.length === 0) {
+      printWarning(
+        `Connection saved locally. Secret sync is running in the background for ${targetSummary}.`
+      );
+      console.log(
+        chalk.gray(`  Inspect replicas with: gtmship connections replicas ${connectionId}`)
+      );
+      return;
+    }
+
+    printDetail(
+      "Secret Sync",
+      `${summary.active} active replica${summary.active === 1 ? "" : "s"} on ${targetSummary}`
+    );
+  } catch {
+    printWarning(
+      `Connection saved locally. Secret sync is running in the background for ${backendSummary}.`
+    );
+    console.log(
+      chalk.gray(`  Inspect replicas with: gtmship connections replicas ${connectionId}`)
+    );
+  }
+}
 
 async function listConnections(opts: OutputOptions) {
   try {
@@ -163,10 +260,13 @@ async function connectCommand(
         `/auth/${encodeURIComponent(slug)}/connect-key`,
         body,
       );
+      const result = data as { id: string; provider: string; status: string };
       formatOutput(data, opts, () => {
-        const result = data as { id: string; provider: string; status: string };
         printSuccess(`Connected to ${slug} (ID: ${result.id})`);
       });
+      if (!opts.json) {
+        await printBackgroundSecretSyncStatus(result.id);
+      }
       return;
     }
 
@@ -238,6 +338,9 @@ async function connectCommand(
                 `Connected to ${slug} (ID: ${newConn.id}, status: ${newConn.status})`,
               );
             });
+            if (!opts.json) {
+              await printBackgroundSecretSyncStatus(newConn.id);
+            }
             return;
           }
         } catch {
@@ -284,13 +387,13 @@ async function refreshConnection(id: string, opts: OutputOptions) {
     const data = await apiPost(
       `/connections/${encodeURIComponent(id)}/refresh`,
     );
+    const result = data as {
+      success: boolean;
+      message?: string;
+      error?: string;
+      needsReconnect?: boolean;
+    };
     formatOutput(data, opts, () => {
-      const result = data as {
-        success: boolean;
-        message?: string;
-        error?: string;
-        needsReconnect?: boolean;
-      };
       if (result.success) {
         printSuccess("Token refreshed.");
       } else {
@@ -300,6 +403,63 @@ async function refreshConnection(id: string, opts: OutputOptions) {
           printWarning("Provider requires re-authentication.");
         }
       }
+    });
+    if (result.success && !opts.json) {
+      await printBackgroundSecretSyncStatus(id);
+    }
+  } catch (err) {
+    handleError(err, opts);
+  }
+}
+
+async function listConnectionSecretReplicas(
+  id: string,
+  opts: OutputOptions
+) {
+  try {
+    const replicas = await fetchConnectionSecretReplicas(id);
+    formatOutput(replicas, opts, () => {
+      if (replicas.length === 0) {
+        printWarning("No secret replicas found for this connection.");
+        return;
+      }
+
+      renderConnectionSecretReplicas(replicas);
+      const summary = summarizeConnectionSecretReplicas(replicas);
+      printDetail(
+        "Summary",
+        `${summary.active} active, ${summary.pending} pending, ${summary.error} error`
+      );
+    });
+  } catch (err) {
+    handleError(err, opts);
+  }
+}
+
+async function syncConnectionSecrets(
+  id: string,
+  opts: OutputOptions & {
+    backendKind?: CliSecretBackendKind;
+    backendRegion?: string;
+    backendProjectId?: string;
+  }
+) {
+  try {
+    const result = await triggerConnectionSecretReplicaSync({
+      connectionId: id,
+      backendKind: opts.backendKind,
+      backendRegion: opts.backendRegion,
+      backendProjectId: opts.backendProjectId,
+    });
+
+    formatOutput(result, opts, () => {
+      printSuccess(`Secret replicas synced for connection "${id}".`);
+      renderConnectionSecretReplicas(result.replicas);
+      const summary = summarizeConnectionSecretReplicas(result.replicas);
+      printDetail(
+        "Summary",
+        `${summary.active} active, ${summary.pending} pending, ${summary.error} error`
+      );
     });
   } catch (err) {
     handleError(err, opts);
@@ -376,6 +536,26 @@ export function registerConnectionsCommand(program: Command) {
     .argument("<id>", "Connection ID")
     .option("--json", "Output as JSON")
     .action((id, opts) => refreshConnection(id, opts));
+
+  cmd
+    .command("replicas")
+    .description("List secret-manager replicas for a connection")
+    .argument("<id>", "Connection ID")
+    .option("--json", "Output as JSON")
+    .action((id, opts) => listConnectionSecretReplicas(id, opts));
+
+  cmd
+    .command("sync-secrets")
+    .description("Force a secret-manager sync for a connection")
+    .argument("<id>", "Connection ID")
+    .option(
+      "--backend-kind <kind>",
+      "Secret backend kind (aws_secrets_manager or gcp_secret_manager)"
+    )
+    .option("--backend-region <region>", "AWS secret-manager region override")
+    .option("--backend-project-id <projectId>", "GCP secret-manager project override")
+    .option("--json", "Output as JSON")
+    .action((id, opts) => syncConnectionSecrets(id, opts));
 
   cmd
     .command("delete")

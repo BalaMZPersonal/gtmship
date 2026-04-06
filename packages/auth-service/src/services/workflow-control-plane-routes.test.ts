@@ -3,9 +3,12 @@ import test from "node:test";
 import { prisma } from "./db.js";
 import {
   buildAwsExecutionSummaries,
+  buildLocalExecutionSummaries,
   deleteWorkflowDeploymentsByWorkflowId,
   deriveAwsPlatformMetadata,
   deriveGcpPlatformMetadata,
+  deriveLocalPlatformMetadata,
+  preflightDeploymentAuthRecords,
 } from "./workflow-control-plane-routes.js";
 
 test("deleteWorkflowDeploymentsByWorkflowId returns the deleted deployment count", async (t) => {
@@ -84,6 +87,38 @@ test("deriveGcpPlatformMetadata keeps the current cloud run mapping intact", () 
   });
 });
 
+test("deriveLocalPlatformMetadata reads local runtime metadata from the deployment inventory", () => {
+  const deployment = {
+    workflowId: "workflow-local",
+    provider: "local",
+    region: "local",
+    endpointUrl: "local://workflow-local",
+    schedulerId: "gtmship-workflow-dispatch.timer",
+    resourceInventory: {
+      runtimeTarget: {
+        computeType: "job",
+        computeName: "workflow-local",
+        endpointUrl: "local://workflow-local",
+        schedulerId: "gtmship-workflow-dispatch.timer",
+        region: "local",
+        logPath: "/tmp/workflow-local.log",
+      },
+      platformOutputs: {
+        localLogPath: "/tmp/workflow-local.log",
+      },
+    },
+  } as any;
+
+  assert.deepEqual(deriveLocalPlatformMetadata(deployment), {
+    computeType: "job",
+    computeName: "workflow-local",
+    endpointUrl: "local://workflow-local",
+    schedulerJobId: "gtmship-workflow-dispatch.timer",
+    region: "local",
+    logPath: "/tmp/workflow-local.log",
+  });
+});
+
 test("buildAwsExecutionSummaries groups lambda request ids into recent runs", () => {
   const summaries = buildAwsExecutionSummaries(
     [
@@ -129,5 +164,134 @@ test("buildAwsExecutionSummaries groups lambda request ids into recent runs", ()
       { executionName: "req-2", status: "failure" },
       { executionName: "req-1", status: "success" },
     ]
+  );
+});
+
+test("buildLocalExecutionSummaries maps workflow runs into recent local executions", () => {
+  const summaries = buildLocalExecutionSummaries(
+    [
+      {
+        id: "wr-2",
+        deploymentId: "wd-local",
+        executionId: "local_run_2",
+        triggerSource: "schedule",
+        status: "failure",
+        cloudRef: "local:local_run_2",
+        startedAt: new Date("2026-04-05T10:05:00.000Z"),
+        endedAt: new Date("2026-04-05T10:05:03.000Z"),
+        requestPayload: null,
+        responsePayload: null,
+        error: { message: "boom" },
+        createdAt: new Date("2026-04-05T10:05:00.000Z"),
+        updatedAt: new Date("2026-04-05T10:05:03.000Z"),
+      },
+      {
+        id: "wr-1",
+        deploymentId: "wd-local",
+        executionId: "local_run_1",
+        triggerSource: "manual",
+        status: "success",
+        cloudRef: "local:local_run_1",
+        startedAt: new Date("2026-04-05T10:00:00.000Z"),
+        endedAt: new Date("2026-04-05T10:00:02.000Z"),
+        requestPayload: null,
+        responsePayload: { ok: true },
+        error: null,
+        createdAt: new Date("2026-04-05T10:00:00.000Z"),
+        updatedAt: new Date("2026-04-05T10:00:02.000Z"),
+      },
+    ] as any,
+    5
+  );
+
+  assert.deepEqual(
+    summaries.map((summary) => ({
+      executionName: summary.executionName,
+      status: summary.status,
+      triggerSource: summary.triggerSource,
+    })),
+    [
+      {
+        executionName: "local_run_2",
+        status: "failure",
+        triggerSource: "schedule",
+      },
+      {
+        executionName: "local_run_1",
+        status: "success",
+        triggerSource: "manual",
+      },
+    ]
+  );
+});
+
+test("preflightDeploymentAuthRecords keeps local deployments on proxy auth without backend checks", async (t) => {
+  const prismaClient = prisma as unknown as {
+    setting: {
+      findUnique: (args: unknown) => Promise<{ value: string } | null>;
+    };
+  };
+  const originalFindUnique = prismaClient.setting.findUnique;
+
+  prismaClient.setting.findUnique = async () => ({ value: "proxy" });
+
+  t.after(async () => {
+    prismaClient.setting.findUnique = originalFindUnique;
+    await prisma.$disconnect();
+  });
+
+  const result = await preflightDeploymentAuthRecords([
+    {
+      workflowId: "workflow-demo",
+      provider: "local",
+      bindings: [
+        {
+          providerSlug: "slack",
+          selectorType: "latest_active",
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(result, {
+    authMode: "proxy",
+    deployments: [
+      {
+        workflowId: "workflow-demo",
+        provider: "local",
+        authBackendKind: null,
+        authBackendRegion: null,
+        authBackendProjectId: null,
+        checkedBindings: 1,
+      },
+    ],
+  });
+});
+
+test("preflightDeploymentAuthRecords rejects cloud deployments while auth strategy is proxy", async (t) => {
+  const prismaClient = prisma as unknown as {
+    setting: {
+      findUnique: (args: unknown) => Promise<{ value: string } | null>;
+    };
+  };
+  const originalFindUnique = prismaClient.setting.findUnique;
+
+  prismaClient.setting.findUnique = async () => ({ value: "proxy" });
+
+  t.after(async () => {
+    prismaClient.setting.findUnique = originalFindUnique;
+    await prisma.$disconnect();
+  });
+
+  await assert.rejects(
+    () =>
+      preflightDeploymentAuthRecords([
+        {
+          workflowId: "workflow-demo",
+          provider: "aws",
+          bindings: [],
+        },
+      ]),
+    /Cloud deployments require secret_manager auth/
   );
 });

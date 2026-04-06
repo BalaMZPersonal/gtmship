@@ -8,7 +8,7 @@ export type WorkflowHttpMethod =
 
 export type WorkflowAccessMode = "read" | "write";
 export type WorkflowTriggerType = "webhook" | "schedule" | "event" | "manual";
-export type WorkflowCloudProvider = "aws" | "gcp";
+export type WorkflowCloudProvider = "aws" | "gcp" | "local";
 export type WorkflowExecutionKind = "service" | "job";
 export type WorkflowDeployAuthMode = "proxy" | "secret_manager";
 export type LegacyWorkflowDeployAuthMode = "synced_secrets";
@@ -237,9 +237,9 @@ export interface WorkflowDeployAuthConfig {
 
 /** Deployment target for a workflow */
 export interface DeployTarget {
-  /** Cloud provider */
+  /** Deployment provider */
   provider?: WorkflowCloudProvider;
-  /** Cloud region (e.g., "us-east-1" for AWS, "us-central1" for GCP) */
+  /** Deployment region or target scope (e.g., "us-east-1", "us-central1", or "local") */
   region?: string;
   /** GCP project ID (required when provider is "gcp") */
   gcpProject?: string;

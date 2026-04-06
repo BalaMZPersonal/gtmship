@@ -25,14 +25,14 @@ interface BuildOptions {
 
 export interface BuildArtifact {
   workflowId: string;
-  provider: "aws" | "gcp";
+  provider: "aws" | "gcp" | "local";
   artifactPath: string;
   imageUri?: string;
   bundleSizeBytes: number;
 }
 
 interface BuildWorkflowsOptions {
-  provider: "aws" | "gcp";
+  provider: "aws" | "gcp" | "local";
   gcpProject?: string;
   region?: string;
   push?: boolean;
@@ -41,8 +41,47 @@ interface BuildWorkflowsOptions {
 const CLOUD_RUN_IMAGE_PLATFORM = "linux/amd64";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Timeout for `docker build` (5 minutes). */
+const DOCKER_BUILD_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Timeout for `docker push` per attempt (3 minutes). */
+const DOCKER_PUSH_TIMEOUT_MS = 3 * 60 * 1000;
+
+/** Max retries for transient Docker push failures (network, proxy, timeout). */
+const DOCKER_PUSH_MAX_RETRIES = 3;
+
+/** Timeout for gcloud CLI calls (30 seconds). */
+const GCLOUD_TIMEOUT_MS = 30 * 1000;
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function isTransientDockerError(message: string): boolean {
+  const transientPatterns = [
+    /i\/o timeout/i,
+    /connection reset/i,
+    /connection refused/i,
+    /proxyconnect/i,
+    /dial tcp/i,
+    /TLS handshake timeout/i,
+    /EOF/,
+    /ETIMEDOUT/,
+    /ECONNRESET/,
+    /ECONNREFUSED/,
+    /server misbehaving/i,
+    /502 Bad Gateway/i,
+    /503 Service Unavailable/i,
+  ];
+  return transientPatterns.some((pattern) => pattern.test(message));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
@@ -126,7 +165,7 @@ function resolveDockerfile(): string {
 
 async function bundleWorkflow(
   workflowPath: string,
-  provider: "aws" | "gcp",
+  provider: "aws" | "gcp" | "local",
   outDir: string,
 ): Promise<void> {
   const esbuild = await import("esbuild");
@@ -254,6 +293,7 @@ function buildDockerImage(
   // build locally from Apple Silicon hosts.
   execSync(`docker build --platform ${CLOUD_RUN_IMAGE_PLATFORM} -t ${imageTag} ${outDir}`, {
     stdio: "pipe",
+    timeout: DOCKER_BUILD_TIMEOUT_MS,
   });
 
   return imageTag;
@@ -268,7 +308,7 @@ function ensureArtifactRegistryRepo(
   try {
     execSync(
       `gcloud artifacts repositories describe ${repoName} --location=${region} --project=${gcpProject}`,
-      { stdio: "pipe" },
+      { stdio: "pipe", timeout: GCLOUD_TIMEOUT_MS },
     );
     return; // Already exists
   } catch {
@@ -277,17 +317,17 @@ function ensureArtifactRegistryRepo(
 
   execSync(
     `gcloud artifacts repositories create ${repoName} --repository-format=docker --location=${region} --project=${gcpProject} --description="GTMShip workflow images"`,
-    { stdio: "pipe" },
+    { stdio: "pipe", timeout: GCLOUD_TIMEOUT_MS },
   );
 }
 
-function pushToArtifactRegistry(
+async function pushToArtifactRegistry(
   localTag: string,
   gcpProject: string,
   region: string,
   workflowId: string,
   versionTag: string,
-): string {
+): Promise<string> {
   const registry = `${region}-docker.pkg.dev`;
   const repoName = "gtmship-workflows";
 
@@ -297,9 +337,35 @@ function pushToArtifactRegistry(
   const remoteTag = `${registry}/${gcpProject}/${repoName}/${workflowId}:${versionTag}`;
 
   execSync(`docker tag ${localTag} ${remoteTag}`, { stdio: "pipe" });
-  execSync(`docker push ${remoteTag}`, { stdio: "inherit" });
 
-  return remoteTag;
+  // Retry docker push with exponential backoff for transient network errors
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= DOCKER_PUSH_MAX_RETRIES; attempt++) {
+    try {
+      execSync(`docker push ${remoteTag}`, {
+        stdio: "inherit",
+        timeout: DOCKER_PUSH_TIMEOUT_MS,
+      });
+      return remoteTag;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const message = lastError.message || "";
+
+      if (!isTransientDockerError(message) || attempt === DOCKER_PUSH_MAX_RETRIES) {
+        break;
+      }
+
+      const backoffMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+      console.log(
+        `  Docker push attempt ${attempt}/${DOCKER_PUSH_MAX_RETRIES} failed (${message.split("\n")[0]}). Retrying in ${backoffMs / 1000}s...`,
+      );
+      await sleep(backoffMs);
+    }
+  }
+
+  throw new Error(
+    `Docker push failed after ${DOCKER_PUSH_MAX_RETRIES} attempts: ${lastError?.message || "unknown error"}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +394,7 @@ export async function buildWorkflows(
     if (options.provider === "aws") {
       // 2a. Package as Lambda zip
       artifactPath = await packageForLambda(outDir, wp.workflowId, buildRoot);
-    } else {
+    } else if (options.provider === "gcp") {
       // 2b. Build Docker image
       const localTag = buildDockerImage(outDir, wp.workflowId, versionTag);
       artifactPath = localTag;
@@ -336,7 +402,7 @@ export async function buildWorkflows(
       // 2c. Push to Artifact Registry if requested
       if (options.push && options.gcpProject) {
         const region = options.region || "us-central1";
-        imageUri = pushToArtifactRegistry(
+        imageUri = await pushToArtifactRegistry(
           localTag,
           options.gcpProject,
           region,
@@ -345,6 +411,8 @@ export async function buildWorkflows(
         );
         artifactPath = imageUri;
       }
+    } else {
+      artifactPath = outDir;
     }
 
     const bundleSize =
@@ -393,9 +461,14 @@ export async function buildCommand(options: BuildOptions): Promise<void> {
   const config = readProjectConfig();
   const provider = (options.provider ||
     config?.deploy?.provider ||
-    "aws") as "aws" | "gcp";
+    "aws") as "aws" | "gcp" | "local";
   const region =
-    options.region || (provider === "aws" ? "us-east-1" : "us-central1");
+    options.region ||
+    (provider === "aws"
+      ? "us-east-1"
+      : provider === "gcp"
+        ? "us-central1"
+        : "local");
   const gcpProject = options.project || config?.deploy?.gcpProject;
 
   if (provider === "gcp" && options.push && !gcpProject) {
@@ -422,7 +495,7 @@ export async function buildCommand(options: BuildOptions): Promise<void> {
   }
 
   const workflowPlans = loadWorkflowPlans(process.cwd(), {
-    providerOverride: provider as "aws" | "gcp",
+    providerOverride: provider,
     regionOverride: region,
     gcpProjectOverride: gcpProject,
     workflowId: options.workflow,

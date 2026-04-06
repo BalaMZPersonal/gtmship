@@ -1,21 +1,6 @@
 import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
-import { resolve as resolvePath, dirname, join } from "node:path";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { resolveProjectRoot } from "@/lib/workflow-studio/project-root";
-
-/** Walk up from a starting directory until we find pnpm-workspace.yaml (monorepo root). */
-function findMonorepoRoot(start: string): string {
-  let dir = start;
-  for (let i = 0; i < 10; i++) {
-    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return start; // fallback
-}
 import {
   buildWorkflowPlanFromArtifact,
   extractTriggerFromSource,
@@ -23,6 +8,7 @@ import {
 } from "@/lib/workflow-studio/deploy-plan";
 import { applyGlobalAuthStrategyToPlan } from "@/lib/workflow-studio/auth-strategy";
 import { getAuthStrategy } from "@/lib/workflow-studio/auth-service";
+import { resolveCliInvocation } from "@/lib/runtime/cli";
 import {
   listStoredWorkflows,
   loadStoredWorkflow,
@@ -59,7 +45,11 @@ function extractValue(output: string, label: string): string | null {
 }
 
 function parseProvider(value: string | null): WorkflowDeployProvider {
-  return value === "gcp" ? "gcp" : "aws";
+  if (value === "gcp" || value === "local") {
+    return value;
+  }
+
+  return "aws";
 }
 
 function parseDefaults(request: Request): DeploymentDefaults {
@@ -109,7 +99,7 @@ function normalizeSharedPlan(
       ? shared.executionKind
       : fallback.executionKind;
   const provider =
-    shared.provider === "gcp" || shared.provider === "aws"
+    shared.provider === "gcp" || shared.provider === "aws" || shared.provider === "local"
       ? shared.provider
       : fallback.provider;
   const authMode = normalizeAuthMode(shared.authMode ?? fallback.authMode);
@@ -509,7 +499,11 @@ export async function GET(request: Request) {
       provider: defaults.provider || "aws",
       region:
         defaults.region ||
-        (defaults.provider === "gcp" ? "us-central1" : "us-east-1"),
+        (defaults.provider === "gcp"
+          ? "us-central1"
+          : defaults.provider === "local"
+            ? "local"
+            : "us-east-1"),
       gcpProject: defaults.gcpProject,
       plans,
       usedSharedPlanner,
@@ -547,27 +541,64 @@ export async function POST(req: Request) {
     artifact?: WorkflowStudioArtifact;
   };
 
-  if (!provider || !["aws", "gcp"].includes(provider)) {
+  if (!provider || !["aws", "gcp", "local"].includes(provider)) {
     return NextResponse.json(
-      { error: "Invalid provider. Must be 'aws' or 'gcp'." },
+      { error: "Invalid provider. Must be 'aws', 'gcp', or 'local'." },
       { status: 400 }
     );
   }
 
   const authUrl = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
-  try {
-    const credRes = await fetch(`${authUrl}/cloud-auth/credentials/${provider}`);
-    if (!credRes.ok) {
+  if (provider !== "local") {
+    try {
+      const credRes = await fetch(`${authUrl}/cloud-auth/credentials/${provider}`);
+      if (!credRes.ok) {
+        return NextResponse.json(
+          { error: "Cloud credentials not configured. Add them in Settings." },
+          { status: 400 }
+        );
+      }
+    } catch {
       return NextResponse.json(
-        { error: "Cloud credentials not configured. Add them in Settings." },
+        { error: "Cannot reach auth service to verify credentials." },
+        { status: 503 }
+      );
+    }
+
+    const authStrategy = await getAuthStrategy();
+    if (!authStrategy) {
+      return NextResponse.json(
+        {
+          error:
+            "Cannot reach auth service to verify secret-manager settings for cloud deploys.",
+        },
+        { status: 503 }
+      );
+    }
+
+    if (authStrategy.mode !== "secret_manager") {
+      return NextResponse.json(
+        {
+          error:
+            "Cloud deployments require Secret manager mode. Switch Connection auth source of truth to secret_manager in Settings before deploying to AWS or GCP.",
+        },
         { status: 400 }
       );
     }
-  } catch {
-    return NextResponse.json(
-      { error: "Cannot reach auth service to verify credentials." },
-      { status: 503 }
+
+    const hasMatchingBackend = authStrategy.configuredBackends.some((backend) =>
+      provider === "aws"
+        ? backend.kind === "aws_secrets_manager"
+        : backend.kind === "gcp_secret_manager"
     );
+    if (!hasMatchingBackend) {
+      return NextResponse.json(
+        {
+          error: `No matching ${provider.toUpperCase()} secret backend is configured. Add it in Settings before deploying this workflow.`,
+        },
+        { status: 400 }
+      );
+    }
   }
 
   const args = ["deploy", "--provider", provider];
@@ -583,9 +614,9 @@ export async function POST(req: Request) {
 
   // Resolve the project root from the database setting (same as Workflow Studio)
   const resolution = await resolveProjectRoot();
-  const monorepoRoot = findMonorepoRoot(process.cwd());
-  const cliEntry = resolvePath(monorepoRoot, "packages/cli/dist/index.js");
-  const projectRoot = resolution.projectRoot || process.env.PROJECT_ROOT || monorepoRoot;
+  const cliInvocation = resolveCliInvocation();
+  const projectRoot =
+    resolution.projectRoot || process.env.PROJECT_ROOT || process.cwd();
   const projectLabel = projectName || "gtmship";
   const baseArtifact =
     artifact && (!workflow || artifact.slug === workflow)
@@ -613,9 +644,12 @@ export async function POST(req: Request) {
     }
   }
 
+  const DEPLOY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
   return new Promise<NextResponse>((resolve) => {
+    let resolved = false;
     const output: string[] = [];
-    const child = spawn("node", [cliEntry, ...args], {
+    const child = spawn(cliInvocation.command, [...cliInvocation.baseArgs, ...args], {
       cwd: projectRoot,
       env: {
         ...process.env,
@@ -625,10 +659,46 @@ export async function POST(req: Request) {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    // Kill the subprocess if it exceeds the timeout
+    const deployTimer = setTimeout(() => {
+      if (!resolved) {
+        child.kill("SIGTERM");
+        // Force kill after 5s if SIGTERM doesn't work
+        setTimeout(() => {
+          if (!resolved) child.kill("SIGKILL");
+        }, 5000);
+      }
+    }, DEPLOY_TIMEOUT_MS);
+
     child.stdout.on("data", (data: Buffer) => output.push(data.toString()));
     child.stderr.on("data", (data: Buffer) => output.push(data.toString()));
 
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
+      clearTimeout(deployTimer);
+      if (signal === "SIGTERM" || signal === "SIGKILL") {
+        resolved = true;
+        void (async () => {
+          const deploymentRun: WorkflowDeploymentRun = {
+            status: "error",
+            provider,
+            region,
+            gcpProject,
+            projectName: projectLabel,
+            deployedAt: new Date().toISOString(),
+            output: output.join(""),
+            error: `Deployment timed out after ${DEPLOY_TIMEOUT_MS / 60000} minutes`,
+          };
+          const savedArtifact = await persistDeploymentRun(deploymentRun);
+          resolve(
+            NextResponse.json(
+              { error: deploymentRun.error, output: output.join(""), artifact: savedArtifact },
+              { status: 504 },
+            ),
+          );
+        })();
+        return;
+      }
+      resolved = true;
       void (async () => {
         const combinedOutput = output.join("");
 
@@ -644,6 +714,7 @@ export async function POST(req: Request) {
             computeId: extractValue(combinedOutput, "Compute"),
             databaseEndpoint: extractValue(combinedOutput, "Database"),
             storageBucket: extractValue(combinedOutput, "Storage"),
+            schedulerJobId: extractValue(combinedOutput, "schedulerJobId"),
             output: combinedOutput,
           };
           const savedArtifact = await persistDeploymentRun(deploymentRun);
@@ -658,6 +729,7 @@ export async function POST(req: Request) {
               computeId: deploymentRun.computeId,
               databaseEndpoint: deploymentRun.databaseEndpoint,
               storageBucket: deploymentRun.storageBucket,
+              schedulerJobId: deploymentRun.schedulerJobId,
               output: combinedOutput,
               artifact: savedArtifact,
             })
@@ -691,6 +763,8 @@ export async function POST(req: Request) {
     });
 
     child.on("error", (err) => {
+      clearTimeout(deployTimer);
+      resolved = true;
       void (async () => {
         const deploymentRun: WorkflowDeploymentRun = {
           status: "error",

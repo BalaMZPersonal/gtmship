@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
 import {
@@ -14,8 +15,8 @@ import {
 } from "./connection-secret-replicas.js";
 import { getConnectionAuthMode } from "./auth-strategy.js";
 import {
-  assertHealthySecretReplicasForBindings,
   resolveSecretBackendForDeployment,
+  syncAndAssertHealthySecretReplicasForBindings,
   syncDeploymentRuntimeManifests,
   type DeploymentSecretSyncTask,
   type WorkflowBindingReplicaCheck,
@@ -70,6 +71,15 @@ interface AwsLivePlatformMetadata {
   logGroupName: string | null;
 }
 
+interface LocalPlatformMetadata {
+  computeType: "job";
+  computeName: string | null;
+  endpointUrl: string | null;
+  schedulerJobId: string | null;
+  region: string | null;
+  logPath: string | null;
+}
+
 interface GcpExecutionSummary {
   executionName: string | null;
   fullName: string | null;
@@ -77,6 +87,7 @@ interface GcpExecutionSummary {
   startedAt: string | null;
   completedAt: string | null;
   logUri: string | null;
+  triggerSource?: string | null;
   runningCount: number;
   succeededCount: number;
   failedCount: number;
@@ -355,6 +366,38 @@ function stripLambdaName(value: string | null): string | null {
 
 function buildAwsLogGroupName(lambdaName: string | null): string | null {
   return lambdaName ? `/aws/lambda/${lambdaName}` : null;
+}
+
+function readLocalLogPath(deployment: WorkflowDeploymentRow): string | null {
+  const resourceInventory = asRecord(deployment.resourceInventory);
+  const runtimeTarget = asRecord(resourceInventory.runtimeTarget);
+  const platformOutputs = asRecord(resourceInventory.platformOutputs);
+
+  return (
+    toNullableString(runtimeTarget.logPath) ||
+    toNullableString(platformOutputs.localLogPath)
+  );
+}
+
+export function deriveLocalPlatformMetadata(
+  deployment: WorkflowDeploymentRow
+): LocalPlatformMetadata {
+  const resourceInventory = asRecord(deployment.resourceInventory);
+  const runtimeTarget = asRecord(resourceInventory.runtimeTarget);
+
+  return {
+    computeType: "job",
+    computeName:
+      toNullableString(runtimeTarget.computeName) ||
+      toNullableString(deployment.endpointUrl) ||
+      deployment.workflowId,
+    endpointUrl:
+      deployment.endpointUrl || toNullableString(runtimeTarget.endpointUrl),
+    schedulerJobId:
+      deployment.schedulerId || toNullableString(runtimeTarget.schedulerId),
+    region: toNullableString(runtimeTarget.region) || deployment.region,
+    logPath: readLocalLogPath(deployment),
+  };
 }
 
 export function deriveGcpPlatformMetadata(
@@ -783,6 +826,181 @@ async function fetchAwsDeploymentLogs(input: {
   return filteredEntries.slice(-input.limit);
 }
 
+function fetchLocalDeploymentLogs(input: {
+  logPath: string;
+  since: Date;
+  limit: number;
+  executionName?: string | null;
+}): DeploymentLogEntry[] {
+  if (!existsSync(input.logPath)) {
+    return [];
+  }
+
+  const raw = readFileSync(input.logPath, "utf8");
+  const entries = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const record = JSON.parse(line) as {
+          timestamp?: string;
+          level?: string;
+          message?: string;
+          executionName?: string;
+          requestId?: string;
+        };
+        if (
+          typeof record.timestamp !== "string" ||
+          typeof record.message !== "string"
+        ) {
+          return [];
+        }
+
+        const timestamp = new Date(record.timestamp);
+        if (
+          Number.isNaN(timestamp.getTime()) ||
+          timestamp.getTime() < input.since.getTime()
+        ) {
+          return [];
+        }
+
+        const entry: DeploymentLogEntry = {
+          timestamp: timestamp.toISOString(),
+          level:
+            record.level === "warn" || record.level === "error"
+              ? record.level
+              : "info",
+          message: record.message,
+          executionName:
+            typeof record.executionName === "string"
+              ? record.executionName
+              : undefined,
+          requestId:
+            typeof record.requestId === "string" ? record.requestId : undefined,
+        };
+
+        if (
+          input.executionName &&
+          entry.executionName !== input.executionName &&
+          entry.requestId !== input.executionName &&
+          !entry.message.includes(input.executionName)
+        ) {
+          return [];
+        }
+
+        return [entry];
+      } catch {
+        return [];
+      }
+    });
+
+  return entries.slice(-input.limit);
+}
+
+function normalizeExecutionStatus(
+  value: string | null | undefined
+): GcpExecutionSummary["status"] {
+  const normalized = (value || "").trim().toLowerCase();
+  if (
+    normalized === "queued" ||
+    normalized === "pending" ||
+    normalized === "created"
+  ) {
+    return "pending";
+  }
+  if (normalized === "running" || normalized === "in_progress") {
+    return "running";
+  }
+  if (
+    normalized === "success" ||
+    normalized === "succeeded" ||
+    normalized === "completed"
+  ) {
+    return "success";
+  }
+  if (
+    normalized === "failure" ||
+    normalized === "failed" ||
+    normalized === "error"
+  ) {
+    return "failure";
+  }
+  if (normalized === "cancelled" || normalized === "canceled") {
+    return "cancelled";
+  }
+  return "unknown";
+}
+
+export function buildLocalExecutionSummaries(
+  runs: WorkflowRunRow[],
+  limit: number
+): GcpExecutionSummary[] {
+  return runs.slice(0, limit).map((run) => {
+    const status = normalizeExecutionStatus(run.status);
+    return {
+      executionName: run.executionId || run.cloudRef || run.id,
+      fullName: run.cloudRef || run.executionId || run.id,
+      status,
+      startedAt: (run.startedAt || run.createdAt)?.toISOString() || null,
+      completedAt: run.endedAt?.toISOString() || null,
+      logUri: null,
+      triggerSource: run.triggerSource || null,
+      runningCount: status === "running" ? 1 : 0,
+      succeededCount: status === "success" ? 1 : 0,
+      failedCount: status === "failure" ? 1 : 0,
+      cancelledCount: status === "cancelled" ? 1 : 0,
+    };
+  });
+}
+
+async function fetchWorkflowRunsByDeploymentIds(
+  deploymentIds: string[],
+  limitPerDeployment: number
+): Promise<Map<string, WorkflowRunRow[]>> {
+  if (deploymentIds.length === 0) {
+    return new Map();
+  }
+
+  const rows = await prisma.$queryRaw<WorkflowRunRow[]>(Prisma.sql`
+    SELECT
+      id,
+      deployment_id AS "deploymentId",
+      execution_id AS "executionId",
+      trigger_source AS "triggerSource",
+      status,
+      cloud_ref AS "cloudRef",
+      started_at AS "startedAt",
+      ended_at AS "endedAt",
+      request_payload AS "requestPayload",
+      response_payload AS "responsePayload",
+      error,
+      created_at AS "createdAt",
+      updated_at AS "updatedAt"
+    FROM (
+      SELECT
+        *,
+        ROW_NUMBER() OVER (
+          PARTITION BY deployment_id
+          ORDER BY created_at DESC
+        ) AS row_num
+      FROM workflow_runs
+      WHERE deployment_id IN (${Prisma.join(deploymentIds)})
+    ) ranked_runs
+    WHERE row_num <= ${limitPerDeployment}
+    ORDER BY created_at DESC
+  `);
+
+  const runsByDeploymentId = new Map<string, WorkflowRunRow[]>();
+  for (const row of rows) {
+    const current = runsByDeploymentId.get(row.deploymentId) || [];
+    current.push(row);
+    runsByDeploymentId.set(row.deploymentId, current);
+  }
+
+  return runsByDeploymentId;
+}
+
 export function buildAwsExecutionSummaries(
   entries: DeploymentLogEntry[],
   limit: number
@@ -1104,10 +1322,116 @@ function readAuthBackendConfig(record: Record<string, unknown>): {
   };
 }
 
+function resolveDeploymentAuthMode(input: {
+  provider: string;
+  globalAuthMode: "proxy" | "secret_manager";
+  workflowId?: string | null;
+}): "proxy" | "secret_manager" {
+  if (input.provider === "local") {
+    return "proxy";
+  }
+
+  if (input.globalAuthMode !== "secret_manager") {
+    throw new Error(
+      `Cloud deployments require secret_manager auth.${input.workflowId ? ` Switch Connection auth source of truth to secret_manager before deploying workflow ${input.workflowId}.` : " Switch Connection auth source of truth to secret_manager before deploying to AWS or GCP."}`
+    );
+  }
+
+  return "secret_manager";
+}
+
 async function updateRuntimeManifest(
   syncTasks: DeploymentSecretSyncTask[]
 ): Promise<void> {
   await syncDeploymentRuntimeManifests(syncTasks);
+}
+
+export async function preflightDeploymentAuthRecords(
+  rawDeployments: unknown[]
+): Promise<{
+  authMode: "proxy" | "secret_manager";
+  deployments: Array<{
+    workflowId: string;
+    provider: string;
+    authBackendKind: SecretBackendKind | null;
+    authBackendRegion: string | null;
+    authBackendProjectId: string | null;
+    checkedBindings: number;
+  }>;
+}> {
+  const globalAuthMode = await getConnectionAuthMode();
+  const deployments: Array<{
+    workflowId: string;
+    provider: string;
+    authBackendKind: SecretBackendKind | null;
+    authBackendRegion: string | null;
+    authBackendProjectId: string | null;
+    checkedBindings: number;
+  }> = [];
+
+  for (const item of rawDeployments) {
+    const record = asRecord(item);
+    const workflowId = toNullableString(record.workflowId);
+    const provider = toNullableString(record.provider);
+    const region = toNullableString(record.region);
+    const gcpProject = toNullableString(record.gcpProject);
+    const requestedAuthBackend = readAuthBackendConfig(record);
+    const bindings = normalizeBindingsInput(record.bindings);
+
+    if (!workflowId || !provider) {
+      throw new Error(
+        "Each deployment preflight requires workflowId and provider."
+      );
+    }
+
+    const authMode = resolveDeploymentAuthMode({
+      provider,
+      globalAuthMode,
+      workflowId,
+    });
+    const authBackend =
+      authMode === "secret_manager"
+        ? await resolveSecretBackendForDeployment({
+            provider,
+            region,
+            gcpProject,
+            requested: requestedAuthBackend.kind
+              ? {
+                  kind: requestedAuthBackend.kind,
+                  region: requestedAuthBackend.region,
+                  projectId: requestedAuthBackend.projectId,
+                }
+              : null,
+          })
+        : null;
+
+    if (authMode === "secret_manager" && !authBackend) {
+      throw new Error(
+        `Secret manager auth is enabled globally, but no matching secret backend is configured for workflow ${workflowId}.`
+      );
+    }
+
+    if (authMode === "secret_manager" && authBackend) {
+      await syncAndAssertHealthySecretReplicasForBindings({
+        bindings: toReplicaChecks(bindings),
+        backend: authBackend,
+      });
+    }
+
+    deployments.push({
+      workflowId,
+      provider,
+      authBackendKind: authBackend?.kind || null,
+      authBackendRegion: authBackend?.region || null,
+      authBackendProjectId: authBackend?.projectId || null,
+      checkedBindings: bindings.length,
+    });
+  }
+
+  return {
+    authMode: globalAuthMode,
+    deployments,
+  };
 }
 
 workflowControlPlaneRoutes.get("/deployments", async (req, res) => {
@@ -1175,6 +1499,12 @@ workflowControlPlaneRoutes.get("/deployments", async (req, res) => {
 
   let gcpSettingsPromise: Promise<GcpSettingsSnapshot> | null = null;
   let awsSettingsPromise: Promise<AwsSettingsSnapshot> | null = null;
+  const localDeploymentIds = rows
+    .filter((deployment) => deployment.provider === "local")
+    .map((deployment) => deployment.id);
+  const localRunsByDeploymentId = includeLive
+    ? await fetchWorkflowRunsByDeploymentIds(localDeploymentIds, executionLimit)
+    : new Map<string, WorkflowRunRow[]>();
   const deploymentsWithLive = await Promise.all(
     rows.map(async (deployment) => {
       if (deployment.provider === "gcp") {
@@ -1200,6 +1530,17 @@ workflowControlPlaneRoutes.get("/deployments", async (req, res) => {
         return {
           ...deployment,
           ...live,
+        };
+      }
+
+      if (deployment.provider === "local") {
+        return {
+          ...deployment,
+          platform: deriveLocalPlatformMetadata(deployment),
+          recentExecutions: buildLocalExecutionSummaries(
+            localRunsByDeploymentId.get(deployment.id) || [],
+            executionLimit
+          ),
         };
       }
 
@@ -1338,6 +1679,11 @@ workflowControlPlaneRoutes.get("/deployments/:id", async (req, res) => {
     }
   }
 
+  if (includeLive && deployment.provider === "local") {
+    payload.platform = deriveLocalPlatformMetadata(deployment);
+    payload.recentExecutions = buildLocalExecutionSummaries(runs, executionLimit);
+  }
+
   res.json(payload);
 });
 
@@ -1436,6 +1782,46 @@ workflowControlPlaneRoutes.get("/deployments/:id/logs", async (req, res) => {
     return;
   }
 
+  if (deployment.provider === "local") {
+    const platform = deriveLocalPlatformMetadata(deployment);
+    if (!platform.logPath) {
+      res.json({
+        deploymentId: deployment.id,
+        provider: deployment.provider,
+        platform,
+        entries: [],
+        liveError: "Local log path is missing in deployment metadata.",
+      });
+      return;
+    }
+
+    try {
+      const entries = fetchLocalDeploymentLogs({
+        logPath: platform.logPath,
+        since,
+        limit,
+        executionName,
+      });
+
+      res.json({
+        deploymentId: deployment.id,
+        provider: deployment.provider,
+        platform,
+        entries,
+      });
+    } catch (error) {
+      res.json({
+        deploymentId: deployment.id,
+        provider: deployment.provider,
+        platform,
+        entries: [],
+        liveError:
+          error instanceof Error ? error.message : "Failed to load local deployment logs.",
+      });
+    }
+    return;
+  }
+
   if (deployment.provider !== "gcp") {
     res.json({
       deploymentId: deployment.id,
@@ -1526,6 +1912,34 @@ workflowControlPlaneRoutes.get("/deployments/:id/logs", async (req, res) => {
   }
 });
 
+workflowControlPlaneRoutes.post("/deployments/preflight-auth", async (req, res) => {
+  const body = asRecord(req.body);
+  const rawDeployments = Array.isArray(body.deployments) ? body.deployments : [];
+
+  if (rawDeployments.length === 0) {
+    res.status(400).json({
+      error: "deployments must be a non-empty array.",
+    });
+    return;
+  }
+
+  try {
+    const result = await preflightDeploymentAuthRecords(rawDeployments);
+    res.json({
+      authMode: result.authMode,
+      validatedCount: result.deployments.length,
+      deployments: result.deployments,
+    });
+  } catch (error) {
+    res.status(400).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to preflight deployment auth.",
+    });
+  }
+});
+
 workflowControlPlaneRoutes.post("/deployments", async (req, res) => {
   const body = asRecord(req.body);
   const workflowId = toNullableString(body.workflowId);
@@ -1543,7 +1957,12 @@ workflowControlPlaneRoutes.post("/deployments", async (req, res) => {
   }
 
   try {
-    const authMode = await getConnectionAuthMode();
+    const globalAuthMode = await getConnectionAuthMode();
+    const authMode = resolveDeploymentAuthMode({
+      provider,
+      globalAuthMode,
+      workflowId,
+    });
     const authBackend =
       authMode === "secret_manager"
         ? await resolveSecretBackendForDeployment({
@@ -1569,7 +1988,7 @@ workflowControlPlaneRoutes.post("/deployments", async (req, res) => {
     }
 
     if (authMode === "secret_manager" && authBackend) {
-      await assertHealthySecretReplicasForBindings({
+      await syncAndAssertHealthySecretReplicasForBindings({
         bindings: toReplicaChecks(bindings),
         backend: authBackend,
       });
@@ -1757,7 +2176,7 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
   }
 
   try {
-    const authMode = await getConnectionAuthMode();
+    const globalAuthMode = await getConnectionAuthMode();
     const syncTasks: DeploymentSecretSyncTask[] = [];
     const synced = await prisma.$transaction(async (tx) => {
       const deployments: WorkflowDeploymentRow[] = [];
@@ -1777,6 +2196,11 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
           );
         }
 
+        const authMode = resolveDeploymentAuthMode({
+          provider,
+          globalAuthMode,
+          workflowId,
+        });
         const authBackend =
           authMode === "secret_manager"
             ? await resolveSecretBackendForDeployment({
@@ -1807,7 +2231,7 @@ workflowControlPlaneRoutes.post("/deployments/sync", async (req, res) => {
         }
 
         if (authMode === "secret_manager" && authBackend) {
-          await assertHealthySecretReplicasForBindings({
+          await syncAndAssertHealthySecretReplicasForBindings({
             bindings: toReplicaChecks(bindings),
             backend: authBackend,
           });

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 import {
   loadConfiguredSecretBackendTargets,
+  syncConnectionSecretReplicasById,
   syncDeploymentBindingSecretReplicas,
   type SecretBackendTarget,
 } from "./connection-secret-replicas.js";
@@ -33,6 +34,10 @@ export interface DeploymentSecretSyncTask {
   existingManifest: unknown;
 }
 
+export const workflowDeploymentSecretSyncRuntime = {
+  syncConnectionSecretReplicasById,
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -51,6 +56,18 @@ function normalizeText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+export function collectDistinctBindingConnectionIds(
+  bindings: WorkflowBindingReplicaCheck[]
+): string[] {
+  return Array.from(
+    new Set(
+      bindings
+        .map((binding) => normalizeText(binding.connectionId))
+        .filter((connectionId): connectionId is string => Boolean(connectionId))
+    )
+  );
 }
 
 function secretBackendMatches(
@@ -74,6 +91,10 @@ export async function resolveSecretBackendForDeployment(input: {
   gcpProject?: string | null;
   requested?: SecretBackendTarget | null;
 }): Promise<SecretBackendTarget | null> {
+  if (input.provider === "local") {
+    return null;
+  }
+
   if (input.requested?.kind) {
     return {
       ...input.requested,
@@ -232,6 +253,31 @@ export async function assertHealthySecretReplicasForBindings(input: {
   }
 }
 
+export async function resyncSecretReplicasForBindings(input: {
+  bindings: WorkflowBindingReplicaCheck[];
+  backend: SecretBackendTarget;
+}): Promise<{
+  connectionIds: string[];
+}> {
+  const connectionIds = collectDistinctBindingConnectionIds(input.bindings);
+  for (const connectionId of connectionIds) {
+    await workflowDeploymentSecretSyncRuntime.syncConnectionSecretReplicasById(
+      connectionId,
+      input.backend
+    );
+  }
+
+  return { connectionIds };
+}
+
+export async function syncAndAssertHealthySecretReplicasForBindings(input: {
+  bindings: WorkflowBindingReplicaCheck[];
+  backend: SecretBackendTarget;
+}): Promise<void> {
+  await resyncSecretReplicasForBindings(input);
+  await assertHealthySecretReplicasForBindings(input);
+}
+
 export async function enforceAuthModeOnExistingDeployments(
   mode: "proxy" | "secret_manager"
 ): Promise<{
@@ -311,7 +357,7 @@ export async function enforceAuthModeOnExistingDeployments(
     });
 
     try {
-      await assertHealthySecretReplicasForBindings({
+      await syncAndAssertHealthySecretReplicasForBindings({
         bindings: bindings.map((binding) => ({
           providerSlug: binding.providerSlug,
           connectionId: binding.connectionId,

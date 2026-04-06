@@ -10,8 +10,12 @@ import {
   getSharedOAuthProviderConfig,
   resolveSharedOAuthProviderKey,
 } from "../services/shared-oauth.js";
-import { scheduleConnectionSecretSync } from "../services/auth-strategy.js";
+import { enqueueConnectionSecretSyncs } from "../services/auth-strategy.js";
 import { selectConnectKeyTarget } from "../services/connect-key-target.js";
+import {
+  getDashboardUrl,
+  getOAuthCallbackUrl,
+} from "../lib/service-urls.js";
 
 export const authRoutes: Router = Router();
 
@@ -379,16 +383,18 @@ async function syncSecretReplicasForConnections(
   connections: Array<{ id: string }>
 ): Promise<void> {
   const connectionIds = Array.from(new Set(connections.map((item) => item.id)));
-  for (const connectionId of connectionIds) {
-    try {
-      await scheduleConnectionSecretSync(connectionId);
-    } catch (error) {
-      console.warn(
-        `[auth] Failed to sync secret replicas for ${connectionId}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
-    }
+  if (connectionIds.length === 0) {
+    return;
+  }
+
+  try {
+    await enqueueConnectionSecretSyncs(connectionIds);
+  } catch (error) {
+    console.warn(
+      `[auth] Failed to schedule secret replica sync for ${
+        connectionIds.join(", ") || "unknown connections"
+      }: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
   }
 }
 
@@ -672,7 +678,7 @@ authRoutes.get("/:slug/callback", async (req, res) => {
         ];
     await syncSecretReplicasForConnections(createdConnections);
 
-    const dashboardUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
+    const dashboardUrl = getDashboardUrl();
     const primaryConnection = createdConnections.find(
       (connection) => connection.provider === primaryProvider.slug
     );
@@ -924,7 +930,7 @@ function errorPage(
   slug: string,
   callbackSlug: string = slug
 ): string {
-  const dashboardUrl = process.env.CORS_ORIGIN || "http://localhost:3000";
+  const dashboardUrl = getDashboardUrl();
   const errorPayload = { type: "OAUTH_ERROR", error: message, provider: slug };
 
   return `
@@ -938,7 +944,7 @@ function errorPage(
         Provider: <strong>${escapeHtml(slug)}</strong><br/>
         Make sure the redirect URL in your OAuth app is set to:<br/>
         <code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-size: 12px;">
-          ${escapeHtml(`${process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.replace(":3000", ":4000") : "http://localhost:4000"}/auth/${callbackSlug}/callback`)}
+          ${escapeHtml(getOAuthCallbackUrl(callbackSlug))}
         </code>
       </p>
       <script>

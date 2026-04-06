@@ -5,7 +5,7 @@ import {
 
 export type { TriggerConfig } from "./triggers.js";
 
-export type WorkflowCloudProvider = "aws" | "gcp";
+export type WorkflowCloudProvider = "aws" | "gcp" | "local";
 export type WorkflowExecutionKind = "service" | "job";
 export type WorkflowDeployAuthMode = "proxy" | "secret_manager";
 export type LegacyWorkflowDeployAuthMode = "synced_secrets";
@@ -294,7 +294,15 @@ export function extractTriggerFromSource(source: string): TriggerConfig {
 }
 
 function defaultRegion(provider: WorkflowCloudProvider): string {
-  return provider === "gcp" ? "us-central1" : "us-east-1";
+  if (provider === "gcp") {
+    return "us-central1";
+  }
+
+  if (provider === "local") {
+    return "local";
+  }
+
+  return "us-east-1";
 }
 
 function parseNumeric(value?: number | string): number | undefined {
@@ -688,6 +696,32 @@ function buildResourcePlan(
 ): PlannedResource[] {
   const resources: PlannedResource[] = [];
 
+  if (provider === "local") {
+    resources.push(
+      resource(
+        "Local Workflow Job",
+        `${workflowId}-local-job`,
+        "Runs the workflow directly on the current machine."
+      )
+    );
+
+    if (triggerType === "schedule") {
+      resources.push(
+        resource(
+          process.platform === "darwin"
+            ? "LaunchAgent Scheduler"
+            : process.platform === "linux"
+              ? "systemd Timer"
+              : "Local Scheduler",
+          `${workflowId}-local-schedule`,
+          "Triggers the workflow on the local machine schedule."
+        )
+      );
+    }
+
+    return resources;
+  }
+
   if (triggerType === "webhook") {
     if (provider === "gcp") {
       if (executionKind === "job") {
@@ -905,11 +939,17 @@ export function planWorkflowDeployment(
   const trigger = buildTriggerSummary(input);
   const explicitExecutionKind = input.deploy?.execution?.kind;
   const executionKind =
-    explicitExecutionKind || getDefaultExecutionKind(input.trigger.type);
+    provider === "local"
+      ? "job"
+      : explicitExecutionKind || getDefaultExecutionKind(input.trigger.type);
   const executionSource = explicitExecutionKind ? "explicit" : "default";
   const normalizedAuth = normalizeAuthConfig(input.deploy?.auth);
   const auth: WorkflowPlannedAuth =
-    normalizedAuth.mode === "secret_manager"
+    provider === "local"
+      ? {
+          mode: "proxy",
+        }
+      : normalizedAuth.mode === "secret_manager"
       ? {
           ...normalizedAuth,
           backend: {
@@ -937,6 +977,30 @@ export function planWorkflowDeployment(
 
   if (provider === "gcp" && !gcpProject) {
     warnings.push("GCP deployments require a gcpProject value before deploy.");
+  }
+
+  if (provider === "local" && explicitExecutionKind && explicitExecutionKind !== "job") {
+    warnings.push(
+      "Local deployments only support job execution. GTMShip will deploy this workflow as a local job."
+    );
+  }
+
+  if (
+    provider === "local" &&
+    normalizedAuth.mode === "secret_manager"
+  ) {
+    warnings.push(
+      "Local deployments always use proxy auth through the local GTMShip auth service. secret_manager auth is ignored."
+    );
+  }
+
+  if (
+    provider === "local" &&
+    (input.trigger.type === "webhook" || input.trigger.type === "event")
+  ) {
+    warnings.push(
+      "Local deployments currently support only manual and schedule triggers."
+    );
   }
 
   if (input.trigger.type === "manual" && !explicitExecutionKind) {

@@ -14,6 +14,7 @@ import type {
   WorkflowBinding,
   WorkflowBindingSelector,
   WorkflowDeploySpec,
+  WorkflowDeployTargetMode,
   WorkflowDeploymentPlan,
   WorkflowStudioArtifact,
   WorkflowTriggerConfig,
@@ -158,9 +159,28 @@ function normalizeDeploySpec(
     return undefined;
   }
 
+  const targetMode: WorkflowDeployTargetMode =
+    deploy.target === "cloud" || deploy.target === "local"
+      ? deploy.target
+      : deploy.provider === "local"
+        ? "local"
+        : "cloud";
+  const provider =
+    targetMode === "local"
+      ? "local"
+      : deploy.provider === "aws" || deploy.provider === "gcp"
+        ? deploy.provider
+        : undefined;
+  const region =
+    targetMode === "local"
+      ? "local"
+      : deploy.region && deploy.region !== "local"
+        ? deploy.region
+        : undefined;
+
   return {
-    provider: deploy.provider,
-    region: deploy.region,
+    provider,
+    region,
     gcpProject: deploy.gcpProject,
     execution: {
       kind: deploy.execution?.kind,
@@ -327,7 +347,7 @@ function loadWorkflowDefinition(
 export function buildWorkflowDeploymentPlanForArtifact(input: {
   artifact: WorkflowStudioArtifact;
   connections: ActiveConnectionRecord[];
-  provider?: "aws" | "gcp";
+  provider?: "aws" | "gcp" | "local";
   region?: string;
   gcpProject?: string;
   authStrategy?: ConnectionAuthStrategyStatus | null;

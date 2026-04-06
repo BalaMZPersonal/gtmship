@@ -98,6 +98,25 @@ function toRecordHeaders(headers?: RequestInit["headers"]): Record<string, strin
   return { ...(headers as Record<string, string>) };
 }
 
+function normalizeDefaultHeaders(
+  value: unknown
+): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    ([key, headerValue]) =>
+      key.trim().length > 0 &&
+      typeof headerValue === "string" &&
+      headerValue.trim().length > 0
+  );
+
+  return entries.length > 0
+    ? Object.fromEntries(entries) as Record<string, string>
+    : undefined;
+}
+
 function normalizeProviderPath(path: string): string {
   if (/^https?:\/\//i.test(path)) {
     return path;
@@ -340,19 +359,7 @@ function normalizeSecretPayload(
         : undefined,
     headerName:
       typeof record.headerName === "string" ? record.headerName : undefined,
-    defaultHeaders:
-      record.defaultHeaders &&
-      typeof record.defaultHeaders === "object" &&
-      !Array.isArray(record.defaultHeaders)
-        ? Object.fromEntries(
-            Object.entries(record.defaultHeaders as Record<string, unknown>).filter(
-              ([key, headerValue]) =>
-                key.trim().length > 0 &&
-                typeof headerValue === "string" &&
-                headerValue.trim().length > 0
-            )
-          )
-        : undefined,
+    defaultHeaders: normalizeDefaultHeaders(record.defaultHeaders),
     baseUrl: typeof record.baseUrl === "string" ? record.baseUrl : undefined,
     instanceUrl:
       typeof record.instanceUrl === "string" ? record.instanceUrl : undefined,

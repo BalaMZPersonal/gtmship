@@ -143,6 +143,9 @@ importers:
       jsonwebtoken:
         specifier: ^9.0.0
         version: 9.0.3
+      prisma:
+        specifier: ^6.0.0
+        version: 6.19.3(typescript@5.9.3)
       yaml:
         specifier: ^2.6.0
         version: 2.8.3
@@ -159,9 +162,6 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
-      prisma:
-        specifier: ^6.0.0
-        version: 6.19.3(typescript@5.9.3)
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -186,6 +186,9 @@ importers:
       commander:
         specifier: ^12.0.0
         version: 12.1.0
+      cron-parser:
+        specifier: ^4.0.0
+        version: 4.9.0
       esbuild:
         specifier: ^0.24.0
         version: 0.24.2

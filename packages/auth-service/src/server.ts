@@ -14,6 +14,12 @@ import { oauthProviderRoutes } from "./routes/oauth-providers.js";
 import { memoriesRoutes } from "./routes/memories.js";
 import { setupRoutes } from "./routes/setup.js";
 import { aiRoutes } from "./routes/ai.js";
+import { startConnectionSecretSyncReconciler } from "./services/auth-strategy.js";
+import {
+  getAllowedWebOrigins,
+  isAllowedWebOrigin,
+} from "./lib/service-urls.js";
+import { publicInquiryRoutes } from "./routes/public-inquiries.js";
 
 config();
 
@@ -29,9 +35,12 @@ type RequestBodyError = Error & {
 
 // Middleware
 app.use(helmet());
+const allowedWebOrigins = getAllowedWebOrigins();
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+    origin(origin, callback) {
+      callback(null, isAllowedWebOrigin(origin, allowedWebOrigins));
+    },
     credentials: true,
   })
 );
@@ -56,6 +65,7 @@ app.use("/oauth-providers", oauthProviderRoutes);
 app.use("/memories", memoriesRoutes);
 app.use("/setup", setupRoutes);
 app.use("/ai", aiRoutes);
+app.use("/public", publicInquiryRoutes);
 app.use(
   (
     error: RequestBodyError,
@@ -92,6 +102,7 @@ app.use(
 );
 
 app.listen(PORT, () => {
+  startConnectionSecretSyncReconciler();
   console.log(
     `🚀 GTMShip Auth Service running on port ${PORT} (JSON body limit: ${JSON_BODY_LIMIT})`
   );

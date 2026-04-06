@@ -116,6 +116,38 @@ export function parseGroundedApiContext(
   };
 }
 
+const WORKFLOW_HEURISTIC_CONTEXT_MARKER = "WORKFLOW HEURISTIC CONTEXT:";
+const GTM_PATTERN_CONTEXT_MARKER = "GTM PATTERN CONTEXT:";
+
+/**
+ * Parse workflow heuristic context from the agent's instructions parameter.
+ * Supports both the new workflow-heuristic marker and the older GTM marker.
+ */
+export function parseGtmPatternContext(
+  instructions: string | undefined
+): string | undefined {
+  if (!instructions) return undefined;
+
+  const marker = instructions.includes(WORKFLOW_HEURISTIC_CONTEXT_MARKER)
+    ? WORKFLOW_HEURISTIC_CONTEXT_MARKER
+    : instructions.includes(GTM_PATTERN_CONTEXT_MARKER)
+      ? GTM_PATTERN_CONTEXT_MARKER
+      : null;
+  if (!marker) return undefined;
+
+  const idx = instructions.indexOf(marker);
+  const section = instructions.slice(idx + marker.length);
+
+  // Extract until the next known marker or end of string
+  const nextMarkerIdx = section.indexOf(GROUNDED_API_CONTEXT_MARKER);
+  const patternText =
+    nextMarkerIdx >= 0
+      ? section.slice(0, nextMarkerIdx).trim()
+      : section.trim();
+
+  return patternText || undefined;
+}
+
 const requirementSchema = z.object({
   id: z.string(),
   type: z.enum(["integration", "public_url"]),
@@ -907,7 +939,8 @@ async function preflightAccesses(
 async function generateAnalysis(
   messages: WorkflowStudioMessage[],
   currentArtifact?: WorkflowStudioArtifact | null,
-  resolvedModel?: WorkflowStudioModel
+  resolvedModel?: WorkflowStudioModel,
+  patternContext?: string
 ): Promise<WorkflowAnalysis> {
   const model = resolvedModel ?? (await resolveModel());
   const connections = await listActiveConnections();
@@ -930,6 +963,13 @@ async function generateAnalysis(
             ),
             "Map references like Gmail/email sending to `gmail` when Gmail is active.",
             "Map references like Factors Journey API, Factors Account Journey API, or Factors.ai API to `factors` when that integration is active.",
+            "",
+          ].join("\n")
+        : "",
+      patternContext
+        ? [
+            "Applicable workflow heuristics (shape the analysis to incorporate these reusable structures — include the integrations, triggers, and checkpoints they require):",
+            patternContext,
             "",
           ].join("\n")
         : "",
@@ -992,7 +1032,8 @@ async function generateCodeDraftOnce(
   previousPreview?: WorkflowPreviewResult,
   previousGenerationError?: string,
   resolvedModel?: WorkflowStudioModel,
-  groundedApiContext?: GroundedApiContext
+  groundedApiContext?: GroundedApiContext,
+  patternContext?: string
 ): Promise<WorkflowCodeDraft> {
   const model = resolvedModel ?? (await resolveModel());
   const prompt = [
@@ -1015,7 +1056,7 @@ async function generateCodeDraftOnce(
     "- `ctx.integration(...).read/write(...)` must use provider-relative paths like `/open/v1/...`, never full `https://...` URLs.",
     "- Use `ctx.web.read(url, ...)` for public/authless reads and `ctx.web.write(url, ...)` for public/authless writes.",
     "- If the workflow needs LLM/model generation, call `ctx.ai.generate(...)` instead of direct provider HTTP calls.",
-    "- When using `ctx.ai.generate(...)`, pass explicit `provider` and `model` values from the workflow AI config list below.",
+    "- When using `ctx.ai.generate(...)`, pass explicit `providerSlug` and `model` values from the workflow AI config list below.",
     "- Do not hardcode AI provider/model values that are not present in the workflow AI config list.",
     "- `integration.read(...)`, `integration.write(...)`, `ctx.web.read(...)`, and `ctx.web.write(...)` return an object shaped like `{ data, status }`.",
     "- Read response data from the `.data` property before transforming it.",
@@ -1053,8 +1094,8 @@ async function generateCodeDraftOnce(
       '      // const readResult = await integration.read("/path");',
       '      // Write example — MUST include checkpoint from the write checkpoints list:',
       '      // await integration.write("/path", { method: "POST", body: data, checkpoint: "checkpoint-id" });',
-      "      // AI generation example (use provider/model from Workflow AI configs):",
-      '      // const aiResult = await ctx.ai.generate({ provider: "openai", model: "gpt-4.1", prompt: "..." });',
+      "      // AI generation example (use providerSlug/model from Workflow AI configs):",
+      '      // const aiResult = await ctx.ai.generate({ providerSlug: "openai", model: "gpt-4.1", prompt: "..." });',
       "      const result = { ok: true };",
       '      console.log("[workflow-id] Workflow completed", { result });',
       "      return result;",
@@ -1103,6 +1144,13 @@ async function generateCodeDraftOnce(
           "The workflow agent did not verify endpoint paths, request schemas, or response shapes before calling generateWorkflowDraft.",
           "Use only well-known, stable API patterns. Do not guess endpoint paths or field names.",
         ]),
+    ...(patternContext
+      ? [
+          "",
+          "Workflow Heuristic Code Guidance (follow these reusable structural heuristics; use grounded API endpoints for actual paths):",
+          patternContext,
+        ]
+      : []),
     "",
     "Write checkpoints (EVERY .write() call MUST pass one of these ids as `checkpoint:`):",
     JSON.stringify(writeCheckpoints, null, 2),
@@ -1309,6 +1357,7 @@ export async function generateWorkflowArtifact(input: {
   resolvedModel?: WorkflowStudioModel;
   onProgress?: WorkflowDraftProgressReporter;
   groundedApiContext?: GroundedApiContext;
+  patternContext?: string;
 }): Promise<{
   assistantMessage: string;
   artifact?: WorkflowStudioArtifact;
@@ -1362,7 +1411,7 @@ export async function generateWorkflowArtifact(input: {
       currentArtifact: input.currentArtifact,
       resolvedModel: input.resolvedModel,
       run: (messages) =>
-        generateAnalysis(messages, input.currentArtifact, input.resolvedModel),
+        generateAnalysis(messages, input.currentArtifact, input.resolvedModel, input.patternContext),
       onCompaction: () => {
         emitDraftProgress(input.onProgress, {
           stage: "analysis",
@@ -1536,7 +1585,8 @@ export async function generateWorkflowArtifact(input: {
             previousPreview,
             latestGenerationError,
             input.resolvedModel,
-            input.groundedApiContext
+            input.groundedApiContext,
+            input.patternContext
           ),
         onCompaction: () => {
           emitDraftProgress(input.onProgress, {

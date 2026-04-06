@@ -2,6 +2,7 @@ import { prisma } from "./db.js";
 import {
   loadConfiguredSecretBackendTargets,
   markConnectionSecretReplicasPendingById,
+  normalizeSecretBackendKind,
   syncConnectionSecretReplicasById,
   type ConnectionSecretReplicaRow,
   type SecretBackendTarget,
@@ -27,6 +28,18 @@ export interface ConnectionAuthStrategyStatus {
 }
 
 export const CONNECTION_AUTH_MODE_SETTING_KEY = "connection_auth_mode";
+const DEFAULT_SECRET_REPLICA_RECONCILE_INTERVAL_MS = 30_000;
+const DEFAULT_SECRET_REPLICA_RECONCILE_BATCH_SIZE = 100;
+const ALL_SECRET_SYNC_TARGET_KEY = "*";
+
+export const connectionSecretSyncRuntime = {
+  markConnectionSecretReplicasPendingById,
+  syncConnectionSecretReplicasById,
+};
+
+let reconcileIntervalHandle: ReturnType<typeof setInterval> | null = null;
+let reconcileRunInFlight = false;
+const queuedConnectionSecretSyncKeys = new Set<string>();
 
 export function normalizeConnectionAuthMode(
   value: unknown
@@ -180,30 +193,128 @@ function logScheduledSyncError(connectionId: string, error: unknown): void {
   );
 }
 
-export async function scheduleConnectionSecretSync(
+function buildSecretSyncTargetKey(explicitTarget?: SecretBackendTarget): string {
+  if (!explicitTarget) {
+    return ALL_SECRET_SYNC_TARGET_KEY;
+  }
+
+  return [
+    explicitTarget.kind,
+    explicitTarget.region || "",
+    explicitTarget.projectId || "",
+  ].join("|");
+}
+
+function buildConnectionSecretSyncKey(
   connectionId: string,
   explicitTarget?: SecretBackendTarget
+): string {
+  return `${connectionId}|${buildSecretSyncTargetKey(explicitTarget)}`;
+}
+
+function hasQueuedConnectionSecretSync(
+  connectionId: string,
+  explicitTarget?: SecretBackendTarget
+): boolean {
+  const allKey = buildConnectionSecretSyncKey(connectionId);
+  if (queuedConnectionSecretSyncKeys.has(allKey)) {
+    return true;
+  }
+
+  return queuedConnectionSecretSyncKeys.has(
+    buildConnectionSecretSyncKey(connectionId, explicitTarget)
+  );
+}
+
+function markQueuedConnectionSecretSync(
+  connectionId: string,
+  explicitTarget?: SecretBackendTarget
+): string {
+  const key = buildConnectionSecretSyncKey(connectionId, explicitTarget);
+  queuedConnectionSecretSyncKeys.add(key);
+  return key;
+}
+
+async function runConnectionSecretSyncNow(
+  connectionId: string,
+  explicitTarget?: SecretBackendTarget
+): Promise<boolean> {
+  if (hasQueuedConnectionSecretSync(connectionId, explicitTarget)) {
+    return false;
+  }
+
+  const queueKey = markQueuedConnectionSecretSync(connectionId, explicitTarget);
+
+  try {
+    await connectionSecretSyncRuntime.syncConnectionSecretReplicasById(
+      connectionId,
+      explicitTarget
+    );
+    return true;
+  } catch (error) {
+    logScheduledSyncError(connectionId, error);
+    return false;
+  } finally {
+    queuedConnectionSecretSyncKeys.delete(queueKey);
+  }
+}
+
+function queueConnectionSecretSync(
+  connectionId: string,
+  explicitTarget?: SecretBackendTarget
+): void {
+  setTimeout(() => {
+    void runConnectionSecretSyncNow(connectionId, explicitTarget);
+  }, 0);
+}
+
+export async function enqueueConnectionSecretSyncs(
+  connectionIds: string[],
+  explicitTarget?: SecretBackendTarget
 ): Promise<ConnectionSecretReplicaRow[]> {
+  const uniqueConnectionIds = Array.from(
+    new Set(
+      connectionIds
+        .map((connectionId) => connectionId?.trim())
+        .filter((connectionId): connectionId is string => Boolean(connectionId))
+    )
+  );
+  if (uniqueConnectionIds.length === 0) {
+    return [];
+  }
+
   const mode = await getConnectionAuthMode();
   if (mode !== "secret_manager") {
     return [];
   }
 
-  const pending = await markConnectionSecretReplicasPendingById(
-    connectionId,
-    explicitTarget
-  );
+  const pendingReplicas: ConnectionSecretReplicaRow[] = [];
+  for (const connectionId of uniqueConnectionIds) {
+    const pending =
+      await connectionSecretSyncRuntime.markConnectionSecretReplicasPendingById(
+        connectionId,
+        explicitTarget
+      );
 
-  if (pending.length === 0) {
-    return [];
+    if (pending.length === 0) {
+      continue;
+    }
+
+    pendingReplicas.push(...pending);
+    queueConnectionSecretSync(connectionId, explicitTarget);
   }
 
-  setTimeout(() => {
-    void syncConnectionSecretReplicasById(connectionId, explicitTarget).catch(
-      (error) => logScheduledSyncError(connectionId, error)
-    );
-  }, 0);
+  return pendingReplicas;
+}
 
+export async function scheduleConnectionSecretSync(
+  connectionId: string,
+  explicitTarget?: SecretBackendTarget
+): Promise<ConnectionSecretReplicaRow[]> {
+  const pending = await enqueueConnectionSecretSyncs(
+    [connectionId],
+    explicitTarget
+  );
   return pending;
 }
 
@@ -242,4 +353,140 @@ export async function syncAllActiveConnectionsToSecretManagers(): Promise<{
     syncedReplicas,
     errorReplicas,
   };
+}
+
+export async function reconcileStaleConnectionSecretReplicas(options?: {
+  limit?: number;
+}): Promise<{
+  queued: number;
+  scanned: number;
+}> {
+  const mode = await getConnectionAuthMode();
+  if (mode !== "secret_manager") {
+    return {
+      queued: 0,
+      scanned: 0,
+    };
+  }
+
+  const staleReplicas = await prisma.connectionSecretReplica.findMany({
+    where: {
+      status: { in: ["pending", "error"] },
+    },
+    orderBy: [{ updatedAt: "asc" }],
+    take: options?.limit || DEFAULT_SECRET_REPLICA_RECONCILE_BATCH_SIZE,
+    select: {
+      connectionId: true,
+      backendKind: true,
+      backendRegion: true,
+      backendProjectId: true,
+    },
+  });
+
+  const descriptors = Array.from(
+    new Map(
+      staleReplicas
+        .map((replica) => {
+          const backendKind = normalizeSecretBackendKind(replica.backendKind);
+          if (!backendKind) {
+            return null;
+          }
+
+          const target: SecretBackendTarget = {
+            kind: backendKind,
+            region: replica.backendRegion || undefined,
+            projectId: replica.backendProjectId || undefined,
+          };
+
+          return [
+            buildConnectionSecretSyncKey(replica.connectionId, target),
+            {
+              connectionId: replica.connectionId,
+              explicitTarget: target,
+            },
+          ] as const;
+        })
+        .filter(
+          (
+            entry
+          ): entry is readonly [
+            string,
+            { connectionId: string; explicitTarget: SecretBackendTarget }
+          ] => Boolean(entry)
+        )
+    ).values()
+  );
+
+  let queued = 0;
+  for (const descriptor of descriptors) {
+    const executed = await runConnectionSecretSyncNow(
+      descriptor.connectionId,
+      descriptor.explicitTarget
+    );
+    if (executed) {
+      queued += 1;
+    }
+  }
+
+  return {
+    queued,
+    scanned: staleReplicas.length,
+  };
+}
+
+function logReconcileError(error: unknown): void {
+  console.warn(
+    `[auth-strategy] Failed to reconcile stale secret replicas: ${
+      error instanceof Error ? error.message : "Unknown error"
+    }`
+  );
+}
+
+export function startConnectionSecretSyncReconciler(options?: {
+  intervalMs?: number;
+  batchSize?: number;
+}): void {
+  if (reconcileIntervalHandle) {
+    return;
+  }
+
+  const run = async () => {
+    if (reconcileRunInFlight) {
+      return;
+    }
+
+    reconcileRunInFlight = true;
+    try {
+      await reconcileStaleConnectionSecretReplicas({
+        limit: options?.batchSize,
+      });
+    } catch (error) {
+      logReconcileError(error);
+    } finally {
+      reconcileRunInFlight = false;
+    }
+  };
+
+  void run();
+
+  reconcileIntervalHandle = setInterval(
+    () => {
+      void run();
+    },
+    options?.intervalMs || DEFAULT_SECRET_REPLICA_RECONCILE_INTERVAL_MS
+  );
+  reconcileIntervalHandle.unref?.();
+}
+
+export function stopConnectionSecretSyncReconciler(): void {
+  if (reconcileIntervalHandle) {
+    clearInterval(reconcileIntervalHandle);
+    reconcileIntervalHandle = null;
+  }
+}
+
+export function resetConnectionSecretSyncRuntimeStateForTests(): void {
+  stopConnectionSecretSyncReconciler();
+  queuedConnectionSecretSyncKeys.clear();
+  reconcileRunInFlight = false;
 }

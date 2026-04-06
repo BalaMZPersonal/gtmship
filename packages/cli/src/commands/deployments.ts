@@ -11,12 +11,62 @@ import {
   confirmAction,
   type OutputOptions,
 } from "../lib/output.js";
+import {
+  buildLocalDeploymentSyncRecord,
+  listLocalDeploymentManifests,
+} from "../lib/local-deployments.js";
 
 interface DeploymentListOpts extends OutputOptions {
   workflow?: string;
   provider?: string;
   status?: string;
   live?: boolean;
+}
+
+interface DeploymentRecord {
+  id: string;
+  workflowId: string;
+  workflowVersion?: string | null;
+  provider: string;
+  region?: string | null;
+  gcpProject?: string | null;
+  executionKind: string;
+  status: string;
+  authMode?: string;
+  authConfig?: unknown;
+  triggerType?: string | null;
+  triggerConfig?: unknown;
+  endpointUrl?: string | null;
+  schedulerId?: string | null;
+  bindings?: unknown[];
+  resourceInventory?: unknown;
+  platform?: unknown;
+  recentExecutions?: unknown[];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function deploymentKey(workflowId: string, region?: string | null): string {
+  return `${workflowId}::${region || ""}`;
+}
+
+function normalizeSyncResult(payload: unknown): {
+  syncedCount: number;
+  deployments: unknown[];
+} {
+  const record = asRecord(payload);
+  const deployments = Array.isArray(record.deployments) ? record.deployments : [];
+  return {
+    syncedCount:
+      typeof record.syncedCount === "number"
+        ? record.syncedCount
+        : deployments.length,
+    deployments,
+  };
 }
 
 async function listDeployments(opts: DeploymentListOpts) {
@@ -92,6 +142,9 @@ async function getDeployment(
       printDetail("Region", d.region as string);
       printDetail("Endpoint", d.endpointUrl as string);
       printDetail("Deployed At", d.deployedAt as string);
+      if (typeof d.triggerType === "string") {
+        printDetail("Trigger Type", d.triggerType);
+      }
 
       if (d.bindings && Array.isArray(d.bindings) && (d.bindings as unknown[]).length > 0) {
         console.log(chalk.bold("\n  Bindings:"));
@@ -111,13 +164,16 @@ async function getDeployment(
       if (d.recentExecutions && Array.isArray(d.recentExecutions)) {
         console.log(chalk.bold("\n  Recent Executions:"));
         for (const exec of d.recentExecutions as Array<{
-          name?: string;
+          executionName?: string;
+          fullName?: string;
           status?: string;
-          createTime?: string;
+          triggerSource?: string;
+          startedAt?: string;
+          completedAt?: string;
         }>) {
           console.log(
             chalk.gray(
-              `    ${exec.name || "—"} | ${exec.status || "—"} | ${exec.createTime || "—"}`,
+              `    ${exec.executionName || exec.fullName || "—"} | ${exec.status || "—"} | ${exec.triggerSource || "—"} | ${exec.startedAt || exec.completedAt || "—"}`,
             ),
           );
         }
@@ -137,16 +193,119 @@ interface DeploymentLogsOpts extends OutputOptions {
   since?: string;
   limit?: string;
   execution?: string;
+  follow?: boolean;
+}
+
+function renderLogEntries(
+  result: {
+    entries: Array<{
+      timestamp: string;
+      level: string;
+      message: string;
+      executionName?: string;
+      requestId?: string;
+    }>;
+    liveError?: string;
+  }
+): number {
+  if (result.liveError) {
+    console.log(chalk.red(`  Error: ${result.liveError}\n`));
+  }
+
+  if (result.entries.length === 0) {
+    console.log(chalk.yellow("  No log entries found."));
+    return 0;
+  }
+
+  const levelColors: Record<string, (s: string) => string> = {
+    error: chalk.red,
+    warn: chalk.yellow,
+    info: chalk.gray,
+  };
+
+  for (const entry of result.entries) {
+    const ts = entry.timestamp?.replace("T", " ").replace("Z", "") || "";
+    const colorize = levelColors[entry.level] || chalk.gray;
+    const levelTag = colorize(`[${entry.level.toUpperCase()}]`.padEnd(7));
+    const execTag = entry.executionName
+      ? chalk.cyan(`[${entry.executionName}] `)
+      : entry.requestId
+        ? chalk.cyan(`[${entry.requestId}] `)
+        : "";
+    console.log(`  ${chalk.gray(ts)} ${levelTag} ${execTag}${entry.message}`);
+  }
+
+  return result.entries.length;
 }
 
 async function getDeploymentLogs(id: string, opts: DeploymentLogsOpts) {
   try {
-    const params = new URLSearchParams();
-    if (opts.since) params.set("since", opts.since);
-    if (opts.limit) params.set("limit", opts.limit);
-    if (opts.execution) params.set("executionName", opts.execution);
-    const qs = params.toString();
+    const buildQuery = (sinceValue?: string) => {
+      const params = new URLSearchParams();
+      if (sinceValue) params.set("since", sinceValue);
+      if (opts.limit) params.set("limit", opts.limit);
+      if (opts.execution) params.set("executionName", opts.execution);
+      return params.toString();
+    };
 
+    if (opts.follow && opts.json) {
+      throw new Error("--follow is not supported with --json.");
+    }
+
+    if (opts.follow) {
+      console.log(chalk.gray("  Following deployment logs. Press Ctrl+C to stop.\n"));
+      const seen = new Set<string>();
+      let nextSince = opts.since;
+      for (;;) {
+        const qs = buildQuery(nextSince);
+        const data = (await apiGet(
+          `/workflow-control/deployments/${encodeURIComponent(id)}/logs${qs ? `?${qs}` : ""}`,
+        )) as {
+          entries: Array<{
+            timestamp: string;
+            level: string;
+            message: string;
+            executionName?: string;
+            requestId?: string;
+          }>;
+          liveError?: string;
+        };
+
+        const freshEntries = data.entries.filter((entry) => {
+          const key = [
+            entry.timestamp,
+            entry.level,
+            entry.executionName || "",
+            entry.requestId || "",
+            entry.message,
+          ].join("::");
+          if (seen.has(key)) {
+            return false;
+          }
+          seen.add(key);
+          return true;
+        });
+
+        if (freshEntries.length > 0 || data.liveError) {
+          renderLogEntries({
+            ...data,
+            entries: freshEntries,
+          });
+          if (freshEntries.length > 0) {
+            console.log("");
+          }
+        }
+
+        const latestTimestamp = freshEntries.at(-1)?.timestamp;
+        if (latestTimestamp) {
+          nextSince = latestTimestamp;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+    }
+
+    const qs = buildQuery(opts.since);
     const data = await apiGet(
       `/workflow-control/deployments/${encodeURIComponent(id)}/logs${qs ? `?${qs}` : ""}`,
     );
@@ -157,42 +316,15 @@ async function getDeploymentLogs(id: string, opts: DeploymentLogsOpts) {
           level: string;
           message: string;
           executionName?: string;
+          requestId?: string;
         }>;
         liveError?: string;
       };
 
-      if (result.liveError) {
-        console.log(chalk.red(`  Error: ${result.liveError}\n`));
+      const count = renderLogEntries(result);
+      if (count > 0) {
+        console.log(chalk.gray(`\n  ${count} log entries shown.`));
       }
-
-      if (result.entries.length === 0) {
-        console.log(chalk.yellow("  No log entries found."));
-        return;
-      }
-
-      const levelColors: Record<string, (s: string) => string> = {
-        error: chalk.red,
-        warn: chalk.yellow,
-        info: chalk.gray,
-      };
-
-      for (const entry of result.entries) {
-        const ts = entry.timestamp?.replace("T", " ").replace("Z", "") || "";
-        const colorize = levelColors[entry.level] || chalk.gray;
-        const levelTag = colorize(
-          `[${entry.level.toUpperCase()}]`.padEnd(7),
-        );
-        const execTag = entry.executionName
-          ? chalk.cyan(`[${entry.executionName}] `)
-          : "";
-        console.log(
-          `  ${chalk.gray(ts)} ${levelTag} ${execTag}${entry.message}`,
-        );
-      }
-
-      console.log(
-        chalk.gray(`\n  ${result.entries.length} log entries shown.`),
-      );
     });
   } catch (err) {
     handleError(err, opts);
@@ -208,6 +340,85 @@ async function reconcileDeployments(
   },
 ) {
   try {
+    if (opts.provider === "local") {
+      const manifests = listLocalDeploymentManifests().filter((manifest) =>
+        opts.workflow ? manifest.workflowId === opts.workflow : true
+      );
+
+      if (manifests.length === 0) {
+        formatOutput({ syncedCount: 0, deployments: [] }, opts, () => {
+          printWarning("No local deployments found to reconcile.");
+        });
+        return;
+      }
+
+      const existingDeployments = (await apiGet(
+        `/workflow-control/deployments?provider=local`,
+      )) as DeploymentRecord[];
+      const existingByKey = new Map(
+        existingDeployments.map((deployment) => [
+          deploymentKey(deployment.workflowId, deployment.region),
+          deployment,
+        ])
+      );
+
+      const syncPayload = manifests.map((manifest) => {
+        const baseRecord = buildLocalDeploymentSyncRecord(manifest);
+        const existing = existingByKey.get(
+          deploymentKey(manifest.workflowId, manifest.region)
+        );
+
+        if (!existing) {
+          return baseRecord;
+        }
+
+        const baseResourceInventory = asRecord(baseRecord.resourceInventory);
+        const baseRuntimeTarget = asRecord(baseResourceInventory.runtimeTarget);
+        const basePlatformOutputs = asRecord(baseResourceInventory.platformOutputs);
+        const existingResourceInventory = asRecord(existing.resourceInventory);
+        const existingRuntimeTarget = asRecord(existingResourceInventory.runtimeTarget);
+        const existingPlatformOutputs = asRecord(
+          existingResourceInventory.platformOutputs
+        );
+
+        return {
+          ...baseRecord,
+          workflowVersion: existing.workflowVersion || undefined,
+          authMode: existing.authMode,
+          triggerType: existing.triggerType || baseRecord.triggerType,
+          triggerConfig: existing.triggerConfig || baseRecord.triggerConfig,
+          status: existing.status || "active",
+          resourceInventory: {
+            ...existingResourceInventory,
+            ...baseResourceInventory,
+            trigger:
+              baseRecord.triggerConfig ||
+              existing.triggerConfig ||
+              existingResourceInventory.trigger,
+            runtimeTarget: {
+              ...existingRuntimeTarget,
+              ...baseRuntimeTarget,
+            },
+            platformOutputs: {
+              ...existingPlatformOutputs,
+              ...basePlatformOutputs,
+            },
+          },
+        };
+      });
+
+      const result = normalizeSyncResult(
+        await apiPost("/workflow-control-plane/deployments/sync", {
+          deployments: syncPayload,
+        })
+      );
+
+      formatOutput(result, opts, () => {
+        printSuccess(`Reconciled ${result.syncedCount} deployment(s).`);
+      });
+      return;
+    }
+
     // Fetch all existing deployments with live status
     const params = new URLSearchParams();
     params.set("includeLive", "true");
@@ -217,25 +428,7 @@ async function reconcileDeployments(
 
     const deployments = (await apiGet(
       `/workflow-control/deployments?${qs}`,
-    )) as Array<{
-      id: string;
-      workflowId: string;
-      provider: string;
-      region?: string;
-      gcpProject?: string;
-      executionKind: string;
-      status: string;
-      authMode?: string;
-      authConfig?: unknown;
-      triggerType?: string;
-      triggerConfig?: unknown;
-      endpointUrl?: string;
-      schedulerId?: string;
-      bindings?: unknown[];
-      resourceInventory?: unknown;
-      platform?: unknown;
-      recentExecutions?: unknown[];
-    }>;
+    )) as DeploymentRecord[];
 
     if (deployments.length === 0) {
       formatOutput({ syncedCount: 0, deployments: [] }, opts, () => {
@@ -262,16 +455,12 @@ async function reconcileDeployments(
       status: d.status,
     }));
 
-    const result = await apiPost(
+    const result = normalizeSyncResult(await apiPost(
       "/workflow-control-plane/deployments/sync",
       { deployments: syncPayload },
-    );
+    ));
     formatOutput(result, opts, () => {
-      const payload = result as { deployments?: unknown[] };
-      const count = Array.isArray(payload.deployments)
-        ? payload.deployments.length
-        : 0;
-      printSuccess(`Reconciled ${count} deployment(s).`);
+      printSuccess(`Reconciled ${result.syncedCount} deployment(s).`);
     });
   } catch (err) {
     handleError(err, opts);
@@ -316,7 +505,7 @@ export function registerDeploymentsCommand(program: Command) {
     .command("list")
     .description("List all deployments")
     .option("--workflow <id>", "Filter by workflow ID")
-    .option("--provider <provider>", "Filter by provider (aws or gcp)")
+    .option("--provider <provider>", "Filter by provider (aws, gcp, or local)")
     .option("--status <status>", "Filter by status")
     .option("--live", "Include live platform status")
     .option("--json", "Output as JSON")
@@ -337,6 +526,7 @@ export function registerDeploymentsCommand(program: Command) {
     .option("--since <duration>", "Show logs since duration (e.g., 1h, 30m)", "1h")
     .option("--limit <n>", "Maximum log entries", "200")
     .option("--execution <name>", "Filter by execution name")
+    .option("--follow", "Poll for new logs")
     .option("--json", "Output as JSON")
     .action((id, opts) => getDeploymentLogs(id, opts));
 
@@ -344,7 +534,7 @@ export function registerDeploymentsCommand(program: Command) {
     .command("reconcile")
     .description("Reconcile deployment state from cloud")
     .option("--workflow <id>", "Filter by workflow ID")
-    .option("--provider <provider>", "Filter by provider (aws or gcp)")
+    .option("--provider <provider>", "Filter by provider (aws, gcp, or local)")
     .option("--region <region>", "Cloud region")
     .option("--project <name>", "GCP project ID")
     .option("--json", "Output as JSON")

@@ -2,6 +2,7 @@
 
 import {
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -30,11 +31,12 @@ const timeRanges = [
   { value: "7d", label: "Last 7d" },
 ];
 
-const cloudProviders: CloudProvider[] = ["aws", "gcp"];
+const cloudProviders: CloudProvider[] = ["aws", "gcp", "local"];
 
 const CLOUD_PROVIDER_LABELS: Record<CloudProvider, string> = {
   aws: "AWS",
   gcp: "Google Cloud",
+  local: "Local Machine",
 };
 
 const fieldClassName =
@@ -95,7 +97,10 @@ function formatDateTime(value?: string | null): string {
 
 function describeDeployment(deployment: WorkflowDeploymentOverview): string {
   const computeType =
-    deployment.provider === "aws" || deployment.platform?.computeType === "lambda"
+    deployment.provider === "local"
+      ? "Local Workflow Job"
+      : deployment.provider === "aws" ||
+          deployment.platform?.computeType === "lambda"
       ? "Lambda Function"
       : deployment.platform?.computeType === "job"
         ? "Cloud Run Job"
@@ -164,14 +169,15 @@ function normalizeLegacyLogEntries(
   });
 }
 
-export default function LogsPage() {
+function LogsPageContent() {
   const searchParams = useSearchParams();
-  const requestedProvider = resolveCloudProvider(searchParams.get("provider"));
-  const queryWorkflow = searchParams.get("workflow") || "";
-  const queryWorkflowSlug = searchParams.get("workflowSlug") || "";
+  const getQueryParam = (name: string) => searchParams?.get(name) || "";
+  const requestedProvider = resolveCloudProvider(getQueryParam("provider"));
+  const queryWorkflow = getQueryParam("workflow");
+  const queryWorkflowSlug = getQueryParam("workflowSlug");
   const queryWorkflowValue = queryWorkflow || queryWorkflowSlug;
-  const queryDeploymentId = searchParams.get("deploymentId") || "";
-  const queryExecutionName = searchParams.get("executionName") || "";
+  const queryDeploymentId = getQueryParam("deploymentId");
+  const queryExecutionName = getQueryParam("executionName");
 
   const [provider, setProvider] = useState<CloudProvider | null>(requestedProvider);
   const [providerReady, setProviderReady] = useState(Boolean(requestedProvider));
@@ -284,12 +290,14 @@ export default function LogsPage() {
     ? CLOUD_PROVIDER_LABELS[provider]
     : "your primary cloud";
   const providerStatusCopy = !providerReady
-    ? "Loading the cloud configured in Settings..."
+    ? "Loading the deployment target configured in Settings..."
+    : provider === "local"
+      ? "Showing local deployments and logs from this machine."
     : requestedProvider && provider === requestedProvider
       ? `Showing ${activeProviderLabel} from the current provider-specific link.`
       : requestedProvider
         ? `Switched to ${activeProviderLabel} for this session after opening from a provider-specific link.`
-      : `Opening ${activeProviderLabel} because it is configured as your primary cloud in Settings.`;
+        : `Opening ${activeProviderLabel} because it is configured as your primary cloud in Settings.`;
 
   const handleProviderChange = (nextProvider: CloudProvider) => {
     setProvider(nextProvider);
@@ -297,6 +305,7 @@ export default function LogsPage() {
     setError("");
     setLiveError("");
     setDeploymentError("");
+    setAutoRefresh(nextProvider === "local");
   };
 
   const loadDeployments = useCallback(async () => {
@@ -449,6 +458,12 @@ export default function LogsPage() {
   }, [fetchLogs, provider, providerReady]);
 
   useEffect(() => {
+    if (provider) {
+      setAutoRefresh(provider === "local");
+    }
+  }, [provider]);
+
+  useEffect(() => {
     if (!providerReady || !provider || !autoRefresh) {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -462,7 +477,7 @@ export default function LogsPage() {
       if (provider) {
         void loadDeployments();
       }
-    }, 10000);
+    }, provider === "local" ? 5000 : 10000);
 
     return () => {
       if (intervalRef.current) {
@@ -488,7 +503,7 @@ export default function LogsPage() {
                 Logs
               </h1>
               <p className="mt-3 max-w-2xl text-sm leading-7 text-zinc-400 sm:text-base">
-                Review workflow executions from your cloud deployment, narrow the
+                Review workflow executions from your deployment target, narrow the
                 stream to a specific workflow or time window, and jump into
                 deployment-scoped logs when recent execution metadata is available.
               </p>
@@ -507,9 +522,9 @@ export default function LogsPage() {
               Choose what to inspect
             </h2>
             <p className="mt-2 text-sm leading-7 text-zinc-400">
-              Start with your primary cloud from Settings, refine the workflow
-              scope, then refresh the stream manually or keep it live while you
-              investigate.
+              Start with your preferred deployment target from Settings, refine
+              the workflow scope, then refresh the stream manually or keep it
+              live while you investigate.
             </p>
           </div>
 
@@ -572,6 +587,8 @@ export default function LogsPage() {
                         placeholder={
                           provider === "gcp"
                             ? "Filter deployments by workflow..."
+                            : provider === "local"
+                              ? "Filter local deployments by workflow..."
                             : "Filter AWS deployments or legacy logs by workflow..."
                         }
                         className={`${fieldClassName} pl-9`}
@@ -679,7 +696,11 @@ export default function LogsPage() {
                               value={execution.executionName || ""}
                             >
                               {(execution.executionName || "execution") +
-                                ` • ${execution.status || "unknown"}`}
+                                ` • ${execution.status || "unknown"}${
+                                  execution.triggerSource
+                                    ? ` • ${execution.triggerSource}`
+                                    : ""
+                                }`}
                             </option>
                           ))}
                         </select>
@@ -698,6 +719,9 @@ export default function LogsPage() {
                                 ? selectedDeployment.platform?.gcpProject ||
                                   selectedDeployment.gcpProject ||
                                   "Unknown project"
+                                : provider === "local"
+                                  ? selectedDeployment.platform?.logPath ||
+                                    "Unknown local log path"
                                 : selectedDeployment.platform?.logGroupName ||
                                   "Unknown log group"}
                               {" • "}
@@ -821,5 +845,26 @@ export default function LogsPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+function LogsPageFallback() {
+  return (
+    <main className="min-h-screen bg-zinc-950 text-white">
+      <section className="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-6 py-24">
+        <div className="inline-flex items-center gap-3 rounded-full border border-zinc-800 bg-zinc-900/70 px-5 py-3 text-sm text-zinc-300">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading deployment logs...
+        </div>
+      </section>
+    </main>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <Suspense fallback={<LogsPageFallback />}>
+      <LogsPageContent />
+    </Suspense>
   );
 }

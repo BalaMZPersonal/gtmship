@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custom Connections Agent | GTMship Docs</title>
+  <meta name="description" content="Learn how GTMship's Custom Connections Agent handles built-in connectors, custom APIs, OAuth, API keys, and runtime auth strategies.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs.css">
+  <link rel="stylesheet" href="../../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Feature Guide</div>
+      <h1>Custom Connections Agent</h1>
+      <p>The Custom Connections Agent lets GTMship work with both built-in providers and custom APIs. It handles provider metadata, auth mode selection, credential storage, and the runtime path your workflow uses to reach external systems.</p>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Provider catalog</span>
+        <span class="docs-pill">Custom APIs</span>
+        <span class="docs-pill">OAuth2 + API keys</span>
+        <span class="docs-pill">Encrypted credentials</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Docs</div>
+          <a href="../index.html">Docs Home</a>
+          <a href="../index.html#how-it-works">How GTMship works</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a href="../workflow-builder-agent/index.html">Workflow Builder Agent</a>
+          <a class="active" href="index.html">Custom Connections Agent</a>
+          <a href="../write-checkpoints/index.html">Write Checkpoints</a>
+          <a href="../deployment/index.html">Deployment</a>
+          <a href="../ai-memory/index.html">AI Memory</a>
+          <a href="../dashboard-cli/index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>What it does</h2>
+          <p>Connections connect a workflow draft to a real external system. GTMship includes a provider catalog for common tools, but the Custom Connections Agent also supports custom APIs when you bring docs or an OpenAPI specification.</p>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What GTMship needs to model a provider</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Base URL and environment shape</h3>
+              <p>The agent needs to know where the API lives and whether production, staging, or tenant-specific hosts change the request path.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Auth method and token behavior</h3>
+              <p>OAuth, API key, and basic auth all behave differently, so GTMship needs the right auth shape before it can generate safe connection flows.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Endpoint or operation references</h3>
+              <p>OpenAPI specs, endpoint docs, or structured examples help the workflow agent ground request formats before it writes integration code.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Example payloads or fields</h3>
+              <p>Representative request and response shapes make it easier to map business objects and avoid vague field assumptions in generated workflows.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Auth modes GTMship supports</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>OAuth2</h3>
+              <p>Use redirect-based auth for providers such as CRMs and messaging tools, with token refresh managed through the auth service.</p>
+            </div>
+            <div class="docs-card">
+              <h3>API key</h3>
+              <p>Store API keys as encrypted connection credentials so workflows can call systems without hardcoding secrets.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Basic auth</h3>
+              <p>Handle username and password style credentials when an API exposes that auth shape.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Shared OAuth families</h3>
+              <p>Some provider families can reuse a single shared app configuration instead of reauthorizing each related service separately.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How onboarding works</h2>
+          <ol style="margin-top: 18px;">
+            <li>Select a built-in connector or start a custom provider from docs.</li>
+            <li>Define provider metadata such as base URL, auth type, and available endpoints.</li>
+            <li>Create a connection using OAuth, API key, or basic auth.</li>
+            <li>Store credentials behind the auth service instead of inside workflow source.</li>
+            <li>Bind that connection into workflows during generation, preview, and deployment.</li>
+          </ol>
+          <pre class="docs-code" style="margin-top: 18px;"><code>Provider docs
+  -> provider config
+  -> connection credentials
+  -> workflow binding
+  -> runtime auth resolution</code></pre>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Provider definitions vs connection records</h2>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">Provider definition</div>
+              <h3>The reusable API model</h3>
+              <p>This captures things like base URL, auth expectations, and the operations GTMship should reason about when building workflows.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">Connection record</div>
+              <h3>The authorized account or secret set</h3>
+              <p>This is the actual credentialed relationship to a tenant, workspace, or account that gets bound into preview and deployment.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Runtime auth strategies</h2>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">Proxy mode</div>
+              <h3>Simpler local and hosted flow</h3>
+              <p>Workflow calls go through the auth-service proxy, which resolves the bound connection, injects auth headers, and can refresh expired OAuth tokens.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">Secret manager mode</div>
+              <h3>Cloud-native secret replication</h3>
+              <p>Active credentials are replicated into AWS Secrets Manager or GCP Secret Manager, and deployments receive deterministic secret references in their runtime manifest.</p>
+            </div>
+          </div>
+          <div class="docs-note" style="margin-top: 18px;">
+            Proxy mode is usually the simpler path while iterating locally. Secret-manager mode is helpful when the deployed runtime should read credentials directly from your cloud environment.
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>When custom APIs fit best</h2>
+          <ul style="margin-top: 18px;">
+            <li>Your team has an internal service with a stable REST API.</li>
+            <li>You need a tool GTMship has not shipped as a built-in connector yet.</li>
+            <li>You want the workflow agent to reason over the provider docs before generating code.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Related docs</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="../workflow-builder-agent/index.html">How the Workflow Builder Agent uses grounded APIs</a>
+            <a class="docs-ghost-link" href="../deployment/index.html">How bindings resolve at deploy time</a>
+            <a class="docs-ghost-link" href="../dashboard-cli/index.html">Where to manage connections</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+
+  <script src="../../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../../',
+      page: 'docs-sub',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Docs Home', href: '../index.html' },
+        { label: 'Previous: Workflow Builder Agent', href: '../workflow-builder-agent/index.html' },
+        { label: 'Next: Checkpoints', href: '../write-checkpoints/index.html' }
+      ],
+      primaryAction: { label: 'Docs Home', href: '../index.html' }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard + CLI | GTMship Docs</title>
+  <meta name="description" content="Learn how GTMship's dashboard and CLI work together across project setup, connections, authoring, preview, deployment, and monitoring.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs.css">
+  <link rel="stylesheet" href="../../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Feature Guide</div>
+      <h1>Dashboard + CLI</h1>
+      <p>GTMship gives you two ways to operate the same system. Use the dashboard when you want interactive authoring and inspection, and use the CLI when you want project setup, automation, or scripted deployment workflows.</p>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Dashboard</span>
+        <span class="docs-pill">CLI</span>
+        <span class="docs-pill">Same project state</span>
+        <span class="docs-pill">Local + cloud</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Docs</div>
+          <a href="../index.html">Docs Home</a>
+          <a href="../index.html#quickstart">Quickstart</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a href="../workflow-builder-agent/index.html">Workflow Builder Agent</a>
+          <a href="../custom-connections-agent/index.html">Custom Connections Agent</a>
+          <a href="../write-checkpoints/index.html">Write Checkpoints</a>
+          <a href="../deployment/index.html">Deployment</a>
+          <a href="../ai-memory/index.html">AI Memory</a>
+          <a class="active" href="index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>What the dashboard is best at</h2>
+          <ul style="margin-top: 18px;">
+            <li>Interactive workflow authoring in Workflow Studio.</li>
+            <li>Visual inspection of generated flow, code, validation, preview, and deploy state.</li>
+            <li>Managing connections and custom providers with an operator-friendly UI.</li>
+            <li>Inspecting deployment records and logs without leaving the browser.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What the CLI is best at</h2>
+          <ul style="margin-top: 18px;">
+            <li>Project initialization and local startup.</li>
+            <li>Local-only workflow loops before you commit to cloud deployment.</li>
+            <li>Provider and connection management from scripts or CI.</li>
+            <li>Cloud deployment flows that need to run outside the browser.</li>
+            <li>Teams that want terminal-first operations but still benefit from the same GTMship control plane.</li>
+          </ul>
+          <pre class="docs-code" style="margin-top: 18px;"><code>gtmship dev
+gtmship providers list
+gtmship connections connect hubspot
+gtmship validate
+# deploy later when ready
+gtmship deploy --provider aws</code></pre>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Local-only run loop</h2>
+          <p>The simplest way to use GTMship is entirely local: start the dev environment, connect providers, author the workflow, validate it, and preview it in the dashboard. No cloud account is required until the workflow needs to stay live outside your machine.</p>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Start local services</h3>
+              <p><span class="docs-inline-code">gtmship dev</span> brings up the local development environment so the dashboard and auth flow can work against the same project.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Validate before deploy</h3>
+              <p>Use the local loop to connect systems, inspect the generated workflow, run validation, and preview sample events before introducing cloud infrastructure.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Promote later</h3>
+              <p>When the workflow needs stable webhooks, schedules, shared access, or production traffic handling, keep the same project and add a deploy step.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How they work together</h2>
+          <p>The dashboard and CLI are not separate products. They operate on the same project configuration, auth service, connection data, workflow artifacts, and deployment records. You can connect a system in one surface and keep working from the other without changing tools or state stores.</p>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Shared connections</h3>
+              <p>Providers and credentials stay available no matter which surface you used to create them.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Shared workflow state</h3>
+              <p>Workflow source, preview context, and deployment state remain tied to the same project.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Shared deployment records</h3>
+              <p>Build metadata, bindings, and release status stay visible whether you kicked off the deploy from the browser or the terminal.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Shared inspection flow</h3>
+              <p>Logs, runtime details, and troubleshooting context remain part of the same project story instead of splitting into separate tool silos.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Common handoff patterns</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Bootstrap in CLI, refine in dashboard</h3>
+              <p>Teams often initialize projects and start services from the terminal, then switch to the dashboard for interactive workflow authoring.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Connect visually, automate later</h3>
+              <p>Operators can set up providers and credentials in the UI first, then rely on CLI commands once the flow needs to become repeatable.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Inspect in dashboard, rerun in CLI</h3>
+              <p>A failed preview or deploy can be inspected visually, then reproduced or retried from scripts once the root cause is understood.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Use dashboard for exploration, CLI for CI</h3>
+              <p>The browser is usually the faster place to understand state. The terminal is the better fit when the same operations need to run in automation.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Recommended operating pattern</h2>
+          <ol style="margin-top: 18px;">
+            <li>Use the CLI to initialize a project and open local services.</li>
+            <li>Use the dashboard for interactive authoring, validation, preview, and inspection.</li>
+            <li>Use either surface for deployment depending on whether the task is exploratory or automated.</li>
+            <li>Return to the CLI when you want repeatable commands or CI integration.</li>
+          </ol>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Related docs</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="../deployment/index.html">See deployment from both surfaces</a>
+            <a class="docs-ghost-link" href="../workflow-builder-agent/index.html">Return to Workflow Builder Agent</a>
+            <a class="docs-ghost-link" href="../custom-connections-agent/index.html">See connection management details</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+
+  <script src="../../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../../',
+      page: 'docs-sub',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Docs Home', href: '../index.html' },
+        { label: 'Previous: AI Memory', href: '../ai-memory/index.html' },
+        { label: 'All Guides', href: '../index.html#feature-guides' }
+      ],
+      primaryAction: { label: 'Docs Home', href: '../index.html' }
+    });
+  </script>
+</body>
+</html>

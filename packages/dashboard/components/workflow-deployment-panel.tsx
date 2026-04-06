@@ -85,7 +85,11 @@ export function WorkflowDeploymentPanel({
                   ...current,
                   deploy: {
                     ...(current.deploy || {}),
-                    provider: (event.target.value || undefined) as "aws" | "gcp" | undefined,
+                    provider: (event.target.value || undefined) as
+                      | "aws"
+                      | "gcp"
+                      | "local"
+                      | undefined,
                   },
                 }))
               }
@@ -94,6 +98,7 @@ export function WorkflowDeploymentPanel({
               <option value="">Project default</option>
               <option value="aws">AWS</option>
               <option value="gcp">GCP</option>
+              <option value="local">Local</option>
             </select>
           </label>
 
@@ -115,23 +120,25 @@ export function WorkflowDeploymentPanel({
             />
           </label>
 
-          <label className="text-xs text-zinc-400">
-            GCP Project
-            <input
-              value={artifact.deploy?.gcpProject || ""}
-              onChange={(event) =>
-                onArtifactChange((current) => ({
-                  ...current,
-                  deploy: {
-                    ...(current.deploy || {}),
-                    gcpProject: event.target.value || undefined,
-                  },
-                }))
-              }
-              placeholder="Required for GCP deploys"
-              className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
-            />
-          </label>
+          {artifact.deploy?.provider !== "local" ? (
+            <label className="text-xs text-zinc-400">
+              GCP Project
+              <input
+                value={artifact.deploy?.gcpProject || ""}
+                onChange={(event) =>
+                  onArtifactChange((current) => ({
+                    ...current,
+                    deploy: {
+                      ...(current.deploy || {}),
+                      gcpProject: event.target.value || undefined,
+                    },
+                  }))
+                }
+                placeholder="Required for GCP deploys"
+                className="mt-1 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
+              />
+            </label>
+          ) : null}
 
           <label className="text-xs text-zinc-400">
             Execution Kind

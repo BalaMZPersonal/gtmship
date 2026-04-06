@@ -1208,8 +1208,10 @@ export default function SettingsPage() {
               </h2>
               <p className="mt-1 text-sm leading-6 text-zinc-500">
                 GTMShip always writes credentials into local encrypted storage first.
-                In secret-manager mode we replicate to the configured backend in the
-                background, and deployments wait for healthy replicas before they sync.
+                Local preview, Run Now, and local deployments resolve from that local
+                store. In secret-manager mode we replicate to the configured backend in
+                the background so cloud deployments can run against provider-managed
+                secrets.
               </p>
             </div>
           </div>
@@ -1223,13 +1225,13 @@ export default function SettingsPage() {
                     value: "proxy" as const,
                     title: "Proxy server",
                     body:
-                      "Connections and refreshes resolve locally through auth-service. Local storage remains authoritative.",
+                      "Connections and refreshes resolve locally through auth-service. Local storage remains authoritative for local preview and execution.",
                   },
                   {
                     value: "secret_manager" as const,
                     title: "Secret manager",
                     body:
-                      "Connections still write locally first, then sync to Secret Manager. Deploys only proceed once replicas are healthy.",
+                      "Connections still write locally first, then sync to Secret Manager so cloud deploys only proceed once provider-specific replicas are healthy.",
                   },
                 ].map((option) => (
                   <button

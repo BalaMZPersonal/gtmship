@@ -7,6 +7,7 @@ import {
   getScopedWorkflowDeployments,
   getWorkflowDeploymentRefs,
   resolvePreferredCloudProvider,
+  resolveWorkflowDeployTarget,
   resolveSelectedExecutionName,
   resolveSelectedWorkflowDeploymentId,
   type WorkflowDeploymentOverview,
@@ -170,6 +171,46 @@ describe("deploy helpers", () => {
     ).toBe("/deploy/logs?provider=gcp&deploymentId=dep-gcp-default");
   });
 
+  it("builds local deployment logs links and keeps local deployments scoped by provider", () => {
+    expect(
+      buildDeploymentLogsHref({
+        provider: "local",
+        deploymentId: "dep-local-1",
+        workflowId: "workflow-local",
+      })
+    ).toBe(
+      "/deploy/logs?provider=local&deploymentId=dep-local-1&workflow=workflow-local"
+    );
+
+    const scoped = getScopedWorkflowDeployments(
+      [
+        createDeployment({
+          id: "dep-local-1",
+          provider: "local",
+          workflowId: "workflow-local",
+          region: "local",
+          gcpProject: null,
+          updatedAt: "2026-04-05T10:00:00.000Z",
+        }),
+        createDeployment({
+          id: "dep-aws-1",
+          provider: "aws",
+          workflowId: "workflow-local",
+          region: "us-east-1",
+          gcpProject: null,
+          updatedAt: "2026-04-05T11:00:00.000Z",
+        }),
+      ],
+      {
+        provider: "local",
+        workflowId: "workflow-local",
+        region: "local",
+      }
+    );
+
+    expect(scoped.map((deployment) => deployment.id)).toEqual(["dep-local-1"]);
+  });
+
   it("keeps aws deployments selectable by provider and region without using gcp fields", () => {
     const scoped = getScopedWorkflowDeployments(
       [
@@ -226,6 +267,93 @@ describe("deploy helpers", () => {
         savedProvider: null,
       })
     ).toBe("aws");
+  });
+
+  it("resolves legacy local workflow deploy specs to a local target without losing cloud defaults", () => {
+    expect(
+      resolveWorkflowDeployTarget({
+        workflowDeploy: {
+          provider: "local",
+          region: "local",
+        },
+        cloudSettings: {
+          provider: "gcp",
+          region: "us-central1",
+          gcpProject: "demo-project",
+          savedRegions: {
+            aws: "us-east-1",
+            gcp: "us-central1",
+            local: "local",
+          },
+        },
+      })
+    ).toEqual({
+      target: "local",
+      provider: "local",
+      region: "local",
+      cloudProvider: "gcp",
+      cloudRegion: "us-central1",
+      cloudGcpProject: "demo-project",
+    });
+  });
+
+  it("keeps cloud provider settings when local target is selected", () => {
+    expect(
+      resolveWorkflowDeployTarget({
+        workflowDeploy: {
+          target: "local",
+          provider: "aws",
+          region: "us-west-2",
+        },
+        cloudSettings: {
+          provider: "gcp",
+          region: "us-central1",
+          gcpProject: "demo-project",
+          savedRegions: {
+            aws: "us-east-1",
+            gcp: "us-central1",
+            local: "local",
+          },
+        },
+      })
+    ).toEqual({
+      target: "local",
+      provider: "local",
+      region: "local",
+      cloudProvider: "aws",
+      cloudRegion: "us-west-2",
+      cloudGcpProject: "demo-project",
+    });
+  });
+
+  it("falls back to a real cloud provider when a cloud target is stored without one", () => {
+    expect(
+      resolveWorkflowDeployTarget({
+        workflowDeploy: {
+          target: "cloud",
+          provider: "local",
+          region: "local",
+        },
+        cloudSettings: {
+          provider: "local",
+          region: "local",
+          gcpProject: "demo-project",
+          savedRegions: {
+            aws: "us-west-1",
+            gcp: "us-central1",
+            local: "local",
+          },
+        },
+      })
+    ).toEqual({
+      target: "cloud",
+      provider: "aws",
+      region: "us-west-1",
+      gcpProject: undefined,
+      cloudProvider: "aws",
+      cloudRegion: "us-west-1",
+      cloudGcpProject: "demo-project",
+    });
   });
 
   it("returns no secret sync summary for proxy auth plans", () => {

@@ -33,7 +33,7 @@ interface ApiEndpoint {
   response?: Record<string, unknown>;
 }
 
-interface ApiSchema {
+interface ApiSchema extends Record<string, unknown> {
   endpoints?: ApiEndpoint[];
   auth?: { type: string; header?: string; format?: string };
   test?: { curl: string; expected_status?: number };

@@ -70,6 +70,26 @@ async function executeWorkflow(payload: unknown): Promise<WorkflowResult> {
   }
 }
 
+async function writeResultFileIfRequested(
+  result: WorkflowResult
+): Promise<void> {
+  const resultPath = process.env.GTMSHIP_RESULT_PATH;
+  if (!resultPath) {
+    return;
+  }
+
+  try {
+    const fs = await import("node:fs/promises");
+    await fs.mkdir(dirname(resultPath), { recursive: true });
+    await fs.writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  } catch (error) {
+    console.error(
+      "[gtmship-runner] Failed to persist workflow result:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // AWS Lambda handler
 // ---------------------------------------------------------------------------
@@ -195,6 +215,7 @@ function readBody(
 export async function runJob(): Promise<void> {
   const payload = tryParseJson(process.env.GTMSHIP_JOB_PAYLOAD) ?? {};
   const result = await executeWorkflow(payload);
+  await writeResultFileIfRequested(result);
 
   if (result.success) {
     console.log(
@@ -232,9 +253,9 @@ const mode = process.env.GTMSHIP_RUNTIME_MODE;
 if (mode === "cloud-run-service") {
   console.log("[gtmship-runner] Starting Cloud Run service");
   void startHttpServer();
-} else if (mode === "cloud-run-job") {
+} else if (mode === "cloud-run-job" || mode === "local-job") {
   console.log(
-    `[gtmship-runner] Starting Cloud Run job for workflow ${process.env.GTMSHIP_WORKFLOW_ID || "unknown"}`,
+    `[gtmship-runner] Starting ${mode} for workflow ${process.env.GTMSHIP_WORKFLOW_ID || "unknown"}`,
   );
   void runJob();
 }

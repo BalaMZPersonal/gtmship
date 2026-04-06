@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GTMship Pricing | Hosted GTMship and GTM Services</title>
+  <meta name="description" content="Economical pricing for hosted GTMship and done-for-you GTM workflow services. Open source self-hosting stays the default.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs/docs.css">
+  <link rel="stylesheet" href="../shared/shared.css">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    .pricing-page-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .pricing-page-card {
+      position: relative;
+      padding: 24px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      background:
+        linear-gradient(180deg, rgba(20, 20, 20, 0.98), rgba(10, 10, 10, 0.98));
+      overflow: hidden;
+    }
+
+    .pricing-page-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.75), transparent);
+    }
+
+    .pricing-page-card.is-oss::before {
+      background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.75), transparent);
+    }
+
+    .pricing-page-card.is-services::before {
+      background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.8), transparent);
+    }
+
+    .pricing-page-card.is-highlighted {
+      border-color: rgba(0, 229, 255, 0.28);
+      box-shadow: 0 0 28px rgba(0, 229, 255, 0.08);
+    }
+
+    .pricing-page-kicker {
+      display: inline-block;
+      margin-bottom: 12px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .pricing-page-card h3 {
+      margin-bottom: 12px;
+      font-size: 1.18rem;
+    }
+
+    .pricing-page-price {
+      margin-bottom: 12px;
+      font-family: var(--font-heading);
+      font-size: clamp(1.7rem, 3vw, 2.15rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+
+    .pricing-page-price small {
+      display: block;
+      margin-top: 8px;
+      color: var(--text-secondary);
+      font-family: var(--font-body);
+      font-size: 0.82rem;
+      font-weight: 500;
+      letter-spacing: 0;
+      line-height: 1.55;
+    }
+
+    .pricing-page-card p {
+      margin: 0;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    .pricing-page-list {
+      list-style: none;
+      margin: 18px 0 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .pricing-page-list li {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      color: var(--text-primary);
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+
+    .pricing-page-list i {
+      margin-top: 2px;
+      color: var(--accent-cyan);
+      flex-shrink: 0;
+    }
+
+    .pricing-page-card.is-oss .pricing-page-list i {
+      color: var(--emerald-300);
+    }
+
+    .pricing-page-card.is-services .pricing-page-list i {
+      color: var(--amber-200);
+    }
+
+    .pricing-page-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .pricing-page-pill-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+      padding: 11px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 229, 255, 0.22);
+      background: rgba(0, 229, 255, 0.1);
+      color: var(--text-primary);
+      font-weight: 600;
+      transition: transform 0.15s, border-color 0.2s, background 0.2s;
+    }
+
+    .pricing-page-pill-link:hover {
+      transform: translateY(-1px);
+      border-color: rgba(0, 229, 255, 0.38);
+      background: rgba(0, 229, 255, 0.14);
+    }
+
+    .pricing-page-note-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .pricing-page-note {
+      padding: 20px;
+      border: 1px solid rgba(0, 229, 255, 0.16);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .pricing-page-note strong {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--text-primary);
+      font-family: var(--font-heading);
+      font-size: 1rem;
+    }
+
+    .pricing-page-note p,
+    .pricing-page-note li {
+      color: var(--text-secondary);
+    }
+
+    .pricing-inquiry-shell {
+      display: grid;
+      grid-template-columns: minmax(240px, 0.78fr) minmax(0, 1.22fr);
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .pricing-inquiry-sidebar {
+      padding: 20px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .pricing-inquiry-sidebar ul {
+      margin: 16px 0 0;
+      padding-left: 18px;
+      color: var(--text-secondary);
+    }
+
+    .pricing-inquiry-form {
+      padding: 22px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .pricing-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .pricing-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .pricing-field.is-full {
+      grid-column: 1 / -1;
+    }
+
+    .pricing-field label {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .pricing-field input,
+    .pricing-field select,
+    .pricing-field textarea {
+      width: 100%;
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-primary);
+      font: inherit;
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+
+    .pricing-field input::placeholder,
+    .pricing-field textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    .pricing-field input:focus,
+    .pricing-field select:focus,
+    .pricing-field textarea:focus {
+      border-color: rgba(0, 229, 255, 0.42);
+      box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .pricing-field textarea {
+      min-height: 148px;
+      resize: vertical;
+    }
+
+    .pricing-submit-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .pricing-submit {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 46px;
+      padding: 12px 18px;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(135deg, rgba(0, 229, 255, 0.9), rgba(34, 211, 238, 0.82));
+      color: #041014;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s, filter 0.2s, opacity 0.2s;
+    }
+
+    .pricing-submit:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
+
+    .pricing-submit:disabled {
+      opacity: 0.72;
+      cursor: wait;
+      transform: none;
+    }
+
+    .pricing-form-meta {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+
+    .pricing-status {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+
+    .pricing-status.is-pending {
+      border-color: rgba(0, 229, 255, 0.22);
+      color: var(--accent-cyan);
+    }
+
+    .pricing-status.is-success {
+      border-color: rgba(16, 185, 129, 0.24);
+      color: var(--emerald-300);
+    }
+
+    .pricing-status.is-error {
+      border-color: rgba(244, 63, 94, 0.28);
+      color: #fda4af;
+    }
+
+    .pricing-source-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .source-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      transition: border-color 0.2s, color 0.2s, transform 0.15s;
+    }
+
+    .source-chip:hover {
+      border-color: var(--border-hover);
+      color: var(--text-primary);
+      transform: translateY(-1px);
+    }
+
+    .pricing-honeypot {
+      position: absolute;
+      left: -10000px;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+
+    @media (max-width: 1023px) {
+      .pricing-page-grid,
+      .pricing-page-note-grid,
+      .pricing-inquiry-shell {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .pricing-form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Optional Commercial Help</div>
+      <h1>Economical pricing for teams that want GTMship hosted or run with them.</h1>
+      <p>Open source self-hosting stays the default. This page is for teams that want a lighter operational lift, a faster launch, or a productized GTM workflow service instead of doing everything in-house.</p>
+      <div class="docs-hero-actions">
+        <a class="docs-primary-link" href="#plans">See pricing options</a>
+        <a class="docs-ghost-link" href="#pricing-inquiry">Contact us</a>
+      </div>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Open source default</span>
+        <span class="docs-pill">Hosted from $9/mo</span>
+        <span class="docs-pill">Services from $49</span>
+        <span class="docs-pill">Maintenance from $19/mo</span>
+      </div>
+    </section>
+
+    <section class="docs-panel">
+      <h2>Before you look at pricing</h2>
+      <div class="pricing-page-note-grid">
+        <div class="pricing-page-note">
+          <strong>Self-hosting is still the main path</strong>
+          <p>GTMship is built as an open-source, deploy-to-your-cloud product. The paid options here are intentionally optional and designed for teams that want less infra work or want GTM workflows built and operated for them.</p>
+        </div>
+        <div class="pricing-page-note">
+          <strong>Why the hosted entry price can stay low</strong>
+          <p>Modern scale-to-zero infrastructure stays inexpensive for light-to-moderate workflow volume. That keeps the hosted entry tier practical without turning GTMship into a task-metered SaaS.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-panel" id="plans">
+      <h2>Choose a path</h2>
+      <p>These anchors are meant to be startup-friendly. Larger scopes, custom implementation work, or higher-volume hosting are quoted separately.</p>
+      <div class="pricing-page-grid">
+        <article class="pricing-page-card is-oss">
+          <div class="pricing-page-kicker">Default Path</div>
+          <h3>Open Source / Self-Host</h3>
+          <div class="pricing-page-price">Free<small>Run GTMship locally first, then in your own cloud only when you are ready.</small></div>
+          <p>Best for teams that want maximum control and are comfortable owning local iteration, credentials, and runtime operations themselves.</p>
+          <ul class="pricing-page-list">
+            <li><i class="ph ph-check-circle"></i> MIT-licensed core product experience</li>
+            <li><i class="ph ph-check-circle"></i> Start with a local-only run loop for authoring, validation, and preview</li>
+            <li><i class="ph ph-check-circle"></i> Deploy into your own AWS Lambda or GCP Cloud Run footprint only when the workflow needs it</li>
+            <li><i class="ph ph-check-circle"></i> No vendor runtime meter as the core story</li>
+          </ul>
+          <div class="pricing-page-actions">
+            <a class="pricing-page-pill-link" href="../docs/index.html"><i class="ph ph-book-open"></i> Read the docs</a>
+          </div>
+        </article>
+
+        <article class="pricing-page-card is-highlighted">
+          <div class="pricing-page-kicker">Hosted Option</div>
+          <h3>Managed Hosting</h3>
+          <div class="pricing-page-price">Starting at $9/mo<small>Growth from $29/mo for multiple workflows, higher run volume, or more hands-on support.</small></div>
+          <p>For teams that want GTMship hosted for them instead of owning the infra from day one.</p>
+          <ul class="pricing-page-list">
+            <li><i class="ph ph-cloud-arrow-up"></i> We run and maintain the workflow runtime for you</li>
+            <li><i class="ph ph-chart-line-up"></i> Built for light-to-moderate workflow volume with room to grow</li>
+            <li><i class="ph ph-lifebuoy"></i> Contact-led onboarding instead of self-serve signup</li>
+          </ul>
+          <div class="pricing-page-actions">
+            <a class="pricing-page-pill-link js-pricing-focus" href="#pricing-inquiry" data-interest="hosted"><i class="ph ph-paper-plane-tilt"></i> Ask about hosting</a>
+          </div>
+        </article>
+
+        <article class="pricing-page-card is-services">
+          <div class="pricing-page-kicker">Done-For-You</div>
+          <h3>GTM Services</h3>
+          <div class="pricing-page-price">Starting at $49/workflow<small>Maintenance is $19/mo per workflow when you want us to keep it running and tuned.</small></div>
+          <p>For customers who want us to design, build, launch, and operate the workflow instead of only giving them the tooling.</p>
+          <ul class="pricing-page-list">
+            <li><i class="ph ph-wrench"></i> Scoped build-and-handover for one core GTM workflow</li>
+            <li><i class="ph ph-arrows-clockwise"></i> Optional monthly maintenance for monitoring and minor iterations</li>
+            <li><i class="ph ph-rocket-launch"></i> Best fit for lean teams that need execution, not just software</li>
+          </ul>
+          <div class="pricing-page-actions">
+            <a class="pricing-page-pill-link js-pricing-focus" href="#pricing-inquiry" data-interest="services"><i class="ph ph-chat-circle-dots"></i> Ask about services</a>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="docs-panel">
+      <h2>Local-only run</h2>
+      <p>You do not need to deploy on day one. GTMship supports a local-first workflow where you connect systems, generate the automation, validate it, and preview runs before you ever push it to a cloud runtime.</p>
+      <div class="docs-grid" style="margin-top: 18px;">
+        <div class="docs-card">
+          <div class="docs-card-kicker">Start local</div>
+          <h3>Build and test on your machine</h3>
+          <p>Use the local dashboard and auth flow to connect tools, iterate in Workflow Studio, and prove the workflow against sample input while everything is still under one operator's control.</p>
+        </div>
+        <div class="docs-card">
+          <div class="docs-card-kicker">Deploy later</div>
+          <h3>Move to cloud only when the workflow needs to stay on</h3>
+          <p>Cloud deployment becomes useful when you need stable webhooks, schedules, shared team access, or a runtime that should keep running after your local session ends.</p>
+        </div>
+        <div class="docs-card">
+          <div class="docs-card-kicker">Docs path</div>
+          <h3>Follow the local CLI + dashboard loop</h3>
+          <p>Start with <span class="docs-inline-code">gtmship dev</span>, connect systems, validate and preview locally, then deploy later if the workflow graduates into production traffic.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-panel">
+      <h2>What GTM services covers</h2>
+      <div class="docs-grid" style="margin-top: 18px;">
+        <div class="docs-card">
+          <div class="docs-card-kicker">Build + handover</div>
+          <h3>One scoped workflow</h3>
+          <p>Good for a single workflow like inbound lead enrichment, scoring, CRM sync, or Slack routing where the scope can be clearly defined before build starts.</p>
+        </div>
+        <div class="docs-card">
+          <div class="docs-card-kicker">Maintenance</div>
+          <h3>Monitor and tune</h3>
+          <p>Monthly maintenance is for monitoring, issue response, and smaller iterative changes after the workflow is already live. It is not an unlimited custom build retainer.</p>
+        </div>
+        <div class="docs-card">
+          <div class="docs-card-kicker">Custom scope</div>
+          <h3>Higher-volume or multi-workflow work</h3>
+          <p>If the request spans multiple workflows, unusual integrations, or materially higher runtime volume, we will quote separately instead of forcing it into the starter anchors.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-panel" id="pricing-inquiry">
+      <h2>Contact us</h2>
+      <p>This is an inquiry form, not a signup flow. Tell us what you want automated and we’ll reply with fit, scope, and next steps.</p>
+
+      <div class="pricing-inquiry-shell">
+        <aside class="pricing-inquiry-sidebar">
+          <h3 style="margin-bottom: 10px;">What to include</h3>
+          <p style="margin: 0;">A good inquiry tells us the workflow outcome, the systems involved, the expected run volume, and whether you need software plus hosting or a done-for-you service.</p>
+          <ul>
+            <li>What triggers the workflow</li>
+            <li>What systems it should read from or write to</li>
+            <li>Whether this is a new build or a migration from another tool</li>
+            <li>How soon you want it live</li>
+          </ul>
+        </aside>
+
+        <div class="pricing-inquiry-form">
+          <form id="pricing-inquiry-form" novalidate>
+            <div class="pricing-form-grid">
+              <div class="pricing-field">
+                <label for="pricing-name">Name</label>
+                <input id="pricing-name" name="name" type="text" autocomplete="name" placeholder="Jane Doe" required>
+              </div>
+
+              <div class="pricing-field">
+                <label for="pricing-work-email">Work Email</label>
+                <input id="pricing-work-email" name="workEmail" type="email" autocomplete="email" placeholder="jane@company.com" required>
+              </div>
+
+              <div class="pricing-field">
+                <label for="pricing-company">Company</label>
+                <input id="pricing-company" name="company" type="text" autocomplete="organization" placeholder="Acme" required>
+              </div>
+
+              <div class="pricing-field">
+                <label for="pricing-interest">Interest</label>
+                <select id="pricing-interest" name="interest" required>
+                  <option value="" selected disabled>Select one</option>
+                  <option value="hosted">Managed Hosting</option>
+                  <option value="services">GTM Services</option>
+                  <option value="both">Both</option>
+                </select>
+              </div>
+
+              <div class="pricing-field">
+                <label for="pricing-volume-band">Estimated Volume</label>
+                <select id="pricing-volume-band" name="volumeBand" required>
+                  <option value="" selected disabled>Select one</option>
+                  <option value="lt5k">&lt;5k runs/mo</option>
+                  <option value="5k_50k">5k-50k runs/mo</option>
+                  <option value="gt50k">50k+ runs/mo</option>
+                  <option value="unsure">Not sure</option>
+                </select>
+              </div>
+
+              <div class="pricing-field">
+                <label for="pricing-timeline">Timeline</label>
+                <select id="pricing-timeline" name="timeline" required>
+                  <option value="" selected disabled>Select one</option>
+                  <option value="asap">ASAP</option>
+                  <option value="month">This month</option>
+                  <option value="quarter">This quarter</option>
+                  <option value="exploring">Just exploring</option>
+                </select>
+              </div>
+
+              <div class="pricing-field is-full">
+                <label for="pricing-stack">Current Stack</label>
+                <input id="pricing-stack" name="stack" type="text" placeholder="HubSpot, Salesforce, Slack, Sheets, internal APIs">
+              </div>
+
+              <div class="pricing-field is-full">
+                <label for="pricing-details">What do you want automated?</label>
+                <textarea id="pricing-details" name="details" placeholder="Example: enrich inbound leads, score them, sync the right fields to Salesforce, and route high-intent accounts to Slack." required></textarea>
+              </div>
+
+              <div class="pricing-field pricing-honeypot" aria-hidden="true">
+                <label for="pricing-website">Website</label>
+                <input id="pricing-website" name="website" type="text" tabindex="-1" autocomplete="off">
+              </div>
+            </div>
+
+            <div class="pricing-submit-row">
+              <button class="pricing-submit" id="pricing-submit" type="submit"><i class="ph ph-paper-plane-tilt"></i> Send inquiry</button>
+              <p class="pricing-form-meta">Starter pricing assumes standard support and low-to-moderate workflow volume. Larger scopes, heavier hosted usage, or unusual implementation work are quoted separately.</p>
+              <div class="pricing-status" id="pricing-form-status" hidden aria-live="polite"></div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const pricingForm = document.getElementById('pricing-inquiry-form');
+    const pricingInterest = document.getElementById('pricing-interest');
+    const pricingSubmit = document.getElementById('pricing-submit');
+    const pricingStatus = document.getElementById('pricing-form-status');
+    const validInterests = new Set(['hosted', 'services', 'both']);
+
+    function setPricingStatus(kind, message) {
+      if (!pricingStatus) return;
+      pricingStatus.classList.remove('is-pending', 'is-success', 'is-error');
+      pricingStatus.hidden = !message;
+      pricingStatus.textContent = message || '';
+      if (message && kind) {
+        pricingStatus.classList.add(`is-${kind}`);
+      }
+    }
+
+    function resolveInquiryApiBase() {
+      const configured =
+        window.GTMSHIP_HOMEPAGE_CONFIG &&
+        typeof window.GTMSHIP_HOMEPAGE_CONFIG.inquiryApiBase === 'string'
+          ? window.GTMSHIP_HOMEPAGE_CONFIG.inquiryApiBase.trim()
+          : '';
+
+      if (configured) {
+        return configured.replace(/\/+$/, '');
+      }
+
+      if (
+        window.location.protocol === 'file:' ||
+        !window.location.origin ||
+        window.location.origin === 'null'
+      ) {
+        return 'http://localhost:4000';
+      }
+
+      return window.location.origin.replace(/\/+$/, '');
+    }
+
+    function applyRequestedInterest() {
+      if (!pricingInterest) return;
+      const requested = new URLSearchParams(window.location.search).get('interest');
+      if (requested && validInterests.has(requested)) {
+        pricingInterest.value = requested;
+      }
+    }
+
+    document.querySelectorAll('.js-pricing-focus').forEach(trigger => {
+      trigger.addEventListener('click', () => {
+        const interest = trigger.getAttribute('data-interest');
+        if (pricingInterest && interest && validInterests.has(interest)) {
+          pricingInterest.value = interest;
+        }
+        setPricingStatus(null, '');
+      });
+    });
+
+    applyRequestedInterest();
+
+    if (pricingForm instanceof HTMLFormElement) {
+      const submitLabel = pricingSubmit ? pricingSubmit.innerHTML : '';
+
+      pricingForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        if (!pricingForm.reportValidity()) {
+          return;
+        }
+
+        const formData = new FormData(pricingForm);
+        const payload = {
+          name: String(formData.get('name') || ''),
+          workEmail: String(formData.get('workEmail') || ''),
+          company: String(formData.get('company') || ''),
+          interest: String(formData.get('interest') || ''),
+          volumeBand: String(formData.get('volumeBand') || ''),
+          timeline: String(formData.get('timeline') || ''),
+          stack: String(formData.get('stack') || ''),
+          details: String(formData.get('details') || ''),
+          website: String(formData.get('website') || '')
+        };
+
+        if (pricingSubmit) {
+          pricingSubmit.disabled = true;
+          pricingSubmit.innerHTML = '<i class="ph ph-hourglass"></i> Sending...';
+        }
+        setPricingStatus('pending', 'Sending your inquiry...');
+
+        try {
+          const response = await fetch(
+            `${resolveInquiryApiBase()}/public/inquiries/pricing`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            }
+          );
+          const result = await response.json().catch(() => null);
+
+          if (!response.ok) {
+            throw new Error(
+              result && typeof result.error === 'string'
+                ? result.error
+                : 'Unable to submit inquiry right now. Please try again shortly.'
+            );
+          }
+
+          pricingForm.reset();
+          applyRequestedInterest();
+          setPricingStatus('success', 'Thanks. We received your note and will reach out with the next step.');
+        } catch (error) {
+          setPricingStatus(
+            'error',
+            error instanceof Error
+              ? error.message
+              : 'Unable to submit inquiry right now. Please try again shortly.'
+          );
+        } finally {
+          if (pricingSubmit) {
+            pricingSubmit.disabled = false;
+            pricingSubmit.innerHTML = submitLabel;
+          }
+        }
+      });
+    }
+  </script>
+
+  <div id="site-footer"></div>
+
+  <script src="../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../',
+      page: 'pricing',
+      showLogo: true,
+      brandSuffix: 'Pricing',
+      topbarLinks: [
+        { label: 'Plans', href: '#plans' },
+        { label: 'Contact Us', href: '#pricing-inquiry' },
+        { label: 'Research Basis', href: '#research' }
+      ],
+      primaryAction: { label: 'Start Inquiry', href: '#pricing-inquiry' }
+    });
+  </script>
+</body>
+</html>

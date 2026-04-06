@@ -9,6 +9,32 @@ import {
   type WorkflowPlanRecord,
 } from "../lib/workflow-plans.js";
 import { buildWorkflows, type BuildArtifact } from "./build.js";
+import { deployLocalWorkflow } from "../lib/local-deployments.js";
+
+/** Default timeout for HTTP requests to auth service / control plane. */
+const FETCH_TIMEOUT_MS = 15_000;
+
+function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
+async function readResponseErrorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return response.statusText;
+  }
+
+  try {
+    const payload = JSON.parse(text) as { error?: string };
+    return payload.error || text;
+  } catch {
+    return text;
+  }
+}
 
 interface DeployOptions {
   provider: string;
@@ -32,6 +58,8 @@ interface AuthStrategyStatus {
   configuredBackends: AuthStrategyBackend[];
 }
 
+type DeployProvider = "aws" | "gcp" | "local";
+
 const DEFAULT_SECRET_PREFIX = "gtmship-connections";
 
 /**
@@ -42,7 +70,7 @@ async function resolveCredentials(
   authUrl: string,
 ): Promise<void> {
   try {
-    const res = await fetch(`${authUrl}/cloud-auth/credentials/${provider}`);
+    const res = await fetchWithTimeout(`${authUrl}/cloud-auth/credentials/${provider}`);
     if (res.ok) {
       const { credentials } = (await res.json()) as {
         credentials: Record<string, unknown>;
@@ -130,7 +158,7 @@ function resolveSecretPrefix(secretPrefix?: string | null): string {
 
 async function loadAuthStrategy(authUrl: string): Promise<AuthStrategyStatus | null> {
   try {
-    const response = await fetch(`${authUrl}/settings/auth-strategy`);
+    const response = await fetchWithTimeout(`${authUrl}/settings/auth-strategy`);
     if (!response.ok) {
       return null;
     }
@@ -233,7 +261,7 @@ function applyAuthStrategyToWorkflowPlans(
   return workflowPlans.map((workflowPlan) => {
     const plan = workflowPlan.plan;
 
-    if (strategy.mode === "proxy") {
+    if (plan.provider === "local") {
       return {
         ...workflowPlan,
         plan: {
@@ -242,6 +270,8 @@ function applyAuthStrategyToWorkflowPlans(
           auth: {
             ...(plan.auth || {}),
             mode: "proxy",
+            backend: undefined,
+            manifest: undefined,
           },
         },
       };
@@ -296,7 +326,7 @@ async function syncWorkflowControlPlane(
   workflowPlans: WorkflowPlanRecord[],
   context: {
     rawOutputs: Record<string, string>;
-    provider: "aws" | "gcp";
+    provider: DeployProvider;
     region: string;
     gcpProject?: string;
     computeId: string;
@@ -321,7 +351,7 @@ async function syncWorkflowControlPlane(
     };
   },
 ): Promise<number> {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${authUrl}/workflow-control-plane/deployments/sync`,
     {
       method: "POST",
@@ -410,12 +440,78 @@ async function syncWorkflowControlPlane(
   );
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || response.statusText);
+    throw new Error(await readResponseErrorMessage(response));
   }
 
   const payload = (await response.json()) as { deployments?: unknown[] };
   return Array.isArray(payload.deployments) ? payload.deployments.length : 0;
+}
+
+async function preflightWorkflowAuth(
+  authUrl: string,
+  workflowPlans: WorkflowPlanRecord[]
+): Promise<{
+  validatedCount: number;
+  checkedBindings: number;
+}> {
+  const response = await fetchWithTimeout(
+    `${authUrl}/workflow-control-plane/deployments/preflight-auth`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deployments: workflowPlans.map((workflowPlan) => {
+          const plan = workflowPlan.plan;
+          return {
+            workflowId: plan.workflowId,
+            provider: plan.provider,
+            region: plan.region,
+            gcpProject: plan.gcpProject,
+            executionKind: plan.executionKind,
+            authConfig: plan.auth,
+            bindings: plan.bindings.map((binding) => ({
+              providerSlug: binding.providerSlug,
+              selectorType: binding.selector.type,
+              selectorValue:
+                binding.selector.connectionId || binding.selector.label || null,
+              connectionId:
+                binding.selector.connectionId || binding.resolvedConnectionId || null,
+              metadata: {
+                status: binding.status,
+                message: binding.message,
+                resolvedConnectionId: binding.resolvedConnectionId || null,
+                resolvedConnectionLabel: binding.resolvedConnectionLabel || null,
+              },
+            })),
+          };
+        }),
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await readResponseErrorMessage(response));
+  }
+
+  const payload = (await response.json()) as {
+    validatedCount?: number;
+    deployments?: Array<{ checkedBindings?: number }>;
+  };
+
+  return {
+    validatedCount:
+      typeof payload.validatedCount === "number"
+        ? payload.validatedCount
+        : Array.isArray(payload.deployments)
+          ? payload.deployments.length
+          : 0,
+    checkedBindings: Array.isArray(payload.deployments)
+      ? payload.deployments.reduce(
+          (total, deployment) => total + (deployment.checkedBindings || 0),
+          0
+        )
+      : 0,
+  };
 }
 
 export async function deployCommand(options: DeployOptions) {
@@ -424,12 +520,16 @@ export async function deployCommand(options: DeployOptions) {
   const config = readProjectConfig();
   const provider = (options.provider ||
     config?.deploy?.provider ||
-    "aws") as "aws" | "gcp";
+    "aws") as DeployProvider;
   const region =
     options.region ||
     config?.deploy?.region ||
-    (provider === "aws" ? "us-east-1" : "us-central1");
-  const compute = provider === "aws" ? "lambda" : "cloud-run";
+    (provider === "aws"
+      ? "us-east-1"
+      : provider === "gcp"
+        ? "us-central1"
+        : "local");
+  const compute = provider === "aws" ? "lambda" : provider === "gcp" ? "cloud-run" : "local-job";
   const gcpProject = options.project || config?.deploy?.gcpProject;
   const authUrl = config?.authUrl || "http://localhost:4000";
   const projectName = config?.name || "gtmship";
@@ -455,7 +555,7 @@ export async function deployCommand(options: DeployOptions) {
   // bindings (connectionId, secretRef) for the runtime auth manifest.
   let connections: Array<{ id: string; label?: string | null; status: string; createdAt?: string; provider: { slug: string; name?: string } }> = [];
   try {
-    const connRes = await fetch(`${authUrl}/connections`);
+    const connRes = await fetchWithTimeout(`${authUrl}/connections`);
     if (connRes.ok) {
       const connData = (await connRes.json()) as Array<{
         id: string; label?: string | null; status: string; createdAt?: string;
@@ -468,6 +568,24 @@ export async function deployCommand(options: DeployOptions) {
   }
 
   const authStrategy = await loadAuthStrategy(authUrl);
+  if (provider !== "local" && !authStrategy) {
+    console.log(
+      chalk.red(
+        "  Could not load connection auth settings from auth service. Cloud deployments require secret-manager configuration before deploy.",
+      ),
+    );
+    process.exit(1);
+  }
+
+  if (provider !== "local" && authStrategy?.mode !== "secret_manager") {
+    console.log(
+      chalk.red(
+        "  Cloud deployments require Secret manager mode. Switch Connection auth source of truth to secret_manager in Settings before deploying to AWS or GCP.",
+      ),
+    );
+    process.exit(1);
+  }
+
   const workflowPlans = applyAuthStrategyToWorkflowPlans(
     loadWorkflowPlans(process.cwd(), {
       providerOverride: provider,
@@ -494,16 +612,20 @@ export async function deployCommand(options: DeployOptions) {
   }
 
   if (
-    authStrategy?.mode === "secret_manager" &&
+    provider !== "local" &&
     workflowPlans.some((workflowPlan) => !workflowPlan.plan.auth?.backend?.kind)
   ) {
     console.log(
       chalk.red(
-        "  Secret manager auth is enabled globally, but at least one workflow has no matching configured secret backend for this deployment target.",
+        "  Cloud deployments require a matching configured secret backend for each workflow deployment target.",
       ),
     );
     process.exit(1);
   }
+
+  const requiresSecretManagerPreflight = workflowPlans.some(
+    (workflowPlan) => workflowPlan.plan.authMode === "secret_manager"
+  );
 
   console.log(
     chalk.gray(
@@ -575,6 +697,61 @@ export async function deployCommand(options: DeployOptions) {
     }
   }
 
+  if (requiresSecretManagerPreflight) {
+    const authPreflightSpinner = ora(
+      "Preflighting secret-manager bindings..."
+    ).start();
+
+    try {
+      const preflight = await preflightWorkflowAuth(authUrl, workflowPlans);
+      authPreflightSpinner.succeed(
+        `Secret-manager preflight passed (${preflight.validatedCount} workflow${preflight.validatedCount === 1 ? "" : "s"}, ${preflight.checkedBindings} binding${preflight.checkedBindings === 1 ? "" : "s"})`
+      );
+    } catch (err) {
+      authPreflightSpinner.fail("Secret-manager preflight failed");
+      console.log(
+        chalk.red(
+          `  ${err instanceof Error ? err.message : String(err)}`
+        ),
+      );
+      process.exit(1);
+    }
+  }
+
+  if (provider === "local") {
+    const localValidationErrors = workflowPlans.flatMap((workflowPlan) => {
+      const errors: string[] = [];
+      if (
+        workflowPlan.plan.trigger.type !== "manual" &&
+        workflowPlan.plan.trigger.type !== "schedule"
+      ) {
+        errors.push("Local deployments support only manual and schedule triggers.");
+      }
+      if (workflowPlan.plan.executionKind !== "job") {
+        errors.push("Local deployments support only job execution.");
+      }
+      if (workflowPlan.plan.authMode !== "proxy") {
+        errors.push("Local deployments support only proxy auth.");
+      }
+
+      return errors.map((message) => ({
+        workflowId: workflowPlan.workflowId,
+        message,
+      }));
+    });
+
+    if (localValidationErrors.length > 0) {
+      console.log("");
+      console.log(chalk.red("  Local Deployment Validation Failed"));
+      console.log(chalk.red("  " + "─".repeat(50)));
+      for (const error of localValidationErrors) {
+        console.log(chalk.red(`  ${error.workflowId}: ${error.message}`));
+      }
+      console.log("");
+      process.exit(1);
+    }
+  }
+
   console.log("");
 
   // -------------------------------------------------------------------------
@@ -604,20 +781,26 @@ export async function deployCommand(options: DeployOptions) {
   }
 
   // Ensure Pulumi local backend doesn't prompt for a passphrase
-  if (!process.env.PULUMI_CONFIG_PASSPHRASE && !process.env.PULUMI_CONFIG_PASSPHRASE_FILE) {
+  if (
+    provider !== "local" &&
+    !process.env.PULUMI_CONFIG_PASSPHRASE &&
+    !process.env.PULUMI_CONFIG_PASSPHRASE_FILE
+  ) {
     process.env.PULUMI_CONFIG_PASSPHRASE = "";
   }
 
-  const credSpinner = ora("Resolving cloud credentials...").start();
-  await resolveCredentials(provider, authUrl);
-  credSpinner.succeed("Cloud credentials resolved");
+  if (provider !== "local") {
+    const credSpinner = ora("Resolving cloud credentials...").start();
+    await resolveCredentials(provider, authUrl);
+    credSpinner.succeed("Cloud credentials resolved");
+  }
 
   // -------------------------------------------------------------------------
   // Deploy each workflow individually
   // -------------------------------------------------------------------------
 
   const { deploy } = await import("@gtmship/deploy-engine");
-  type UnifiedDeployResult = Awaited<ReturnType<typeof deploy>>;
+  type UnifiedDeployResult = Awaited<ReturnType<typeof deploy>> | Awaited<ReturnType<typeof deployLocalWorkflow>>;
   const deployResults: Array<{ workflowId: string; result: UnifiedDeployResult }> = [];
   let deployFailures = 0;
 
@@ -666,7 +849,9 @@ export async function deployCommand(options: DeployOptions) {
       GTMSHIP_RUNTIME_MODE:
         provider === "aws"
           ? "lambda"
-          : plan.executionKind === "job"
+          : provider === "local"
+            ? "local-job"
+            : plan.executionKind === "job"
             ? "cloud-run-job"
             : "cloud-run-service",
       GTMSHIP_WORKFLOW_ID: wp.workflowId,
@@ -692,22 +877,46 @@ export async function deployCommand(options: DeployOptions) {
     ).start();
 
     try {
-      const result = await deploy({
-        provider,
-        region,
-        compute: compute as "lambda" | "ecs" | "cloud-run",
-        projectName,
-        workflowId: wp.workflowId,
-        gcpProject,
-        gcpNeeds,
-        awsNeeds,
-        lambdaCodePath,
-        serviceCodePath,
-        runtimeEnvVars,
-      });
+      const result =
+        provider === "local"
+          ? await deployLocalWorkflow({
+              workflowId: wp.workflowId,
+              workflowName: wp.workflowName,
+              projectName,
+              bundleSourcePath: artifact.artifactPath,
+              triggerType: plan.trigger.type as "manual" | "schedule",
+              scheduleCron: plan.trigger.cron,
+              scheduleTimezone: plan.trigger.timezone,
+            })
+          : await deploy({
+              provider,
+              region,
+              compute: compute as "lambda" | "ecs" | "cloud-run",
+              projectName,
+              workflowId: wp.workflowId,
+              gcpProject,
+              gcpNeeds,
+              awsNeeds,
+              lambdaCodePath,
+              serviceCodePath,
+              runtimeEnvVars,
+            });
 
       deploySpinner.succeed(`${wp.workflowId} deployed successfully`);
       deployResults.push({ workflowId: wp.workflowId, result });
+      console.log(chalk.gray(`     API Endpoint: ${result.apiEndpoint}`));
+      console.log(chalk.gray(`     Compute: ${result.computeId}`));
+      console.log(chalk.gray(`     Database: ${result.databaseEndpoint}`));
+      console.log(chalk.gray(`     Storage: ${result.storageBucket}`));
+      if (result.schedulerJobId) {
+        console.log(chalk.gray(`     schedulerJobId: ${result.schedulerJobId}`));
+      }
+      if (result.rawOutputs.localLogPath) {
+        console.log(chalk.gray(`     localLogPath: ${result.rawOutputs.localLogPath}`));
+      }
+      if (result.rawOutputs.localManifestPath) {
+        console.log(chalk.gray(`     localManifestPath: ${result.rawOutputs.localManifestPath}`));
+      }
 
       // Sync this workflow's deployment to the control plane
       try {
@@ -731,7 +940,7 @@ export async function deployCommand(options: DeployOptions) {
           apiEndpoint: result.apiEndpoint,
           schedulerJobId: result.schedulerJobId || undefined,
           runtimeTarget: result.runtimeTarget,
-          gcpTarget: result.gcpTarget,
+          gcpTarget: "gcpTarget" in result ? result.gcpTarget : undefined,
         });
       } catch (syncErr) {
         console.log(
@@ -751,7 +960,9 @@ export async function deployCommand(options: DeployOptions) {
     }
   }
 
-  cleanupCredentials();
+  if (provider !== "local") {
+    cleanupCredentials();
+  }
 
   if (deployResults.length === 0) {
     console.log(chalk.red("\n  All deployments failed."));

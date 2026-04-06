@@ -27,7 +27,13 @@ export async function GET(request: Request) {
       return NextResponse.json({
         projectRootConfigured: false,
         provider: provider || "aws",
-        region: region || (provider === "gcp" ? "us-central1" : "us-east-1"),
+        region:
+          region ||
+          (provider === "gcp"
+            ? "us-central1"
+            : provider === "local"
+              ? "local"
+              : "us-east-1"),
         gcpProject,
         plans: [],
       });
@@ -57,7 +63,13 @@ export async function GET(request: Request) {
       projectRootConfigured: true,
       projectName: listing.projectName,
       provider: provider || "aws",
-      region: region || (provider === "gcp" ? "us-central1" : "us-east-1"),
+      region:
+        region ||
+        (provider === "gcp"
+          ? "us-central1"
+          : provider === "local"
+            ? "local"
+            : "us-east-1"),
       gcpProject,
       plans,
     });

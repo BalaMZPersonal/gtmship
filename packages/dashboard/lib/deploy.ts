@@ -1,13 +1,16 @@
 import type {
+  WorkflowDeployTargetMode,
   WorkflowDeploymentPlan,
   WorkflowDeployAuthMode,
 } from "@/lib/workflow-studio/types";
 
-export type CloudProvider = "aws" | "gcp";
+export type CloudProvider = "aws" | "gcp" | "local";
+export type RemoteCloudProvider = Exclude<CloudProvider, "local">;
 const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
 
 export const AWS_DEFAULT_REGION = "us-east-1";
 export const GCP_DEFAULT_REGION = "us-central1";
+export const LOCAL_DEFAULT_REGION = "local";
 
 export interface CloudSettingRecord {
   key: string;
@@ -17,6 +20,7 @@ export interface CloudSettingRecord {
 export interface SavedRegions {
   aws: string;
   gcp: string;
+  local: string;
 }
 
 export interface DeploySettings {
@@ -38,15 +42,30 @@ export interface DashboardDeployRequest {
 export type ResolvedCloudDeploySettings = DeploySettings;
 
 export interface WorkflowDeployTarget {
+  target: WorkflowDeployTargetMode;
   provider: CloudProvider;
   region: string;
   gcpProject?: string;
+  cloudProvider: RemoteCloudProvider;
+  cloudRegion: string;
+  cloudGcpProject?: string;
 }
 
 export interface ResolveWorkflowDeployTargetInput {
-  workflowDeploy?: Partial<WorkflowDeployTarget> | null;
+  workflowDeploy?:
+    | Partial<{
+        target: WorkflowDeployTargetMode;
+        provider: CloudProvider;
+        region: string;
+        gcpProject: string;
+      }>
+    | null;
   cloudSettings?: ResolvedCloudDeploySettings | null;
-  projectDefaults?: Partial<WorkflowDeployTarget> | null;
+  projectDefaults?: Partial<{
+    provider: CloudProvider;
+    region: string;
+    gcpProject: string;
+  }> | null;
 }
 
 export interface DashboardDeploySuccess {
@@ -68,6 +87,30 @@ export interface DashboardDeployError {
 }
 
 export type DashboardDeployResponse = DashboardDeploySuccess | DashboardDeployError;
+
+export interface DashboardLocalRunSuccess {
+  success: true;
+  workflowId: string;
+  deploymentId?: string | null;
+  runId?: string | null;
+  executionId?: string | null;
+  status?: "success" | "failure";
+  output?: unknown;
+}
+
+export interface DashboardLocalRunError {
+  error: string;
+  workflowId?: string;
+  deploymentId?: string | null;
+  runId?: string | null;
+  executionId?: string | null;
+  status?: "failure";
+  output?: unknown;
+}
+
+export type DashboardLocalRunResponse =
+  | DashboardLocalRunSuccess
+  | DashboardLocalRunError;
 export type DashboardDeployInfraKey =
   | "apiEndpoint"
   | "computeId"
@@ -81,7 +124,7 @@ export interface DashboardDeployInfraItem {
 }
 
 export type GcpComputeType = "job" | "service";
-export type WorkflowDeploymentComputeType = GcpComputeType | "lambda";
+export type WorkflowDeploymentComputeType = GcpComputeType | "lambda" | "job";
 
 export interface WorkflowDeploymentPlatform {
   computeType?: WorkflowDeploymentComputeType | null;
@@ -91,11 +134,13 @@ export interface WorkflowDeploymentPlatform {
   region?: string | null;
   gcpProject?: string | null;
   logGroupName?: string | null;
+  logPath?: string | null;
 }
 
 export interface WorkflowExecutionHistoryEntry {
   executionName?: string | null;
   status?: string | null;
+  triggerSource?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
   logUri?: string | null;
@@ -112,6 +157,8 @@ export interface WorkflowDeploymentOverview {
   region?: string | null;
   gcpProject?: string | null;
   executionKind?: string | null;
+  triggerType?: string | null;
+  triggerConfig?: Record<string, unknown> | null;
   endpointUrl?: string | null;
   schedulerId?: string | null;
   status?: string | null;
@@ -172,6 +219,12 @@ export function isDashboardDeploySuccess(
   value: DashboardDeployResponse
 ): value is DashboardDeploySuccess {
   return (value as DashboardDeploySuccess).success === true;
+}
+
+export function isDashboardLocalRunSuccess(
+  value: DashboardLocalRunResponse
+): value is DashboardLocalRunSuccess {
+  return (value as DashboardLocalRunSuccess).success === true;
 }
 
 function normalizeTextValue(value?: string | null): string {
@@ -344,6 +397,21 @@ export function getDeploymentInfra(
   provider: CloudProvider,
   options: DeploymentInfraOptions = {}
 ) {
+  if (provider === "local") {
+    const infra: DashboardDeployInfraItem[] = [
+      { label: "Local Endpoint", key: "apiEndpoint" },
+      { label: "Local Workflow Job", key: "computeId" },
+      { label: "Local Database", key: "databaseEndpoint" },
+      { label: "Bundle Path", key: "storageBucket" },
+    ];
+
+    if (options.includeScheduler) {
+      infra.push({ label: "Local Scheduler", key: "schedulerJobId" });
+    }
+
+    return infra;
+  }
+
   if (provider === "aws") {
     const infra = [...awsInfra];
     if (options.includeScheduler) {
@@ -521,7 +589,26 @@ export function buildDeploymentLogsHref(input: {
 }
 
 export function resolveCloudProvider(value?: string | null): CloudProvider | null {
+  return value === "aws" || value === "gcp" || value === "local"
+    ? value
+    : null;
+}
+
+function resolveRemoteCloudProvider(
+  value?: string | null
+): RemoteCloudProvider | null {
   return value === "aws" || value === "gcp" ? value : null;
+}
+
+function resolveWorkflowDeployMode(input: {
+  target?: WorkflowDeployTargetMode | null;
+  provider?: string | null;
+}): WorkflowDeployTargetMode {
+  if (input.target === "cloud" || input.target === "local") {
+    return input.target;
+  }
+
+  return input.provider === "local" ? "local" : "cloud";
 }
 
 export function resolvePreferredCloudProvider(input: {
@@ -532,35 +619,65 @@ export function resolvePreferredCloudProvider(input: {
 }
 
 function defaultRegion(provider: CloudProvider): string {
-  return provider === "gcp" ? GCP_DEFAULT_REGION : AWS_DEFAULT_REGION;
+  if (provider === "gcp") {
+    return GCP_DEFAULT_REGION;
+  }
+
+  if (provider === "local") {
+    return LOCAL_DEFAULT_REGION;
+  }
+
+  return AWS_DEFAULT_REGION;
 }
 
 export function resolveWorkflowDeployTarget(
   input: ResolveWorkflowDeployTargetInput
 ): WorkflowDeployTarget {
-  const provider =
-    input.workflowDeploy?.provider ||
-    input.cloudSettings?.provider ||
-    input.projectDefaults?.provider ||
+  const target = resolveWorkflowDeployMode({
+    target: input.workflowDeploy?.target || null,
+    provider: input.workflowDeploy?.provider || null,
+  });
+  const cloudProvider =
+    resolveRemoteCloudProvider(input.workflowDeploy?.provider) ||
+    resolveRemoteCloudProvider(input.cloudSettings?.provider) ||
+    resolveRemoteCloudProvider(input.projectDefaults?.provider) ||
     "aws";
+  const cloudRegion =
+    (input.workflowDeploy?.region || "").trim() &&
+    input.workflowDeploy?.region !== LOCAL_DEFAULT_REGION
+      ? input.workflowDeploy?.region
+      : input.cloudSettings?.savedRegions?.[cloudProvider] ||
+        (input.cloudSettings?.provider === cloudProvider
+          ? input.cloudSettings?.region
+          : undefined) ||
+        (input.projectDefaults?.provider === cloudProvider
+          ? input.projectDefaults.region
+          : undefined) ||
+        defaultRegion(cloudProvider);
+  const cloudGcpProject =
+    input.workflowDeploy?.gcpProject ||
+    input.cloudSettings?.gcpProject ||
+    input.projectDefaults?.gcpProject;
 
-  const region =
-    input.workflowDeploy?.region ||
-    input.cloudSettings?.savedRegions?.[provider] ||
-    input.cloudSettings?.region ||
-    (input.projectDefaults?.provider === provider
-      ? input.projectDefaults.region
-      : undefined) ||
-    input.projectDefaults?.region ||
-    defaultRegion(provider);
+  if (target === "local") {
+    return {
+      target,
+      provider: "local",
+      region: LOCAL_DEFAULT_REGION,
+      cloudProvider,
+      cloudRegion: cloudRegion || defaultRegion(cloudProvider),
+      cloudGcpProject: cloudGcpProject || undefined,
+    };
+  }
 
   return {
-    provider,
-    region,
-    gcpProject:
-      input.workflowDeploy?.gcpProject ||
-      input.cloudSettings?.gcpProject ||
-      input.projectDefaults?.gcpProject,
+    target,
+    provider: cloudProvider,
+    region: cloudRegion || defaultRegion(cloudProvider),
+    gcpProject: cloudProvider === "gcp" ? cloudGcpProject : undefined,
+    cloudProvider,
+    cloudRegion: cloudRegion || defaultRegion(cloudProvider),
+    cloudGcpProject: cloudGcpProject || undefined,
   };
 }
 
@@ -570,6 +687,7 @@ export function deriveDeploySettings(
   let savedProvider: CloudProvider = "aws";
   let savedAwsRegion = AWS_DEFAULT_REGION;
   let savedGcpRegion = GCP_DEFAULT_REGION;
+  let savedLocalRegion = LOCAL_DEFAULT_REGION;
   let savedGcpProject = "";
 
   for (const setting of settings) {
@@ -590,7 +708,12 @@ export function deriveDeploySettings(
     }
   }
 
-  const region = savedProvider === "aws" ? savedAwsRegion : savedGcpRegion;
+  const region =
+    savedProvider === "aws"
+      ? savedAwsRegion
+      : savedProvider === "gcp"
+        ? savedGcpRegion
+        : savedLocalRegion;
 
   return {
     provider: savedProvider,
@@ -599,6 +722,7 @@ export function deriveDeploySettings(
     savedRegions: {
       aws: savedAwsRegion,
       gcp: savedGcpRegion,
+      local: savedLocalRegion,
     },
   };
 }

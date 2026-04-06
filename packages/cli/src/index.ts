@@ -16,6 +16,14 @@ import { registerSettingsCommand } from "./commands/settings.js";
 import { registerMemoriesCommand } from "./commands/memories.js";
 import { registerOAuthProvidersCommand } from "./commands/oauth-providers.js";
 import { registerSetupCommand } from "./commands/setup.js";
+import { openCommand } from "./commands/open.js";
+import { startCommand } from "./commands/start.js";
+import { stopCommand } from "./commands/stop.js";
+import { statusCommand } from "./commands/status.js";
+import {
+  localDispatchCommand,
+  localRunCommand,
+} from "./commands/local.js";
 
 const program = new Command();
 
@@ -34,6 +42,26 @@ program
   .command("dev")
   .description("Start local development environment")
   .action(devCommand);
+
+program
+  .command("open")
+  .description("Start the local GTMShip runtime and open the dashboard")
+  .action(openCommand);
+
+program
+  .command("start")
+  .description("Start the local GTMShip runtime")
+  .action(startCommand);
+
+program
+  .command("stop")
+  .description("Stop the local GTMShip runtime")
+  .action(stopCommand);
+
+program
+  .command("status")
+  .description("Show the local GTMShip runtime status")
+  .action(statusCommand);
 
 program
   .command("auth")
@@ -76,6 +104,23 @@ program
   .option("--since <duration>", "Show logs since duration (e.g., 1h, 30m)", "1h")
   .option("--limit <n>", "Maximum number of log entries", "100")
   .action(logsCommand);
+
+const localProgram = program
+  .command("local")
+  .description("Manage local workflow deployments");
+
+localProgram
+  .command("dispatch")
+  .description("Dispatch locally scheduled workflows that are due to run")
+  .action(localDispatchCommand);
+
+localProgram
+  .command("run")
+  .description("Run a locally deployed workflow immediately")
+  .argument("<workflow>", "Workflow ID")
+  .option("--payload <json>", "Inline JSON payload or a path to a JSON file")
+  .option("--json", "Output as JSON")
+  .action(localRunCommand);
 
 program
   .command("triggers")

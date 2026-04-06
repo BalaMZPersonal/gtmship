@@ -3,6 +3,7 @@ import type {
   CloudSettingRecord,
   DashboardDeployRequest,
   DashboardDeployResponse,
+  DashboardLocalRunResponse,
   WorkflowDeploymentLogEntry,
   WorkflowDeploymentLogsResponse,
   WorkflowDeploymentOverview,
@@ -272,6 +273,16 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config),
     }).then((r) => r.json() as Promise<DashboardDeployResponse>),
+  runLocalWorkflow: (input: {
+    workflowId: string;
+    workflowSlug?: string;
+    payload?: unknown;
+  }) =>
+    fetch("/api/local-workflows/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }).then((r) => r.json() as Promise<DashboardLocalRunResponse>),
   getDeployPlan: (params: Record<string, string>) => {
     const qs = new URLSearchParams(params).toString();
     return fetch(`/api/deploy/plan?${qs}`, {
@@ -354,7 +365,7 @@ export const api = {
     };
   },
   reconcileWorkflowDeployments: async (params?: {
-    provider?: "aws" | "gcp";
+    provider?: "aws" | "gcp" | "local";
     workflow?: string;
     region?: string;
     gcpProject?: string;

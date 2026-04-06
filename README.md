@@ -28,28 +28,46 @@ It combines:
 
 ## Quick Start
 
-### Run this repository locally
+### Install via Homebrew on macOS or Linux
+
+If you want the packaged app experience, install GTMShip from the Homebrew tap:
 
 ```bash
-git clone https://github.com/gtmship/gtmship.git
-cd gtmship
-pnpm install
-docker-compose up -d
-pnpm dev
+brew install gtmship/tap/gtmship
+gtmship open
 ```
 
-Then open:
+`gtmship open` starts the local GTMShip runtime on your machine:
 
 - Dashboard: `http://localhost:3000`
 - Auth service: `http://localhost:4000`
+- Local Postgres backing store for the auth service
+
+Useful runtime commands:
+
+```bash
+gtmship start
+gtmship status
+gtmship stop
+```
+
+On Linux, `gtmship open` uses `xdg-open` when it is available. If your desktop session does not provide a browser opener, GTMShip prints the dashboard URL and keeps the local runtime running.
 
 ### Create a GTMShip project
+
+Once the local runtime is installed, scaffold a workflow project:
 
 ```bash
 gtmship init my-gtm-workflows
 cd my-gtm-workflows
 npm install
-gtmship dev
+gtmship setup
+```
+
+If the local runtime is not already running, start it with:
+
+```bash
+gtmship open
 ```
 
 That scaffolds:
@@ -72,6 +90,98 @@ Notes:
 - Workflow Studio metadata is stored in `.gtmship/workflows/*.json`.
 - Build output metadata is written to `.gtmship/build/manifest.json`.
 - Connection secrets are not stored in your project files. They live in the auth service database and, optionally, external secret managers.
+
+### Run this repository locally for development
+
+If you are contributing to GTMShip itself, run the monorepo directly:
+
+```bash
+git clone https://github.com/gtmship/gtmship.git
+cd gtmship
+pnpm install
+docker-compose up -d
+pnpm dev
+```
+
+Then open:
+
+- Dashboard: `http://localhost:3000`
+- Auth service: `http://localhost:4000`
+
+The auth-service dev server now applies pending Prisma migrations automatically before it starts. If you already have an older local Postgres volume and need to repair schema drift manually, run:
+
+```bash
+pnpm --filter @gtmship/auth-service db:deploy
+```
+
+Use `gtmship dev` only from the GTMShip monorepo checkout. It is the contributor/dev-environment launcher, not the packaged end-user runtime command.
+
+### Publish the Homebrew release
+
+GTMShip ships to end users as a prebuilt macOS or Linux runtime bundle. Homebrew installs that bundle; it does not build the monorepo on the user's machine.
+
+The `Release Homebrew` GitHub Actions workflow now handles the release publish path for this repository. Once the repo is pushed to `github.com/BalaMZPersonal/gtmship` and the `HOMEBREW_TAP_TOKEN` repository secret is set, pushing a tag like `v0.1.0` will:
+
+- build the macOS and Linux release tarballs
+- publish them to GitHub Releases
+- render `gtmship.rb`
+- update `github.com/BalaMZPersonal/homebrew-tap`
+
+You can still run the packaging steps manually when you want to test the release locally.
+
+1. Build the release artifact for each target OS and architecture on a matching machine or CI runner:
+
+```bash
+pnpm build:release -- --platform=darwin --arch=arm64
+pnpm build:release -- --platform=darwin --arch=x64
+pnpm build:release -- --platform=linux --arch=arm64
+pnpm build:release -- --platform=linux --arch=x64
+```
+
+Artifacts are written to `dist/homebrew/`, for example:
+
+- `dist/homebrew/gtmship-darwin-arm64.tar.gz`
+- `dist/homebrew/gtmship-darwin-x64.tar.gz`
+- `dist/homebrew/gtmship-linux-arm64.tar.gz`
+- `dist/homebrew/gtmship-linux-x64.tar.gz`
+
+2. Upload the tarball(s) to GitHub Releases for the matching GTMShip version tag, or let the tag-driven GitHub Actions workflow do it for you.
+3. Render the Homebrew formula with the release URLs and SHA256 values:
+
+```bash
+pnpm render:homebrew-formula \
+  --version 0.1.0 \
+  --darwin-arm64-url https://github.com/BalaMZPersonal/gtmship/releases/download/v0.1.0/gtmship-darwin-arm64.tar.gz \
+  --darwin-arm64-sha256 <darwin-arm64-sha256> \
+  --darwin-x64-url https://github.com/BalaMZPersonal/gtmship/releases/download/v0.1.0/gtmship-darwin-x64.tar.gz \
+  --darwin-x64-sha256 <darwin-x64-sha256> \
+  --linux-arm64-url https://github.com/BalaMZPersonal/gtmship/releases/download/v0.1.0/gtmship-linux-arm64.tar.gz \
+  --linux-arm64-sha256 <linux-arm64-sha256> \
+  --linux-x64-url https://github.com/BalaMZPersonal/gtmship/releases/download/v0.1.0/gtmship-linux-x64.tar.gz \
+  --linux-x64-sha256 <linux-x64-sha256> \
+  --owner BalaMZPersonal
+```
+
+This writes `dist/homebrew/gtmship.rb`.
+
+4. Commit the rendered formula into the tap repo at `github.com/BalaMZPersonal/homebrew-tap`, under `Formula/gtmship.rb`, or let the release workflow update it automatically.
+
+Tap layout:
+
+- Main app repo: `github.com/BalaMZPersonal/gtmship`
+- Homebrew tap repo: `github.com/BalaMZPersonal/homebrew-tap`
+- Formula path: `Formula/gtmship.rb`
+
+Once that tap update is pushed, users install GTMShip with:
+
+```bash
+brew install BalaMZPersonal/tap/gtmship
+gtmship open
+```
+
+On macOS, the first successful `gtmship open` installs a LaunchAgent so GTMShip can be started again at login. On Linux, GTMShip installs a `systemd --user` unit when `systemctl --user` is available. If no user service manager is available, the runtime still works normally; only login-time bootstrap is skipped.
+
+More release detail lives in `docs/homebrew-release.md`.
 
 ## Architecture
 
@@ -503,8 +613,12 @@ Every major dashboard feature is available through the CLI.
 ### Project Lifecycle
 
 ```bash
+gtmship open
+gtmship start
+gtmship status
+gtmship stop
 gtmship init my-workflows
-gtmship dev
+gtmship setup
 gtmship validate
 gtmship build
 gtmship deploy

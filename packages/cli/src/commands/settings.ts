@@ -6,10 +6,62 @@ import {
   printTable,
   printDetail,
   printSuccess,
+  printWarning,
   handleError,
   confirmAction,
   type OutputOptions,
 } from "../lib/output.js";
+import {
+  type CliConnectionAuthStrategyStatus,
+  summarizeConfiguredSecretBackends,
+} from "../lib/connection-auth.js";
+
+function renderAuthStrategyStatus(
+  status: CliConnectionAuthStrategyStatus,
+  options?: { includeBackfill?: boolean }
+): void {
+  console.log("");
+  printDetail("Mode", status.mode);
+  printDetail("Status", status.status || (status.mode === "proxy" ? "healthy" : "unknown"));
+  printDetail(
+    "Backends",
+    summarizeConfiguredSecretBackends(status.configuredBackends)
+  );
+
+  if (status.replicaSummary) {
+    const summary = status.replicaSummary;
+    printDetail(
+      "Replicas",
+      `${summary.active}/${summary.expectedReplicas} active, ${summary.pending} pending, ${summary.error} error, ${summary.missing} missing`
+    );
+    printDetail(
+      "Connections",
+      `${summary.activeConnections} active connection${summary.activeConnections === 1 ? "" : "s"}`
+    );
+  }
+
+  if (options?.includeBackfill && status.backfill?.connections) {
+    const connections = status.backfill.connections;
+    printDetail(
+      "Connection Backfill",
+      `${connections.syncedReplicas} synced, ${connections.errorReplicas} error across ${connections.activeConnections} active connection${connections.activeConnections === 1 ? "" : "s"}`
+    );
+  }
+
+  if (options?.includeBackfill && status.backfill?.deployments) {
+    const deployments = status.backfill.deployments;
+    printDetail(
+      "Deployment Backfill",
+      `${deployments.updated} updated, ${deployments.skipped} skipped out of ${deployments.total}`
+    );
+  }
+
+  if (status.mode === "secret_manager" && status.status && status.status !== "healthy") {
+    printWarning("Secret-manager auth still has pending, missing, or errored replicas.");
+  }
+
+  console.log("");
+}
 
 async function listSettings(opts: OutputOptions) {
   try {
@@ -76,22 +128,7 @@ async function getAuthStrategy(opts: OutputOptions) {
   try {
     const data = await apiGet("/settings/auth-strategy");
     formatOutput(data, opts, () => {
-      const status = data as {
-        mode: string;
-        healthy: boolean;
-        readiness?: unknown;
-      };
-      console.log("");
-      printDetail("Mode", status.mode);
-      printDetail("Healthy", status.healthy ? "yes" : "no");
-      if (status.readiness) {
-        console.log(
-          chalk.gray(
-            `  Readiness: ${JSON.stringify(status.readiness, null, 2)}`,
-          ),
-        );
-      }
-      console.log("");
+      renderAuthStrategyStatus(data as CliConnectionAuthStrategyStatus);
     });
   } catch (err) {
     handleError(err, opts);
@@ -103,6 +140,9 @@ async function setAuthStrategy(mode: string, opts: OutputOptions) {
     const data = await apiPut("/settings/auth-strategy", { mode });
     formatOutput(data, opts, () => {
       printSuccess(`Auth strategy set to "${mode}".`);
+      renderAuthStrategyStatus(data as CliConnectionAuthStrategyStatus, {
+        includeBackfill: true,
+      });
     });
   } catch (err) {
     handleError(err, opts);

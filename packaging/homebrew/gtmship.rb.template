@@ -1,0 +1,58 @@
+class Gtmship < Formula
+  desc "GTMShip local CLI and dashboard runtime"
+  homepage "https://github.com/%OWNER%/gtmship"
+  license "MIT"
+  version "%VERSION%"
+
+  depends_on "node@20"
+  depends_on "postgresql@16"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "%DARWIN_ARM64_URL%"
+      sha256 "%DARWIN_ARM64_SHA256%"
+    else
+      url "%DARWIN_X64_URL%"
+      sha256 "%DARWIN_X64_SHA256%"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "%LINUX_ARM64_URL%"
+      sha256 "%LINUX_ARM64_SHA256%"
+    else
+      url "%LINUX_X64_URL%"
+      sha256 "%LINUX_X64_SHA256%"
+    end
+  end
+
+  def install
+    libexec.install Dir["*"]
+
+    (bin/"gtmship").write <<~EOS
+      #!/bin/sh
+      set -e
+      ROOT_DIR="#{libexec}"
+      export GTMSHIP_INSTALL_ROOT="${ROOT_DIR}"
+      export GTMSHIP_POSTGRES_BIN="${HOMEBREW_PREFIX}/opt/postgresql@16/bin"
+
+      if [ -x "${HOMEBREW_PREFIX}/opt/node@20/bin/node" ]; then
+        exec "${HOMEBREW_PREFIX}/opt/node@20/bin/node" "${ROOT_DIR}/packages/cli/dist/index.js" "$@"
+      fi
+
+      exec node "${ROOT_DIR}/packages/cli/dist/index.js" "$@"
+    EOS
+  end
+
+  def caveats
+    <<~EOS
+      Start GTMShip with:
+        gtmship open
+
+      GTMShip runs the same localhost URLs on macOS and Linux:
+        Dashboard: http://localhost:3000
+        Auth:      http://localhost:4000
+    EOS
+  end
+end

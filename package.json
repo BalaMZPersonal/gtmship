@@ -9,8 +9,10 @@
   },
   "scripts": {
     "build": "turbo build",
+    "build:release": "node scripts/build-homebrew-release.mjs",
     "dev": "turbo dev",
     "lint": "turbo lint",
+    "render:homebrew-formula": "node scripts/render-homebrew-formula.mjs",
     "clean": "turbo clean",
     "typecheck": "turbo typecheck"
   },

@@ -1,11 +1,19 @@
 import { Router } from "express";
 import { prisma } from "../services/db.js";
 import { encrypt } from "../services/crypto.js";
+import { enqueueConnectionSecretSyncs } from "../services/auth-strategy.js";
 import { resolveSharedOAuthProviderKey } from "../services/shared-oauth.js";
 import { getApiSchemaForSlug } from "../services/catalog.js";
 import { resolveOpenApiSpecUrl } from "../services/apis-guru.js";
 
 export const providerRoutes: Router = Router();
+
+interface ProviderRuntimeSecretSyncState {
+  authType: string;
+  baseUrl: string;
+  headerName: string | null;
+  defaultHeaders: Record<string, string> | null;
+}
 
 function normalizeDefaultHeaders(
   value: unknown
@@ -28,6 +36,83 @@ function normalizeDefaultHeaders(
   return Object.fromEntries(
     entries.map(([key, headerValue]) => [key.trim(), headerValue.trim()])
   );
+}
+
+function buildDefaultHeadersComparisonKey(
+  value: Record<string, string> | null
+): string {
+  if (!value) {
+    return "";
+  }
+
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+    )
+  );
+}
+
+export function getProviderRuntimeSecretSyncState(input: {
+  authType: string;
+  baseUrl: string;
+  headerName: string | null;
+  defaultHeaders: unknown;
+}): ProviderRuntimeSecretSyncState {
+  return {
+    authType: input.authType,
+    baseUrl: input.baseUrl,
+    headerName: input.headerName || null,
+    defaultHeaders: normalizeDefaultHeaders(input.defaultHeaders) || null,
+  };
+}
+
+export function providerRuntimeSecretFieldsChanged(
+  previous: ProviderRuntimeSecretSyncState,
+  next: ProviderRuntimeSecretSyncState
+): boolean {
+  return (
+    previous.authType !== next.authType ||
+    previous.baseUrl !== next.baseUrl ||
+    previous.headerName !== next.headerName ||
+    buildDefaultHeadersComparisonKey(previous.defaultHeaders) !==
+      buildDefaultHeadersComparisonKey(next.defaultHeaders)
+  );
+}
+
+async function syncProviderConnectionSecretsIfNeeded(params: {
+  providerId: string;
+  previousState: ProviderRuntimeSecretSyncState | null;
+  nextState: ProviderRuntimeSecretSyncState;
+}): Promise<void> {
+  if (
+    !params.previousState ||
+    !providerRuntimeSecretFieldsChanged(params.previousState, params.nextState)
+  ) {
+    return;
+  }
+
+  try {
+    const activeConnections = await prisma.connection.findMany({
+      where: {
+        providerId: params.providerId,
+        status: "active",
+      },
+      select: { id: true },
+    });
+    if (activeConnections.length === 0) {
+      return;
+    }
+
+    await enqueueConnectionSecretSyncs(
+      activeConnections.map((connection) => connection.id)
+    );
+  } catch (error) {
+    console.warn(
+      `[providers] Failed to schedule secret replica sync for provider ${params.providerId}: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
 }
 
 async function getSharedCredentialStatus(
@@ -182,6 +267,19 @@ providerRoutes.post("/", async (req, res) => {
   } = req.body;
 
   try {
+    const existing = slug
+      ? await prisma.provider.findUnique({
+          where: { slug },
+          select: {
+            id: true,
+            authType: true,
+            baseUrl: true,
+            headerName: true,
+            defaultHeaders: true,
+          },
+        })
+      : null;
+
     // Auto-resolve OpenAPI spec URL from APIs.guru if not provided
     let resolvedSpecUrl = openapi_spec_url || undefined;
     if (!resolvedSpecUrl && slug) {
@@ -217,6 +315,14 @@ providerRoutes.post("/", async (req, res) => {
       where: { slug },
       create: data,
       update: data,
+    });
+
+    await syncProviderConnectionSecretsIfNeeded({
+      providerId: provider.id,
+      previousState: existing
+        ? getProviderRuntimeSecretSyncState(existing)
+        : null,
+      nextState: getProviderRuntimeSecretSyncState(provider),
     });
 
     res.status(201).json({ id: provider.id, slug: provider.slug, name: provider.name });
@@ -265,7 +371,16 @@ providerRoutes.put("/:slug", async (req, res) => {
   } = req.body;
 
   try {
-    const existing = await prisma.provider.findUnique({ where: { slug: req.params.slug } });
+    const existing = await prisma.provider.findUnique({
+      where: { slug: req.params.slug },
+      select: {
+        id: true,
+        authType: true,
+        baseUrl: true,
+        headerName: true,
+        defaultHeaders: true,
+      },
+    });
     if (!existing) {
       res.status(404).json({ error: "Provider not found" });
       return;
@@ -302,6 +417,12 @@ providerRoutes.put("/:slug", async (req, res) => {
     const provider = await prisma.provider.update({
       where: { slug: req.params.slug },
       data: update,
+    });
+
+    await syncProviderConnectionSecretsIfNeeded({
+      providerId: provider.id,
+      previousState: getProviderRuntimeSecretSyncState(existing),
+      nextState: getProviderRuntimeSecretSyncState(provider),
     });
 
     res.json({ id: provider.id, slug: provider.slug, name: provider.name });

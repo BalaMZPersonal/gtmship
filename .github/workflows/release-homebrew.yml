@@ -1,0 +1,159 @@
+name: Release Homebrew
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release bundle
+        run: pnpm build:release -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtmship-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/homebrew/gtmship-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release and update tap
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OWNER: ${{ github.repository_owner }}
+      REPOSITORY: ${{ github.repository }}
+      TAG_NAME: ${{ github.ref_name }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download release bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/homebrew
+          pattern: gtmship-*
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        run: |
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" --title "$TAG_NAME" --notes ""
+          fi
+
+          gh release upload "$TAG_NAME" dist/homebrew/*.tar.gz --clobber
+
+      - name: Render Homebrew formula
+        run: |
+          VERSION="${TAG_NAME#v}"
+          RELEASE_URL="https://github.com/${REPOSITORY}/releases/download/${TAG_NAME}"
+
+          DARWIN_ARM64_SHA="$(shasum -a 256 dist/homebrew/gtmship-darwin-arm64.tar.gz | awk '{print $1}')"
+          DARWIN_X64_SHA="$(shasum -a 256 dist/homebrew/gtmship-darwin-x64.tar.gz | awk '{print $1}')"
+          LINUX_ARM64_SHA="$(shasum -a 256 dist/homebrew/gtmship-linux-arm64.tar.gz | awk '{print $1}')"
+          LINUX_X64_SHA="$(shasum -a 256 dist/homebrew/gtmship-linux-x64.tar.gz | awk '{print $1}')"
+
+          pnpm render:homebrew-formula \
+            --owner "$OWNER" \
+            --version "$VERSION" \
+            --darwin-arm64-url "${RELEASE_URL}/gtmship-darwin-arm64.tar.gz" \
+            --darwin-arm64-sha256 "$DARWIN_ARM64_SHA" \
+            --darwin-x64-url "${RELEASE_URL}/gtmship-darwin-x64.tar.gz" \
+            --darwin-x64-sha256 "$DARWIN_X64_SHA" \
+            --linux-arm64-url "${RELEASE_URL}/gtmship-linux-arm64.tar.gz" \
+            --linux-arm64-sha256 "$LINUX_ARM64_SHA" \
+            --linux-x64-url "${RELEASE_URL}/gtmship-linux-x64.tar.gz" \
+            --linux-x64-sha256 "$LINUX_X64_SHA"
+
+      - name: Update Homebrew tap repository
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set."
+            exit 1
+          fi
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${OWNER}/homebrew-tap.git" tap-repo
+
+          cat > tap-repo/README.md <<EOF
+          # homebrew-tap
+
+          Homebrew tap for GTMShip.
+
+          Install with:
+
+          \`\`\`bash
+          brew install ${OWNER}/tap/gtmship
+          gtmship open
+          \`\`\`
+          EOF
+
+          mkdir -p tap-repo/Formula
+          cp dist/homebrew/gtmship.rb tap-repo/Formula/gtmship.rb
+
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md Formula/gtmship.rb
+
+          if git diff --cached --quiet; then
+            echo "No tap changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update gtmship formula for ${TAG_NAME}"
+          git push origin HEAD:main

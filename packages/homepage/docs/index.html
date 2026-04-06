@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GTMship Docs</title>
+  <meta name="description" content="GTMship documentation for workflow authoring, connection management, write checkpoints, deployment, memory, and the dashboard + CLI flow.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="docs.css">
+  <link rel="stylesheet" href="../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Product Documentation</div>
+      <h1>Detailed docs for how GTMship works.</h1>
+      <p>These pages explain the core product surfaces in plain language: how workflows are authored, how connections are managed, how safe previewing works, and what happens when you deploy to your own cloud.</p>
+      <div class="docs-hero-actions">
+        <a class="docs-primary-link" href="#quickstart">Start with Quickstart</a>
+        <a class="docs-ghost-link" href="#how-it-works">See the system flow</a>
+      </div>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Workflow Builder Agent</span>
+        <span class="docs-pill">Custom Connections Agent</span>
+        <span class="docs-pill">Write Checkpoints</span>
+        <span class="docs-pill">AWS + GCP Deploy</span>
+        <span class="docs-pill">Persistent Memory</span>
+        <span class="docs-pill">Dashboard + CLI</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Start Here</div>
+          <a class="active" href="index.html">Docs Home</a>
+          <a href="#quickstart">Quickstart</a>
+          <a href="#how-it-works">How GTMship works</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a href="workflow-builder-agent/index.html">Workflow Builder Agent</a>
+          <a href="custom-connections-agent/index.html">Custom Connections Agent</a>
+          <a href="write-checkpoints/index.html">Write Checkpoints</a>
+          <a href="deployment/index.html">Deployment</a>
+          <a href="ai-memory/index.html">AI Memory</a>
+          <a href="dashboard-cli/index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>What GTMship covers</h2>
+          <p>GTMship is designed to take you from “I need a workflow that talks to these systems” to “that workflow is validated, connected, deployed, and observable in my own cloud account.” The platform combines a workflow SDK, a dashboard, a CLI, an auth service, a deployment engine, and memory so the product can keep state across sessions.</p>
+          <div class="docs-note" style="margin-top: 18px;">
+            The docs here are focused on the product surfaces shown on the homepage. They explain what each feature does, what inputs it needs, and what GTMship manages for you under the hood.
+          </div>
+        </section>
+
+        <section class="docs-panel" id="quickstart">
+          <h2>Quickstart</h2>
+          <div class="docs-step-grid" style="margin-top: 18px;">
+            <div class="docs-step">
+              <div class="docs-step-num">01</div>
+              <h3>Open the workspace</h3>
+              <p>Launch GTMship locally and bring up the dashboard plus auth service so you can connect tools and iterate in Workflow Studio.</p>
+            </div>
+            <div class="docs-step">
+              <div class="docs-step-num">02</div>
+              <h3>Connect your systems</h3>
+              <p>Connect a built-in provider or give the Custom Connections Agent API docs for a custom service so it can configure auth and bindings.</p>
+            </div>
+            <div class="docs-step">
+              <div class="docs-step-num">03</div>
+              <h3>Describe the workflow</h3>
+              <p>Use the Workflow Builder Agent to explain the outcome you want. GTMship grounds API details before it generates or revises code.</p>
+            </div>
+            <div class="docs-step">
+              <div class="docs-step-num">04</div>
+              <h3>Validate and preview</h3>
+              <p>Run validation for runtime safety, then preview against sample input. Writes pause behind checkpoints when approval is needed.</p>
+            </div>
+            <div class="docs-step">
+              <div class="docs-step-num">05</div>
+              <h3>Keep it local or deploy</h3>
+              <p>Stay in a local-only loop for authoring, connection setup, validation, and preview. When the workflow is ready for always-on traffic, choose AWS Lambda or GCP Cloud Run and deploy it into your cloud account.</p>
+            </div>
+            <div class="docs-step">
+              <div class="docs-step-num">06</div>
+              <h3>Monitor and iterate</h3>
+              <p>Use logs, saved workflow state, and memory to keep improving the same automation instead of starting over each session.</p>
+            </div>
+          </div>
+          <pre class="docs-code" style="margin-top: 18px;"><code>gtmship dev
+gtmship connections connect hubspot
+gtmship validate
+# deploy later when ready
+gtmship deploy --provider aws</code></pre>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Local-only run</h2>
+          <p>GTMship does not force cloud deployment on day one. A local-only run is enough for workflow authoring, connection setup, validation, and preview while you are still shaping the automation.</p>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">Good fit</div>
+              <h3>Use local-only while the workflow is still taking shape</h3>
+              <p>This is the fastest path when you are experimenting, testing credentials, previewing sample inputs, or proving the workflow with one operator at a time.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">Deploy signal</div>
+              <h3>Deploy when the workflow needs to stay on</h3>
+              <p>Move to cloud deployment once you need stable webhook URLs, scheduled execution, shared production access, or a runtime that stays available beyond your local session.</p>
+            </div>
+          </div>
+          <div class="docs-note" style="margin-top: 18px;">Local-only does not mean a reduced product path. You still get Workflow Builder Agent, connections, validation, preview, and the shared dashboard plus CLI flow; you simply delay the cloud step.</div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What you bring and what GTMship manages</h2>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">You bring</div>
+              <h3>Outcome, systems, and operating rules</h3>
+              <p>GTMship still needs the real business goal: what event should start the workflow, which systems it should talk to, what fields matter, and where human approval or business constraints should apply.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">GTMship manages</div>
+              <h3>Grounding, auth, safety, and deploy state</h3>
+              <p>The product handles provider grounding, connection storage, validation rules, write checkpoints, artifact packaging, cloud deploy orchestration, and the status records needed to keep work visible after launch.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel" id="how-it-works">
+          <h2>How GTMship works</h2>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">Authoring</div>
+              <h3>Ground first, then generate</h3>
+              <p>The workflow agent is not treated like a one-shot code generator. It checks connected systems, pulls relevant docs or OpenAPI details, and only then drafts TypeScript plus a live flow representation.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">Connections</div>
+              <h3>Central auth service</h3>
+              <p>Provider configs, encrypted credentials, OAuth callbacks, and connection bindings live behind the auth service so the dashboard and CLI can work from the same source of truth.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">Safety</div>
+              <h3>Validation and preview are separate</h3>
+              <p>Validation checks workflow module shape and runtime rules. Preview simulates a run with sample input and pauses at write checkpoints when real-world mutations need approval.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">Deployment</div>
+              <h3>Deploy to your cloud</h3>
+              <p>GTMship reads project config, resolves provider bindings, builds an artifact, deploys to AWS or GCP, and syncs deployment metadata back into its control plane.</p>
+            </div>
+          </div>
+          <ul class="docs-list-plain" style="margin-top: 18px;">
+            <li><strong>SDK:</strong> defines workflow shape and runtime helpers.</li>
+            <li><strong>Dashboard:</strong> interactive surface for connections, Workflow Studio, validation, preview, build, deploy, and logs.</li>
+            <li><strong>CLI:</strong> project init, local runtime, provider management, connections, and deployment operations.</li>
+            <li><strong>Deploy engine:</strong> packages and provisions cloud resources for supported targets.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel" id="feature-guides">
+          <h2>Feature guides</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <a class="docs-card" href="workflow-builder-agent/index.html">
+              <div class="docs-card-kicker">Guide</div>
+              <h3>Workflow Builder Agent</h3>
+              <p>How Workflow Studio turns a prompt into grounded code, flow diagrams, validation, and next actions.</p>
+            </a>
+            <a class="docs-card" href="custom-connections-agent/index.html">
+              <div class="docs-card-kicker">Guide</div>
+              <h3>Custom Connections Agent</h3>
+              <p>How built-in connectors and custom APIs are configured, authenticated, and bound into workflows.</p>
+            </a>
+            <a class="docs-card" href="write-checkpoints/index.html">
+              <div class="docs-card-kicker">Guide</div>
+              <h3>Write Checkpoints</h3>
+              <p>How preview mode pauses risky operations so you can inspect intended writes before live systems change.</p>
+            </a>
+            <a class="docs-card" href="deployment/index.html">
+              <div class="docs-card-kicker">Guide</div>
+              <h3>Deployment</h3>
+              <p>How GTMship plans bindings, packages artifacts, deploys to AWS or GCP, and syncs status back.</p>
+            </a>
+            <a class="docs-card" href="ai-memory/index.html">
+              <div class="docs-card-kicker">Guide</div>
+              <h3>AI Memory</h3>
+              <p>How saved context helps the agents reuse verified knowledge about your stack across sessions.</p>
+            </a>
+            <a class="docs-card" href="dashboard-cli/index.html">
+              <div class="docs-card-kicker">Guide</div>
+              <h3>Dashboard + CLI</h3>
+              <p>How the visual interface and terminal commands work against the same project, connections, and deployments.</p>
+            </a>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Choose your next page</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="workflow-builder-agent/index.html">Start with workflow authoring</a>
+            <a class="docs-ghost-link" href="custom-connections-agent/index.html">Read about integrations</a>
+            <a class="docs-ghost-link" href="deployment/index.html">See deployment flow</a>
+          </div>
+          <div class="docs-page-footer">Docs live under <span class="docs-inline-code">/docs/</span> so each guide has its own shareable URL.</div>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <div id="site-footer"></div>
+
+  <script src="../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../',
+      page: 'docs-main',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Quickstart', href: '#quickstart' },
+        { label: 'How It Works', href: '#how-it-works' },
+        { label: 'Feature Guides', href: '#feature-guides' }
+      ],
+      primaryAction: { label: 'Browse Guides', href: '#feature-guides' }
+    });
+  </script>
+</body>
+</html>

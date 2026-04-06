@@ -47,6 +47,7 @@ import {
   type DashboardDeployInfraKey,
   type GcpComputeType,
   type ResolvedCloudDeploySettings,
+  type WorkflowDeployTarget,
   type WorkflowDeploymentOverview,
   type WorkflowExecutionHistoryEntry,
   getDeploymentInfra,
@@ -81,6 +82,7 @@ import type {
   WorkflowAiProviderSlug,
   WorkflowBuildResult,
   WorkflowDeploymentRun,
+  WorkflowDeployTargetMode,
   WorkflowListItem,
   WorkflowListingResponse,
   WorkflowPendingApproval,
@@ -121,7 +123,7 @@ interface WorkflowPreviewRunResponse {
 type WorkflowStudioDeployResponse =
   | {
       success: true;
-      provider: "aws" | "gcp";
+      provider: "aws" | "gcp" | "local";
       region?: string;
       projectName: string;
       apiEndpoint?: string | null;
@@ -238,6 +240,32 @@ function normalizeWorkflowAiConfigs(
   });
 }
 
+function mergeWorkflowAiConfigs(
+  nextAiConfigs?: WorkflowAiConfig[],
+  currentAiConfigs?: WorkflowAiConfig[]
+): WorkflowAiConfig[] {
+  const merged = new Map<WorkflowAiProviderSlug, WorkflowAiConfig>();
+
+  for (const config of normalizeWorkflowAiConfigs(nextAiConfigs)) {
+    merged.set(config.providerSlug, config);
+  }
+
+  for (const config of normalizeWorkflowAiConfigs(currentAiConfigs)) {
+    const existing = merged.get(config.providerSlug);
+    merged.set(config.providerSlug, {
+      ...existing,
+      providerSlug: config.providerSlug,
+      ...(config.model?.trim()
+        ? { model: config.model.trim() }
+        : existing?.model
+          ? { model: existing.model }
+          : {}),
+    });
+  }
+
+  return normalizeWorkflowAiConfigs(Array.from(merged.values()));
+}
+
 function sortConnectionsByCreatedAtDesc(
   connections: WorkflowStudioConnectionRecord[]
 ): WorkflowStudioConnectionRecord[] {
@@ -263,7 +291,7 @@ function sortConnectionsByCreatedAtDesc(
 
 function resolveWorkflowAiBinding(
   providerSlug: WorkflowAiProviderSlug,
-  binding: WorkflowStudioArtifact["bindings"] extends Array<infer T> ? T : never,
+  binding: NonNullable<WorkflowStudioArtifact["bindings"]>[number] | undefined,
   connections: WorkflowStudioConnectionRecord[]
 ): WorkflowAiBindingResolution {
   const activeProviderConnections = sortConnectionsByCreatedAtDesc(
@@ -322,17 +350,27 @@ function resolveWorkflowAiBinding(
       };
     }
 
-    const matches = activeProviderConnections.filter(
-      (connection) => connection.id === selectorConnectionId
+    const matches = sortConnectionsByCreatedAtDesc(
+      connections.filter(
+        (connection) =>
+          connection.provider.slug === providerSlug &&
+          connection.id === selectorConnectionId
+      )
     );
 
     if (matches.length === 1) {
+      const connection = matches[0];
+      const activeNote =
+        connection.status === "active"
+          ? ""
+          : ` The selected connection is ${connection.status}.`;
+
       return {
         providerSlug,
         selectorType,
         status: "resolved",
-        message: `Resolved by connection_id (${selectorConnectionId}).`,
-        connection: matches[0],
+        message: `Resolved by connection_id (${selectorConnectionId}).${activeNote}`,
+        connection,
         candidates: matches,
       };
     }
@@ -343,8 +381,8 @@ function resolveWorkflowAiBinding(
       status: "missing",
       message:
         matches.length === 0
-          ? `No active connection matched id "${selectorConnectionId}".`
-          : `Multiple active connections matched id "${selectorConnectionId}".`,
+          ? `No connection matched id "${selectorConnectionId}".`
+          : `Multiple connections matched id "${selectorConnectionId}".`,
       connection: null,
       candidates: matches,
     };
@@ -396,6 +434,65 @@ function resolveWorkflowAiBinding(
     connection: null,
     candidates: [],
   };
+}
+
+function describeWorkflowAiResolution(
+  resolution: WorkflowAiBindingResolution
+): string {
+  if (resolution.status === "resolved" && resolution.connection) {
+    return [
+      resolution.message,
+      resolution.connection.label
+        ? `Using "${resolution.connection.label}".`
+        : `Using ${resolution.connection.id}.`,
+    ].join(" ");
+  }
+
+  if (resolution.status === "ambiguous") {
+    return `${resolution.message} Pin a specific connection_id to load live models.`;
+  }
+
+  return resolution.message;
+}
+
+function buildWorkflowAiModelPlaceholder(
+  resolution: WorkflowAiBindingResolution | undefined
+): string {
+  if (!resolution) {
+    return "Select a provider binding first";
+  }
+
+  if (resolution.status === "resolved") {
+    return "Select a model";
+  }
+
+  return "Pin a specific connection first";
+}
+
+function buildWorkflowAiModelDisabledReason(
+  providerSlug: WorkflowAiProviderSlug,
+  resolution: WorkflowAiBindingResolution | undefined
+): string {
+  if (!resolution) {
+    return `Add a ${WORKFLOW_AI_PROVIDER_LABELS[providerSlug]} binding to load live models.`;
+  }
+
+  if (resolution.status === "resolved") {
+    return "";
+  }
+
+  return describeWorkflowAiResolution(resolution);
+}
+
+function formatWorkflowAiModelError(
+  providerSlug: WorkflowAiProviderSlug,
+  error?: string
+): string {
+  if (!error) {
+    return "";
+  }
+
+  return `${WORKFLOW_AI_PROVIDER_LABELS[providerSlug]} model lookup failed: ${error}`;
 }
 
 function withSelectedModelOption(
@@ -454,19 +551,27 @@ function emptyArtifact(
     deploy: undefined,
     triggerConfig: undefined,
     bindings: [],
+    aiConfigs: [],
   }, defaults);
 }
 
 function defaultRegionForProvider(
-  provider: "aws" | "gcp",
+  provider: "aws" | "gcp" | "local",
   defaults?: WorkflowProjectDeploymentDefaults
 ): string {
   if (defaults?.provider === provider && defaults.region) {
     return defaults.region;
   }
 
-  return provider === "gcp" ? "us-central1" : "us-east-1";
+  return provider === "gcp"
+    ? "us-central1"
+    : provider === "local"
+      ? "local"
+      : "us-east-1";
 }
+
+const LOCAL_DEPLOY_UNSUPPORTED_WARNING =
+  "Local deployments currently support only manual and schedule triggers.";
 
 function deploymentStatusTone(status?: string | null): string {
   const normalized = (status || "").toLowerCase();
@@ -504,9 +609,13 @@ function formatDateTime(value?: string | null): string {
 }
 
 function formatProviderComputeLabel(
-  provider: "aws" | "gcp",
+  provider: "aws" | "gcp" | "local",
   computeType?: string | null
 ): string {
+  if (provider === "local") {
+    return "Local Workflow Job";
+  }
+
   if (provider === "aws") {
     return "Lambda Function";
   }
@@ -1955,6 +2064,9 @@ export function WorkflowStudio() {
   const [workflowAiModelErrors, setWorkflowAiModelErrors] = useState<
     Partial<Record<WorkflowAiProviderSlug, string>>
   >({});
+  const workflowAiModelConnectionIdsRef = useRef<
+    Partial<Record<WorkflowAiProviderSlug, string>>
+  >({});
   const [editingTitle, setEditingTitle] = useState(false);
   const [editorSessionKey, setEditorSessionKey] = useState(() =>
     `workflow-studio-${Date.now()}`
@@ -2016,9 +2128,60 @@ export function WorkflowStudio() {
     cloudSettings,
     projectDefaults: deploymentDefaults,
   });
+  const deployTarget = effectiveDeployTarget.target;
   const effectiveProvider = effectiveDeployTarget.provider;
   const effectiveRegion = effectiveDeployTarget.region;
   const effectiveGcpProject = effectiveDeployTarget.gcpProject || "";
+  const effectiveCloudProvider = effectiveDeployTarget.cloudProvider;
+  const effectiveCloudRegion = effectiveDeployTarget.cloudRegion;
+  const effectiveCloudGcpProject =
+    effectiveDeployTarget.cloudGcpProject || "";
+  const cloudDeployTarget = resolveWorkflowDeployTarget({
+    workflowDeploy: {
+      ...(currentArtifact.deploy || {}),
+      target: "cloud",
+      provider: effectiveCloudProvider,
+      region: effectiveCloudRegion,
+      gcpProject:
+        effectiveCloudProvider === "gcp"
+          ? effectiveCloudGcpProject
+          : currentArtifact.deploy?.gcpProject,
+    },
+    cloudSettings,
+    projectDefaults: deploymentDefaults,
+  });
+  const localDeployTarget = resolveWorkflowDeployTarget({
+    workflowDeploy: {
+      ...(currentArtifact.deploy || {}),
+      target: "local",
+    },
+    cloudSettings,
+    projectDefaults: deploymentDefaults,
+  });
+  const cloudDeployArtifact = {
+    ...currentArtifact,
+    deploy: {
+      ...(currentArtifact.deploy || {}),
+      target: "cloud" as const,
+      provider: effectiveCloudProvider,
+      region: effectiveCloudRegion,
+      gcpProject:
+        effectiveCloudProvider === "gcp"
+          ? effectiveCloudGcpProject
+          : currentArtifact.deploy?.gcpProject,
+      auth: {
+        ...(currentArtifact.deploy?.auth || {}),
+        mode: "secret_manager" as const,
+      },
+    },
+  };
+  const localDeployArtifact = {
+    ...currentArtifact,
+    deploy: {
+      ...(currentArtifact.deploy || {}),
+      target: "local" as const,
+    },
+  };
   const deploymentRun = currentArtifact.deploymentRun || null;
   const deployStatus = deploymentRun?.status || "idle";
   const deployErrorMessage = deploymentRun?.error || "";
@@ -2029,6 +2192,10 @@ export function WorkflowStudio() {
   const deploymentPlan = buildWorkflowPlanFromArtifact(
     currentArtifact,
     effectiveDeployTarget
+  );
+  const localDeploymentPlan = buildWorkflowPlanFromArtifact(
+    localDeployArtifact,
+    localDeployTarget
   );
   const deploymentSecretSyncSummary = buildWorkflowSecretSyncSummary([
     deploymentPlan,
@@ -2055,11 +2222,14 @@ export function WorkflowStudio() {
         liveDeploymentOverview?.schedulerId
     ),
   });
-  const missingGcpProject =
-    effectiveDeployTarget.provider === "gcp" &&
-    !effectiveDeployTarget.gcpProject;
+  const cloudMissingGcpProject =
+    cloudDeployTarget.provider === "gcp" && !cloudDeployTarget.gcpProject;
+  const localDeployUnsupportedReason =
+    localDeploymentPlan.warnings.find(
+      (warning) => warning === LOCAL_DEPLOY_UNSUPPORTED_WARNING
+    ) || null;
   const hasLiveDeploymentSyncWarning = Boolean(liveDeploymentOverview?.liveError);
-  const deployDisabled =
+  const deploymentActionDisabled =
     !artifact ||
     !listing?.projectRootConfigured ||
     validating ||
@@ -2068,8 +2238,11 @@ export function WorkflowStudio() {
     saving ||
     deploying ||
     deletingWorkflow ||
-    agentBusy ||
-    missingGcpProject;
+    agentBusy;
+  const cloudDeployDisabled =
+    deploymentActionDisabled || cloudMissingGcpProject;
+  const localDeployDisabled =
+    deploymentActionDisabled || Boolean(localDeployUnsupportedReason);
   const fixWithAiDisabled =
     !artifact ||
     loadingWorkflow ||
@@ -2122,9 +2295,12 @@ export function WorkflowStudio() {
   const workflowAiProviderSlugs = useMemo(
     () =>
       WORKFLOW_AI_PROVIDER_ORDER.filter((providerSlug) =>
-        workflowAiConfigByProvider.has(providerSlug)
+        workflowAiConfigByProvider.has(providerSlug) ||
+        (currentArtifact.bindings || []).some(
+          (binding) => binding.providerSlug === providerSlug
+        )
       ),
-    [workflowAiConfigByProvider]
+    [currentArtifact.bindings, workflowAiConfigByProvider]
   );
   const workflowAiBindingResolutions = useMemo(
     () =>
@@ -2221,12 +2397,22 @@ export function WorkflowStudio() {
   }
 
   const loadLiveDeploymentOverview = useCallback(
-    async (options: { forceReconcile?: boolean } = {}) => {
+    async (options: {
+      forceReconcile?: boolean;
+      deploymentTarget?: WorkflowDeployTarget;
+    } = {}) => {
       const forceReconcile = options.forceReconcile === true;
       if (!selectedWorkflowId) {
         resetLiveDeploymentState();
         return;
       }
+      const targetForOverview = options.deploymentTarget || effectiveDeployTarget;
+      const overviewProvider = targetForOverview.provider;
+      const overviewRegion = targetForOverview.region;
+      const overviewGcpProject =
+        targetForOverview.provider === "gcp"
+          ? targetForOverview.gcpProject || ""
+          : "";
 
       setLiveDeploymentLoading(true);
       setLiveDeploymentAction(forceReconcile ? "retry" : "refresh");
@@ -2236,7 +2422,7 @@ export function WorkflowStudio() {
           const deployments = await api.getWorkflowDeploymentsForWorkflow({
             workflowId: selectedWorkflowId || undefined,
             workflowSlug: selectedSlug || undefined,
-            provider: effectiveProvider,
+            provider: overviewProvider,
             includeLive: true,
             executionLimit: 5,
           });
@@ -2246,11 +2432,11 @@ export function WorkflowStudio() {
         let matches = forceReconcile ? [] : await fetchDeployments();
         if (forceReconcile || matches.length === 0) {
           await api.reconcileWorkflowDeployments({
-            provider: effectiveProvider,
-            region: effectiveRegion,
+            provider: overviewProvider,
+            region: overviewRegion,
             gcpProject:
-              effectiveProvider === "gcp"
-                ? effectiveGcpProject.trim() || undefined
+              overviewProvider === "gcp"
+                ? overviewGcpProject.trim() || undefined
                 : undefined,
             workflow: selectedSlug || undefined,
           });
@@ -2259,12 +2445,12 @@ export function WorkflowStudio() {
 
         const bestMatch =
           getScopedWorkflowDeployments(matches, {
-            provider: effectiveProvider,
+            provider: overviewProvider,
             workflowId: selectedWorkflowId,
             workflowSlug: selectedSlug,
-            region: effectiveRegion,
+            region: overviewRegion,
             gcpProject:
-              effectiveProvider === "gcp" ? effectiveGcpProject : undefined,
+              overviewProvider === "gcp" ? overviewGcpProject : undefined,
           })[0] || null;
 
         setLiveDeploymentOverview(bestMatch);
@@ -2281,6 +2467,7 @@ export function WorkflowStudio() {
       }
     },
     [
+      effectiveDeployTarget,
       effectiveGcpProject,
       effectiveProvider,
       effectiveRegion,
@@ -2294,8 +2481,10 @@ export function WorkflowStudio() {
     setWorkflowAiConnectionsError("");
     try {
       const connections = (await api.getConnections()) as WorkflowStudioConnectionRecord[];
+      workflowAiModelConnectionIdsRef.current = {};
       setWorkflowAiConnections(Array.isArray(connections) ? connections : []);
     } catch (connectionError) {
+      workflowAiModelConnectionIdsRef.current = {};
       setWorkflowAiConnections([]);
       setWorkflowAiConnectionsError(
         connectionError instanceof Error
@@ -2306,6 +2495,141 @@ export function WorkflowStudio() {
       setWorkflowAiConnectionsLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    void loadWorkflowAiConnections();
+
+    const handleConnectionsChanged = () => {
+      void loadWorkflowAiConnections();
+    };
+
+    window.addEventListener("connections-changed", handleConnectionsChanged);
+    return () =>
+      window.removeEventListener("connections-changed", handleConnectionsChanged);
+  }, [loadWorkflowAiConnections]);
+
+  useEffect(() => {
+    if (workflowAiProviderSlugs.length === 0) {
+      setWorkflowAiModelOptions({});
+      setWorkflowAiModelLoading({});
+      setWorkflowAiModelErrors({});
+      workflowAiModelConnectionIdsRef.current = {};
+      return;
+    }
+
+    let cancelled = false;
+    const activeProviders = new Set(workflowAiProviderSlugs);
+
+    setWorkflowAiModelOptions((current) => {
+      const next = { ...current };
+      for (const providerSlug of Object.keys(next) as WorkflowAiProviderSlug[]) {
+        if (!activeProviders.has(providerSlug)) {
+          delete next[providerSlug];
+        }
+      }
+      return next;
+    });
+    setWorkflowAiModelLoading((current) => {
+      const next = { ...current };
+      for (const providerSlug of Object.keys(next) as WorkflowAiProviderSlug[]) {
+        if (!activeProviders.has(providerSlug)) {
+          delete next[providerSlug];
+        }
+      }
+      return next;
+    });
+    setWorkflowAiModelErrors((current) => {
+      const next = { ...current };
+      for (const providerSlug of Object.keys(next) as WorkflowAiProviderSlug[]) {
+        if (!activeProviders.has(providerSlug)) {
+          delete next[providerSlug];
+        }
+      }
+      return next;
+    });
+
+    void (async () => {
+      for (const providerSlug of workflowAiProviderSlugs) {
+        const resolution =
+          workflowAiBindingResolutionByProvider.get(providerSlug);
+
+        if (
+          !resolution ||
+          resolution.status !== "resolved" ||
+          !resolution.connection?.id
+        ) {
+          delete workflowAiModelConnectionIdsRef.current[providerSlug];
+          setWorkflowAiModelLoading((current) => ({
+            ...current,
+            [providerSlug]: false,
+          }));
+          setWorkflowAiModelErrors((current) => {
+            const next = { ...current };
+            delete next[providerSlug];
+            return next;
+          });
+          continue;
+        }
+
+        if (
+          workflowAiModelConnectionIdsRef.current[providerSlug] ===
+          resolution.connection.id
+        ) {
+          continue;
+        }
+
+        setWorkflowAiModelLoading((current) => ({
+          ...current,
+          [providerSlug]: true,
+        }));
+        setWorkflowAiModelErrors((current) => {
+          const next = { ...current };
+          delete next[providerSlug];
+          return next;
+        });
+
+        try {
+          const result = await api.searchConnectionAiModels(
+            resolution.connection.id
+          );
+
+          if (cancelled) {
+            return;
+          }
+
+          workflowAiModelConnectionIdsRef.current[providerSlug] =
+            resolution.connection.id;
+          setWorkflowAiModelOptions((current) => ({
+            ...current,
+            [providerSlug]: Array.isArray(result.models) ? result.models : [],
+          }));
+        } catch (modelError) {
+          if (cancelled) {
+            return;
+          }
+
+          setWorkflowAiModelErrors((current) => ({
+            ...current,
+            [providerSlug]:
+              modelError instanceof Error
+                ? modelError.message
+                : "Unable to load live models.",
+          }));
+        } finally {
+          if (!cancelled) {
+            setWorkflowAiModelLoading((current) => ({
+              ...current,
+              [providerSlug]: false,
+            }));
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workflowAiBindingResolutionByProvider, workflowAiProviderSlugs]);
 
   const sendIssueToChat = useCallback(
     async (prompt: string) => {
@@ -2653,6 +2977,33 @@ export function WorkflowStudio() {
     });
   }
 
+  function updateWorkflowAiModel(
+    providerSlug: WorkflowAiProviderSlug,
+    model: string
+  ) {
+    updateArtifact((current) => {
+      const nextAiConfigs = [...normalizeWorkflowAiConfigs(current.aiConfigs)];
+      const existingIndex = nextAiConfigs.findIndex(
+        (config) => config.providerSlug === providerSlug
+      );
+      const nextConfig: WorkflowAiConfig = {
+        providerSlug,
+        ...(model.trim() ? { model: model.trim() } : {}),
+      };
+
+      if (existingIndex >= 0) {
+        nextAiConfigs[existingIndex] = nextConfig;
+      } else {
+        nextAiConfigs.push(nextConfig);
+      }
+
+      return {
+        ...current,
+        aiConfigs: normalizeWorkflowAiConfigs(nextAiConfigs),
+      };
+    });
+  }
+
   const handleTranscriptChange = useCallback(
     (nextMessages: WorkflowStudioMessage[]) => {
       setMessages(nextMessages);
@@ -2683,6 +3034,10 @@ export function WorkflowStudio() {
               nextArtifact.deploymentRun || current?.deploymentRun,
             triggerConfig: nextArtifact.triggerConfig || current?.triggerConfig,
             bindings: nextArtifact.bindings || current?.bindings,
+            aiConfigs: mergeWorkflowAiConfigs(
+              nextArtifact.aiConfigs,
+              current?.aiConfigs
+            ),
             transcriptCompaction:
               nextArtifact.transcriptCompaction ||
               current?.transcriptCompaction,
@@ -2837,10 +3192,22 @@ export function WorkflowStudio() {
     }
   }
 
-  async function persistWorkflow(): Promise<StoredWorkflowRecord> {
-    if (!artifact) {
+  async function persistWorkflow(
+    artifactOverride?: WorkflowStudioArtifact
+  ): Promise<StoredWorkflowRecord> {
+    const artifactToSave = artifactOverride || artifact;
+    if (!artifactToSave) {
       throw new Error("A workflow is required before saving.");
     }
+    const deployTargetForSave = resolveWorkflowDeployTarget({
+      workflowDeploy: artifactToSave.deploy,
+      cloudSettings,
+      projectDefaults: deploymentDefaults,
+    });
+    const deploymentPlanForSave = buildWorkflowPlanFromArtifact(
+      artifactToSave,
+      deployTargetForSave
+    );
 
     setSaving(true);
     setError(null);
@@ -2850,8 +3217,8 @@ export function WorkflowStudio() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           artifact: {
-            ...artifact,
-            deploymentPlan,
+            ...artifactToSave,
+            deploymentPlan: deploymentPlanForSave,
             messages,
           },
         }),
@@ -2880,23 +3247,49 @@ export function WorkflowStudio() {
     }
   }
 
-  async function runDeploy() {
+  async function runDeploy(targetMode: WorkflowDeployTargetMode) {
     if (!artifact) {
+      return;
+    }
+    const deployArtifact =
+      targetMode === "local" ? localDeployArtifact : cloudDeployArtifact;
+    const requestedDeployTarget =
+      targetMode === "local" ? localDeployTarget : cloudDeployTarget;
+
+    if (requestedDeployTarget.provider === "gcp" && !requestedDeployTarget.gcpProject) {
+      setActiveTab("deploy");
+      setError("Add a GCP project before deploying to GCP.");
+      return;
+    }
+
+    if (
+      targetMode === "local" &&
+      localDeploymentPlan.warnings.includes(LOCAL_DEPLOY_UNSUPPORTED_WARNING)
+    ) {
+      setActiveTab("deploy");
+      setError(LOCAL_DEPLOY_UNSUPPORTED_WARNING);
       return;
     }
 
     setDeploying(true);
     setActiveTab("deploy");
     setError(null);
+    setArtifact({
+      ...deployArtifact,
+      deploymentPlan: buildWorkflowPlanFromArtifact(
+        deployArtifact,
+        requestedDeployTarget
+      ),
+    });
 
     try {
-      const saved = await persistWorkflow();
+      const saved = await persistWorkflow(deployArtifact);
       const response = (await api.deploy({
-        provider: effectiveDeployTarget.provider,
-        region: effectiveDeployTarget.region,
+        provider: requestedDeployTarget.provider,
+        region: requestedDeployTarget.region,
         gcpProject:
-          effectiveDeployTarget.provider === "gcp"
-            ? effectiveDeployTarget.gcpProject || undefined
+          requestedDeployTarget.provider === "gcp"
+            ? requestedDeployTarget.gcpProject || undefined
             : undefined,
         projectName: listing?.projectName || "gtmship",
         workflow: saved.slug,
@@ -2906,11 +3299,11 @@ export function WorkflowStudio() {
         isDashboardDeploySuccess(response)
           ? {
               status: "success",
-              provider: effectiveDeployTarget.provider,
-              region: effectiveDeployTarget.region,
+              provider: requestedDeployTarget.provider,
+              region: requestedDeployTarget.region,
               gcpProject:
-                effectiveDeployTarget.provider === "gcp"
-                  ? effectiveDeployTarget.gcpProject || undefined
+                requestedDeployTarget.provider === "gcp"
+                  ? requestedDeployTarget.gcpProject || undefined
                   : undefined,
               projectName: listing?.projectName || "gtmship",
               deployedAt: new Date().toISOString(),
@@ -2923,11 +3316,11 @@ export function WorkflowStudio() {
             }
           : {
               status: "error",
-              provider: effectiveDeployTarget.provider,
-              region: effectiveDeployTarget.region,
+              provider: requestedDeployTarget.provider,
+              region: requestedDeployTarget.region,
               gcpProject:
-                effectiveDeployTarget.provider === "gcp"
-                  ? effectiveDeployTarget.gcpProject || undefined
+                requestedDeployTarget.provider === "gcp"
+                  ? requestedDeployTarget.gcpProject || undefined
                   : undefined,
               projectName: listing?.projectName || "gtmship",
               deployedAt: new Date().toISOString(),
@@ -2953,7 +3346,10 @@ export function WorkflowStudio() {
         return;
       }
 
-      void loadLiveDeploymentOverview({ forceReconcile: true });
+      void loadLiveDeploymentOverview({
+        forceReconcile: true,
+        deploymentTarget: requestedDeployTarget,
+      });
     } catch (deployError) {
       setError(
         deployError instanceof Error ? deployError.message : "Deployment failed."
@@ -3459,24 +3855,6 @@ export function WorkflowStudio() {
                 Build
               </button>
               <button
-                onClick={() => void runDeploy()}
-                disabled={deployDisabled}
-                className="flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
-              >
-                {saving && deploying ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : deploying ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Rocket size={12} />
-                )}
-                {saving && deploying
-                  ? "Saving..."
-                  : deploying
-                    ? "Deploying..."
-                    : `Deploy ${effectiveDeployTarget.provider.toUpperCase()}`}
-              </button>
-              <button
                 onClick={() => void saveWorkflow()}
                 disabled={
                   !artifact ||
@@ -3783,7 +4161,7 @@ export function WorkflowStudio() {
                           </h4>
                           <p className="mt-1 text-xs text-zinc-500">
                             Auto-saves this workflow, then deploys it with the
-                            same cloud flow used by the Deploy page.
+                            same shared deploy flow used by the Deploy page.
                           </p>
                         </div>
                         <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300">
@@ -3813,10 +4191,52 @@ export function WorkflowStudio() {
                         ) : null}
                       </div>
 
-                      {missingGcpProject ? (
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        <button
+                          onClick={() => void runDeploy("local")}
+                          disabled={localDeployDisabled}
+                          className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-100 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+                        >
+                          {deploying && effectiveDeployTarget.target === "local" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Rocket size={12} />
+                          )}
+                          {deploying && effectiveDeployTarget.target === "local"
+                            ? saving
+                              ? "Saving..."
+                              : "Deploying..."
+                            : "Deploy to Local"}
+                        </button>
+                        <button
+                          onClick={() => void runDeploy("cloud")}
+                          disabled={cloudDeployDisabled}
+                          className="flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+                        >
+                          {deploying && effectiveDeployTarget.target === "cloud" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Rocket size={12} />
+                          )}
+                          {deploying && effectiveDeployTarget.target === "cloud"
+                            ? saving
+                              ? "Saving..."
+                              : "Deploying..."
+                            : `Deploy to ${cloudDeployTarget.provider.toUpperCase()}`}
+                        </button>
+                      </div>
+
+                      {cloudMissingGcpProject ? (
                         <div className="mt-4 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
                           Add a GCP project in this workflow or in Settings
                           before deploying to GCP.
+                        </div>
+                      ) : null}
+
+                      {localDeployUnsupportedReason ? (
+                        <div className="mt-4 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                          Local deployments are available only for manual and
+                          schedule workflows.
                         </div>
                       ) : null}
 
@@ -3829,9 +4249,8 @@ export function WorkflowStudio() {
 
                       {deployStatus === "idle" && !deploying ? (
                         <p className="mt-4 text-xs text-zinc-500">
-                          Use the header Deploy button to save the current draft
-                          and ship this workflow to the configured cloud
-                          provider.
+                          Choose whether to deploy this workflow locally or to
+                          the configured cloud target.
                         </p>
                       ) : null}
 
@@ -3882,7 +4301,9 @@ export function WorkflowStudio() {
                           <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
                             {effectiveProvider === "gcp"
                               ? "Live GCP Deployment"
-                              : "Live AWS Deployment"}
+                              : effectiveProvider === "local"
+                                ? "Live Local Deployment"
+                                : "Live AWS Deployment"}
                           </p>
                           <div className="flex items-center gap-2">
                             {(liveDeploymentError || hasLiveDeploymentSyncWarning) ? (
@@ -3965,14 +4386,21 @@ export function WorkflowStudio() {
                               </p>
                               <p>
                                 <span className="text-zinc-500">
-                                  {effectiveProvider === "gcp" ? "Project" : "Log Group"}:
+                                  {effectiveProvider === "gcp"
+                                    ? "Project"
+                                    : effectiveProvider === "local"
+                                      ? "Log Path"
+                                      : "Log Group"}
+                                  :
                                 </span>{" "}
                                 {effectiveProvider === "gcp"
                                   ? liveDeploymentOverview.platform?.gcpProject ||
                                     liveDeploymentOverview.gcpProject ||
                                     "N/A"
-                                  : liveDeploymentOverview.platform?.logGroupName ||
-                                    "N/A"}
+                                  : effectiveProvider === "local"
+                                    ? liveDeploymentOverview.platform?.logPath || "N/A"
+                                    : liveDeploymentOverview.platform?.logGroupName ||
+                                      "N/A"}
                               </p>
                               <p>
                                 <span className="text-zinc-500">Last deployed:</span>{" "}
@@ -4111,127 +4539,163 @@ export function WorkflowStudio() {
                     >
                       <div className="grid gap-4 md:grid-cols-2">
                         <label className="text-xs text-zinc-400">
-                          Provider
+                          Deploy Target
                           <select
-                            value={effectiveProvider}
+                            value={deployTarget}
                             onChange={(event) =>
                               updateArtifact((current) => ({
                                 ...current,
                                 deploy: {
                                   ...(current.deploy || {}),
-                                  provider: event.target.value as "aws" | "gcp",
+                                  target: event.target.value as
+                                    | "cloud"
+                                    | "local",
+                                  provider:
+                                    event.target.value === "cloud" &&
+                                    current.deploy?.provider !== "aws" &&
+                                    current.deploy?.provider !== "gcp"
+                                      ? effectiveCloudProvider
+                                      : current.deploy?.provider,
                                   region:
-                                    current.deploy?.region ||
-                                    defaultRegionForProvider(
-                                      event.target.value as "aws" | "gcp",
-                                      deploymentDefaults
-                                    ),
+                                    event.target.value === "cloud" &&
+                                    (!current.deploy?.region ||
+                                      current.deploy.region === "local")
+                                      ? effectiveCloudRegion
+                                      : current.deploy?.region,
+                                  auth:
+                                    event.target.value === "cloud"
+                                      ? {
+                                          ...(current.deploy?.auth || {}),
+                                          mode: "secret_manager",
+                                        }
+                                      : current.deploy?.auth,
                                 },
                               }))
                             }
                             className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
                           >
-                            <option value="aws">AWS</option>
-                            <option value="gcp">GCP</option>
+                            <option value="cloud">Cloud</option>
+                            <option value="local">Local</option>
                           </select>
                         </label>
 
-                        <label className="text-xs text-zinc-400">
-                          Region
-                          <input
-                            value={effectiveRegion}
-                            onChange={(event) =>
-                              updateArtifact((current) => ({
-                                ...current,
-                                deploy: {
-                                  ...(current.deploy || {}),
-                                  region: event.target.value,
-                                },
-                              }))
-                            }
-                            placeholder={defaultRegionForProvider(
-                              effectiveProvider,
-                              deploymentDefaults
-                            )}
-                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
-                          />
-                        </label>
-
-                        {effectiveProvider === "gcp" ? (
-                          <label className="text-xs text-zinc-400">
-                            GCP Project
-                            <input
-                              value={effectiveGcpProject}
-                              onChange={(event) =>
-                                updateArtifact((current) => ({
-                                  ...current,
-                                  deploy: {
-                                    ...(current.deploy || {}),
-                                    gcpProject: event.target.value,
-                                  },
-                                }))
-                              }
-                              placeholder="my-gcp-project"
-                              className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
-                            />
-                          </label>
-                        ) : null}
-
-                        <label className="text-xs text-zinc-400">
-                          Execution Kind
-                          <select
-                            value={currentArtifact.deploy?.execution?.kind || ""}
-                            onChange={(event) =>
-                              updateArtifact((current) => ({
-                                ...current,
-                                deploy: {
-                                  ...(current.deploy || {}),
-                                  execution: {
-                                    kind: event.target.value as "service" | "job",
-                                  },
-                                },
-                              }))
-                            }
-                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
-                          >
-                            <option value="">auto from trigger</option>
-                            <option value="service">service</option>
-                            <option value="job">job</option>
-                          </select>
-                        </label>
-
-                        <label className="text-xs text-zinc-400">
-                          Auth Mode
-                          <select
-                            value={
-                              currentArtifact.deploy?.auth?.mode ===
-                              "synced_secrets"
-                                ? "secret_manager"
-                                : currentArtifact.deploy?.auth?.mode || "proxy"
-                            }
-                            onChange={(event) =>
-                              updateArtifact((current) => ({
-                                ...current,
-                                deploy: {
-                                  ...(current.deploy || {}),
-                                  auth: {
-                                    mode: event.target.value as
-                                      | "proxy"
-                                      | "secret_manager",
-                                  },
-                                },
-                              }))
-                            }
-                            className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
-                          >
-                            <option value="proxy">proxy</option>
-                            <option value="secret_manager">secret_manager</option>
-                          </select>
-                        </label>
-
-                        {(currentArtifact.deploy?.auth?.mode === "secret_manager" ||
-                          currentArtifact.deploy?.auth?.mode === "synced_secrets") ? (
+                        {deployTarget === "cloud" ? (
                           <>
+                            <label className="text-xs text-zinc-400">
+                              Cloud Provider
+                              <select
+                                value={effectiveCloudProvider}
+                                onChange={(event) =>
+                                  updateArtifact((current) => ({
+                                    ...current,
+                                    deploy: {
+                                      ...(current.deploy || {}),
+                                      target: "cloud",
+                                      provider: event.target.value as "aws" | "gcp",
+                                      region:
+                                        current.deploy?.region &&
+                                        current.deploy.region !== "local"
+                                          ? current.deploy.region
+                                          : defaultRegionForProvider(
+                                              event.target.value as "aws" | "gcp",
+                                              deploymentDefaults
+                                            ),
+                                      auth: {
+                                        ...(current.deploy?.auth || {}),
+                                        mode: "secret_manager",
+                                      },
+                                    },
+                                  }))
+                                }
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                              >
+                                <option value="aws">AWS</option>
+                                <option value="gcp">GCP</option>
+                              </select>
+                            </label>
+
+                            <label className="text-xs text-zinc-400">
+                              Region
+                              <input
+                                value={effectiveCloudRegion}
+                                onChange={(event) =>
+                                  updateArtifact((current) => ({
+                                    ...current,
+                                    deploy: {
+                                      ...(current.deploy || {}),
+                                      target: "cloud",
+                                      region: event.target.value,
+                                    },
+                                  }))
+                                }
+                                placeholder={defaultRegionForProvider(
+                                  effectiveCloudProvider,
+                                  deploymentDefaults
+                                )}
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                              />
+                            </label>
+
+                            {effectiveCloudProvider === "gcp" ? (
+                              <label className="text-xs text-zinc-400">
+                                GCP Project
+                                <input
+                                  value={effectiveCloudGcpProject}
+                                  onChange={(event) =>
+                                    updateArtifact((current) => ({
+                                      ...current,
+                                      deploy: {
+                                        ...(current.deploy || {}),
+                                        target: "cloud",
+                                        gcpProject: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  placeholder="my-gcp-project"
+                                  className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                                />
+                              </label>
+                            ) : null}
+
+                            <label className="text-xs text-zinc-400">
+                              Execution Kind
+                              <select
+                                value={currentArtifact.deploy?.execution?.kind || ""}
+                                onChange={(event) =>
+                                  updateArtifact((current) => ({
+                                    ...current,
+                                    deploy: {
+                                      ...(current.deploy || {}),
+                                      target: "cloud",
+                                      execution: {
+                                        kind: event.target.value as "service" | "job",
+                                      },
+                                    },
+                                  }))
+                                }
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600"
+                              >
+                                <option value="">auto from trigger</option>
+                                <option value="service">service</option>
+                                <option value="job">job</option>
+                              </select>
+                            </label>
+
+                            <label className="text-xs text-zinc-400">
+                              Auth Mode
+                              <input
+                                value="secret_manager"
+                                readOnly
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-xs text-zinc-300 outline-none"
+                              />
+                            </label>
+
+                            <div className="md:col-span-2 rounded-md border border-blue-900/40 bg-blue-950/20 px-3 py-3 text-xs text-blue-100">
+                              Previews and local runs keep using the local GTMShip
+                              auth service. Cloud deployments switch to the matched
+                              secret manager backend at runtime.
+                            </div>
+
                             <label className="text-xs text-zinc-400">
                               Secret Backend
                               <select
@@ -4391,7 +4855,35 @@ export function WorkflowStudio() {
                               </label>
                             ) : null}
                           </>
-                        ) : null}
+                        ) : (
+                          <>
+                            <label className="text-xs text-zinc-400">
+                              Region
+                              <input
+                                value={effectiveRegion}
+                                readOnly
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-xs text-zinc-300 outline-none"
+                              />
+                            </label>
+
+                            <label className="text-xs text-zinc-400">
+                              Runtime
+                              <input
+                                value="job"
+                                readOnly
+                                className="mt-1 block w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-xs text-zinc-300 outline-none"
+                              />
+                            </label>
+
+                            <div className="md:col-span-2 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-3 text-xs text-zinc-300">
+                              Local deployments are supported only for manual and
+                              schedule workflows. They always use the local GTMShip
+                              auth service and local encrypted secrets. Your cloud
+                              provider settings stay saved when you switch back to
+                              Cloud.
+                            </div>
+                          </>
+                        )}
                       </div>
                     </CollapsibleSection>
 
@@ -4581,6 +5073,125 @@ export function WorkflowStudio() {
                                     className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600 disabled:opacity-50"
                                   />
                                 </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CollapsibleSection>
+
+                    <CollapsibleSection
+                      title="AI Models"
+                      description="Select the live model for each workflow-scoped AI provider."
+                    >
+                      {workflowAiProviderSlugs.length === 0 ? (
+                        <p className="text-xs text-zinc-600">
+                          No workflow AI providers detected yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {workflowAiConnectionsError ? (
+                            <p className="text-xs text-rose-300">
+                              {workflowAiConnectionsError}
+                            </p>
+                          ) : null}
+
+                          {workflowAiProviderSlugs.map((providerSlug) => {
+                            const resolution =
+                              workflowAiBindingResolutionByProvider.get(
+                                providerSlug
+                              );
+                            const selectedModel =
+                              workflowAiConfigByProvider.get(providerSlug)?.model ||
+                              "";
+                            const options = withSelectedModelOption(
+                              workflowAiModelOptions[providerSlug] || [],
+                              providerSlug,
+                              selectedModel
+                            );
+                            const loadingModels =
+                              workflowAiModelLoading[providerSlug] === true;
+                            const disabledReason =
+                              workflowAiConnectionsLoading
+                                ? "Loading connections before model lookup."
+                                : buildWorkflowAiModelDisabledReason(
+                                    providerSlug,
+                                    resolution
+                                  );
+                            const modelLookupError =
+                              formatWorkflowAiModelError(
+                                providerSlug,
+                                workflowAiModelErrors[providerSlug]
+                              );
+                            const isDisabled =
+                              workflowAiConnectionsLoading ||
+                              loadingModels ||
+                              !resolution ||
+                              resolution.status !== "resolved";
+
+                            return (
+                              <div
+                                key={providerSlug}
+                                className="rounded-lg border border-zinc-800 px-3 py-3"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-xs font-medium text-white">
+                                      {WORKFLOW_AI_PROVIDER_LABELS[providerSlug]}
+                                    </p>
+                                    <p
+                                      className={cn(
+                                        "mt-1 text-[11px]",
+                                        resolution?.status === "resolved"
+                                          ? "text-zinc-500"
+                                          : "text-amber-300"
+                                      )}
+                                    >
+                                      {resolution
+                                        ? describeWorkflowAiResolution(resolution)
+                                        : disabledReason}
+                                    </p>
+                                  </div>
+                                  {loadingModels ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] text-zinc-500">
+                                      <Loader2 size={12} className="animate-spin" />
+                                      Loading
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                <select
+                                  value={selectedModel}
+                                  onChange={(event) =>
+                                    updateWorkflowAiModel(
+                                      providerSlug,
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={isDisabled}
+                                  className="mt-3 w-full rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs text-white outline-none focus:border-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <option value="">
+                                    {buildWorkflowAiModelPlaceholder(resolution)}
+                                  </option>
+                                  {options.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                      {option.displayName}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {disabledReason && isDisabled ? (
+                                  <p className="mt-2 text-[11px] text-zinc-500">
+                                    {disabledReason}
+                                  </p>
+                                ) : null}
+
+                                {modelLookupError ? (
+                                  <p className="mt-2 text-[11px] text-rose-300">
+                                    {modelLookupError}
+                                  </p>
+                                ) : null}
                               </div>
                             );
                           })}

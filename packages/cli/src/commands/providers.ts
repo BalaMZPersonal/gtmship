@@ -6,10 +6,15 @@ import {
   printTable,
   printDetail,
   printSuccess,
+  printWarning,
   handleError,
   confirmAction,
   type OutputOptions,
 } from "../lib/output.js";
+import {
+  fetchConnectionAuthStrategyStatus,
+  isSecretManagerMode,
+} from "../lib/connection-auth.js";
 
 async function listProviders(opts: OutputOptions) {
   try {
@@ -106,6 +111,16 @@ function buildProviderBody(flags: CreateProviderFlags): Record<string, unknown> 
   if (flags.category) body.category = flags.category;
   if (flags.description) body.description = flags.description;
   return body;
+}
+
+function shouldNotifyAboutProviderSecretSync(
+  flags: CreateProviderFlags
+): boolean {
+  return Boolean(
+    flags.authType !== undefined ||
+      flags.baseUrl !== undefined ||
+      flags.headerName !== undefined
+  );
 }
 
 async function createProvider(flags: CreateProviderFlags) {
@@ -216,6 +231,14 @@ async function updateProvider(slug: string, flags: CreateProviderFlags) {
     formatOutput(data, flags, () => {
       printSuccess(`Provider "${slug}" updated.`);
     });
+    if (!flags.json && shouldNotifyAboutProviderSecretSync(flags)) {
+      const strategy = await fetchConnectionAuthStrategyStatus();
+      if (isSecretManagerMode(strategy)) {
+        printWarning(
+          "Provider changes that affect runtime auth will resync active connection secrets in the background."
+        );
+      }
+    }
   } catch (err) {
     handleError(err, flags);
   }

@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { renderCliCommand, resolveCliInvocation } from "@/lib/runtime/cli";
 import { generateWorkflowArtifact } from "./ai";
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
 import { previewWorkflowArtifact } from "./preview";
@@ -150,43 +150,18 @@ async function runExecFile(
   };
 }
 
-function findMonorepoRoot(start: string): string {
-  let dir = start;
-  for (let index = 0; index < 10; index += 1) {
-    if (existsSync(join(dir, "pnpm-workspace.yaml"))) {
-      return dir;
-    }
-
-    const parent = dirname(dir);
-    if (parent === dir) {
-      break;
-    }
-    dir = parent;
-  }
-
-  return start;
-}
-
-function resolveCliEntry(): string {
-  const monorepoRoot = findMonorepoRoot(process.cwd());
-  const cliEntry = resolvePath(monorepoRoot, "packages/cli/dist/index.js");
-  if (!existsSync(cliEntry)) {
-    throw new Error(
-      "Cannot find the GTMShip CLI build entrypoint. Build the CLI package first."
-    );
-  }
-
-  return cliEntry;
-}
-
 function buildCliCommand(args: string[]): string {
-  return ["node", ...args].join(" ");
+  return renderCliCommand(args);
 }
 
 function inferCliFailureStage(
   message: string,
   provider: WorkflowDeployProvider
 ): "bundle" | "package" {
+  if (provider === "local" && /(local bundle|bundle|runner|workflow\.js)/i.test(message)) {
+    return "package";
+  }
+
   if (provider === "gcp" && /(docker|cloud run|image|artifact registry)/i.test(message)) {
     return "package";
   }
@@ -244,8 +219,8 @@ async function runSharedCliBuild(input: {
   command: string;
   output?: string;
 }> {
-  const cliEntry = resolveCliEntry();
-  const args = [cliEntry, "build", "--provider", input.provider, "--workflow", input.workflowId];
+  const cliInvocation = resolveCliInvocation();
+  const args = ["build", "--provider", input.provider, "--workflow", input.workflowId];
 
   if (input.region) {
     args.push("--region", input.region);
@@ -258,8 +233,8 @@ async function runSharedCliBuild(input: {
   const command = buildCliCommand(args);
   try {
     const { stdout, stderr } = await runExecFile(
-      process.execPath,
-      args,
+      cliInvocation.command,
+      [...cliInvocation.baseArgs, ...args],
       input.projectRoot
     );
     const artifact = await readBuiltArtifact(input.projectRoot, input.workflowId);
@@ -478,12 +453,19 @@ export async function buildWorkflowArtifact(input: {
     steps.push(
       createStep({
         stage: "package",
-        label: provider === "aws" ? "Package" : "Container Build",
+        label:
+          provider === "aws"
+            ? "Package"
+            : provider === "gcp"
+              ? "Container Build"
+              : "Local Bundle",
         status: "success",
         summary:
           provider === "aws"
             ? "Packaged workflow as an AWS Lambda zip artifact."
-            : "Built a local GCP container image.",
+            : provider === "gcp"
+              ? "Built a local GCP container image."
+              : "Prepared a local workflow bundle for host deployment.",
         durationMs: Date.now() - buildStartedAt,
         command: cliBuild.command,
         output: packageOutput,
@@ -524,14 +506,23 @@ export async function buildWorkflowArtifact(input: {
     steps.push(
       createStep({
         stage: failedStage,
-        label: failedStage === "bundle" ? "Bundle" : provider === "aws" ? "Package" : "Container Build",
+        label:
+          failedStage === "bundle"
+            ? "Bundle"
+            : provider === "aws"
+              ? "Package"
+              : provider === "gcp"
+                ? "Container Build"
+                : "Local Bundle",
         status: "error",
         summary:
           failedStage === "bundle"
             ? "Bundling failed."
             : provider === "aws"
               ? "Packaging failed."
-              : "Container image build failed.",
+              : provider === "gcp"
+                ? "Container image build failed."
+                : "Local bundle preparation failed.",
         durationMs: Date.now() - buildStartedAt,
         command,
         output: message,

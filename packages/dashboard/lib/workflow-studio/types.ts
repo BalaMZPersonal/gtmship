@@ -217,8 +217,9 @@ export type WorkflowTriggerType =
   | "schedule"
   | "event";
 
+export type WorkflowDeployTargetMode = "cloud" | "local";
 export type WorkflowExecutionKind = "service" | "job";
-export type WorkflowDeployProvider = "aws" | "gcp";
+export type WorkflowDeployProvider = "aws" | "gcp" | "local";
 export type WorkflowDeployAuthMode = "proxy" | "secret_manager";
 export type WorkflowDeployAuthModeInput =
   | WorkflowDeployAuthMode
@@ -275,6 +276,7 @@ export interface WorkflowDeployAuthConfig {
 }
 
 export interface WorkflowDeploySpec {
+  target?: WorkflowDeployTargetMode;
   provider?: WorkflowDeployProvider;
   region?: string;
   gcpProject?: string;

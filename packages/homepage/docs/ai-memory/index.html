@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Memory | GTMship Docs</title>
+  <meta name="description" content="Learn how GTMship memory helps agents reuse verified provider setup, workflow context, and business rules across sessions.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs.css">
+  <link rel="stylesheet" href="../../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Feature Guide</div>
+      <h1>AI Memory</h1>
+      <p>AI Memory keeps GTMship from behaving like every session is day one. It helps the agents reuse verified knowledge about your providers, workflow history, and operating rules so future work starts with context instead of re-discovery.</p>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Persistent context</span>
+        <span class="docs-pill">Verified knowledge</span>
+        <span class="docs-pill">Workflow continuity</span>
+        <span class="docs-pill">Less repetition</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Docs</div>
+          <a href="../index.html">Docs Home</a>
+          <a href="../index.html#feature-guides">Feature Guides</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a href="../workflow-builder-agent/index.html">Workflow Builder Agent</a>
+          <a href="../custom-connections-agent/index.html">Custom Connections Agent</a>
+          <a href="../write-checkpoints/index.html">Write Checkpoints</a>
+          <a href="../deployment/index.html">Deployment</a>
+          <a class="active" href="index.html">AI Memory</a>
+          <a href="../dashboard-cli/index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>What memory is for</h2>
+          <p>Workflows are rarely one-shot projects. Teams refine them over time, connect new systems, adjust business rules, and revisit failed or partial drafts. Memory lets GTMship retain that verified context so the next session can start from what is already known.</p>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What can carry forward</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Provider setup</h3>
+              <p>Connected systems, auth expectations, and reusable provider knowledge can be recalled instead of rediscovered.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Workflow history</h3>
+              <p>Saved workflow source and sidecar metadata keep drafts and prior decisions attached to the same workflow identity.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Business rules</h3>
+              <p>Repeated constraints like lead routing thresholds or approval rules can be reused across future revisions.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Session continuity</h3>
+              <p>Future conversations can start from a verified summary instead of relying on the operator to restate every detail.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How later sessions get better</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Faster grounding</h3>
+              <p>Agents can begin from known provider and workflow context instead of spending the first part of each session rediscovering your stack.</p>
+            </div>
+            <div class="docs-card">
+              <h3>More consistent revisions</h3>
+              <p>Saved context helps later drafts preserve the same business rules, provider assumptions, and workflow intent across multiple edits.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Less auth re-explaining</h3>
+              <p>When connection patterns and provider setup are already known, the system can focus on the new change instead of restating integration basics.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Better troubleshooting context</h3>
+              <p>Preview outcomes, deploy history, and prior workflow decisions give later debugging sessions a more reliable starting point.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How it works in practice</h2>
+          <ol style="margin-top: 18px;">
+            <li>You connect providers and build or revise workflows.</li>
+            <li>GTMship stores workflow source, metadata, and useful session context.</li>
+            <li>The next time you open the project, the agents can recall that prior state before generating or troubleshooting.</li>
+            <li>The result is fewer repeated explanations and more consistent draft revisions.</li>
+          </ol>
+          <div class="docs-note" style="margin-top: 18px;">
+            Memory improves continuity, but it does not replace live checks. GTMship still validates connections, docs, and runtime safety before acting.
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What still gets checked live</h2>
+          <ul class="docs-list-plain" style="margin-top: 18px;">
+            <li><strong>Connection health:</strong> active credentials, token refresh, and auth reachability still need real runtime verification.</li>
+            <li><strong>Grounded API details:</strong> GTMship can remember what mattered last time, but it still benefits from current docs or API references when generating new code.</li>
+            <li><strong>Validation and safety rules:</strong> checkpoint coverage, runtime constraints, and code shape are checked against the current draft, not blindly inherited.</li>
+            <li><strong>Deployment state:</strong> bindings, cloud resources, and runtime status are refreshed from the live project before operators act on them.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Where it helps most</h2>
+          <ul style="margin-top: 18px;">
+            <li>Long-lived workflows that evolve over multiple sessions.</li>
+            <li>Teams with repeated provider combinations and approval rules.</li>
+            <li>Projects where a human operator wants less prompt repetition and more consistent revisions.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Related docs</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="../workflow-builder-agent/index.html">See how memory supports authoring</a>
+            <a class="docs-ghost-link" href="../dashboard-cli/index.html">See where memory shows up in daily work</a>
+            <a class="docs-ghost-link" href="../deployment/index.html">See how workflow state moves into deploys</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+
+  <script src="../../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../../',
+      page: 'docs-sub',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Docs Home', href: '../index.html' },
+        { label: 'Previous: Deployment', href: '../deployment/index.html' },
+        { label: 'Next: Dashboard + CLI', href: '../dashboard-cli/index.html' }
+      ],
+      primaryAction: { label: 'Docs Home', href: '../index.html' }
+    });
+  </script>
+</body>
+</html>

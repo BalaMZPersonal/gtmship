@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Builder Agent | GTMship Docs</title>
+  <meta name="description" content="Learn how GTMship's Workflow Builder Agent grounds API details, generates workflow drafts, and keeps validation and preview state in sync.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs.css">
+  <link rel="stylesheet" href="../../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Feature Guide</div>
+      <h1>Workflow Builder Agent</h1>
+      <p>The Workflow Builder Agent is GTMship's workflow-authoring surface. It turns a prompt into a grounded workflow draft by checking your connected systems, reading docs, and generating code plus a live flow view.</p>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Workflow Studio</span>
+        <span class="docs-pill">API grounding</span>
+        <span class="docs-pill">TypeScript draft</span>
+        <span class="docs-pill">Flow diagram</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Docs</div>
+          <a href="../index.html">Docs Home</a>
+          <a href="../index.html#quickstart">Quickstart</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a class="active" href="index.html">Workflow Builder Agent</a>
+          <a href="../custom-connections-agent/index.html">Custom Connections Agent</a>
+          <a href="../write-checkpoints/index.html">Write Checkpoints</a>
+          <a href="../deployment/index.html">Deployment</a>
+          <a href="../ai-memory/index.html">AI Memory</a>
+          <a href="../dashboard-cli/index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>What it does</h2>
+          <p>This is the main design-time workspace for creating workflows. Instead of asking for code in a vacuum, GTMship treats generation like an engineering loop: inspect active connections, ground the relevant APIs, generate a draft, then keep iterating through validation, preview, build, and deploy.</p>
+          <div class="docs-note" style="margin-top: 18px;">
+            The goal is not “generate something fast.” The goal is “generate something grounded enough to validate, preview, and ship.”
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What improves the first draft</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Clear outcome and trigger</h3>
+              <p>The best prompts explain what starts the workflow, what result should happen, and what success looks like for the operator or downstream team.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Known systems and objects</h3>
+              <p>Naming the providers, records, and actions involved helps the agent ground the right APIs instead of making broad guesses.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Useful sample inputs</h3>
+              <p>Example payloads, field names, or object IDs make branching logic and data mapping much more concrete during generation.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Safety expectations</h3>
+              <p>Telling the agent which steps should stay read-only in preview or require approval helps it shape checkpointed writes from the start.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How it works</h2>
+          <ol style="margin-top: 18px;">
+            <li>You describe the workflow outcome in plain language.</li>
+            <li>The agent checks what connections are already available and what external systems the draft will need.</li>
+            <li>It reads integration references, docs, or OpenAPI details so it can ground endpoint usage before drafting code.</li>
+            <li>It generates or revises a workflow artifact, keeping code, flow representation, and supporting notes together.</li>
+            <li>You continue the loop with validation, preview, build, deploy, or further revision instead of restarting from scratch.</li>
+          </ol>
+          <pre class="docs-code" style="margin-top: 18px;"><code>Prompt
+  -> check active connections
+  -> ground API details
+  -> generate workflow draft
+  -> validate + preview
+  -> revise or deploy</code></pre>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What the draft includes</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>TypeScript workflow code</h3>
+              <p>The generated draft is real workflow source shaped around GTMship's SDK and runtime helpers.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Flow representation</h3>
+              <p>A diagram view helps you inspect triggers, branches, and downstream writes without reading every line of code first.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Validation context</h3>
+              <p>The draft stays tied to validation results so compile issues or missing checkpoints can be repaired in the same workspace.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Preview and deploy context</h3>
+              <p>The same artifact moves forward into preview, build, and deployment planning instead of being copied between tools.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How revision stays grounded</h2>
+          <ul class="docs-list-plain" style="margin-top: 18px;">
+            <li><strong>Missing integrations stay explicit:</strong> if a needed provider is not connected, the next step is to add or configure it instead of pretending the dependency is already solved.</li>
+            <li><strong>Validation feedback stays attached:</strong> compile issues, schema problems, and checkpoint gaps can be fixed against the same workflow artifact.</li>
+            <li><strong>Preview feedback is concrete:</strong> reads, branches, and paused writes give the agent something specific to revise instead of relying on vague prompt tweaks.</li>
+            <li><strong>Deployment planning reuses the same draft:</strong> the workflow that was grounded and previewed is the one that moves into packaging and binding resolution.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What you still control</h2>
+          <ul style="margin-top: 18px;">
+            <li>The workflow prompt and any revision instructions.</li>
+            <li>Which providers are connected and available to the draft.</li>
+            <li>Whether preview writes are approved or blocked.</li>
+            <li>Whether the final artifact is shipped to cloud infrastructure.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Related docs</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="../write-checkpoints/index.html">Read about write checkpoints</a>
+            <a class="docs-ghost-link" href="../custom-connections-agent/index.html">See how connections are grounded</a>
+            <a class="docs-ghost-link" href="../deployment/index.html">See how drafts get deployed</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+
+  <script src="../../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../../',
+      page: 'docs-sub',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Docs Home', href: '../index.html' },
+        { label: 'Feature Guides', href: '../index.html#feature-guides' },
+        { label: 'Next: Custom Connections Agent', href: '../custom-connections-agent/index.html' }
+      ],
+      primaryAction: { label: 'Docs Home', href: '../index.html' }
+    });
+  </script>
+</body>
+</html>

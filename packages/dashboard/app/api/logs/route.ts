@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { resolveCliInvocation } from "@/lib/runtime/cli";
 
 interface StructuredLogEntry {
   timestamp: string;
@@ -51,13 +52,14 @@ export async function GET(req: Request) {
 
   // Fetch logs via CLI subprocess to avoid bundling Pulumi/native deps
   const { spawn } = await import("node:child_process");
+  const cliInvocation = resolveCliInvocation();
 
-  const args = ["gtmship", "logs", "--provider", provider, "--since", since, "--limit", limit];
+  const args = ["logs", "--provider", provider, "--since", since, "--limit", limit];
   if (workflowId) args.push("--workflow", workflowId);
 
   return new Promise<NextResponse>((resolve) => {
     const output: string[] = [];
-    const child = spawn("npx", args, {
+    const child = spawn(cliInvocation.command, [...cliInvocation.baseArgs, ...args], {
       cwd: process.env.PROJECT_ROOT || process.cwd(),
       env: { ...process.env },
       stdio: ["ignore", "pipe", "pipe"],

@@ -146,6 +146,10 @@ function SavedCustomProvidersSection({
   deletingSlug: string | null;
   onCustomIntegration: () => void;
 }) {
+  if (providers.length === 0) {
+    return null;
+  }
+
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
       <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
@@ -173,133 +177,120 @@ function SavedCustomProvidersSection({
         </button>
       </div>
 
-      {providers.length === 0 ? (
-        <div className="mt-5 rounded-[24px] border border-dashed border-zinc-800 bg-zinc-950/70 px-6 py-10 text-center">
-          <h4 className="text-lg font-semibold text-white">
-            No custom setups waiting on auth
-          </h4>
-          <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-zinc-500">
-            Connected custom integrations now live under My connections. Use
-            the agent to start another provider whenever you need a fresh
-            setup.
-          </p>
-        </div>
-      ) : (
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {providers.map((provider) => {
-            const hasExistingConnection = existingConnectionSlugs.has(provider.slug);
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {providers.map((provider) => {
+          const hasExistingConnection = existingConnectionSlugs.has(provider.slug);
 
-            return (
-              <div
-                key={provider.slug}
-                className="flex h-full flex-col rounded-[24px] border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    {provider.logoUrl ? (
-                      <img
-                        src={provider.logoUrl}
-                        alt={provider.name}
-                        className="h-11 w-11 rounded-xl border border-zinc-800 bg-zinc-900 p-1"
-                      />
-                    ) : (
-                      <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-xs font-medium uppercase text-zinc-400">
-                        {provider.slug.slice(0, 2)}
-                      </div>
-                    )}
+          return (
+            <div
+              key={provider.slug}
+              className="flex h-full flex-col rounded-[24px] border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  {provider.logoUrl ? (
+                    <img
+                      src={provider.logoUrl}
+                      alt={provider.name}
+                      className="h-11 w-11 rounded-xl border border-zinc-800 bg-zinc-900 p-1"
+                    />
+                  ) : (
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-xs font-medium uppercase text-zinc-400">
+                      {provider.slug.slice(0, 2)}
+                    </div>
+                  )}
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h4 className="text-lg font-semibold text-white">
-                          {provider.name}
-                        </h4>
-                        <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
-                          Custom
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-lg font-semibold text-white">
+                        {provider.name}
+                      </h4>
+                      <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
+                        Custom
+                      </span>
+                      {hasExistingConnection ? (
+                        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
+                          Reconnect needed
                         </span>
-                        {hasExistingConnection ? (
-                          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
-                            Reconnect needed
-                          </span>
-                        ) : null}
-                      </div>
+                      ) : null}
+                    </div>
 
-                      <p className="mt-3 min-h-[5.25rem] text-sm leading-7 text-zinc-500 line-clamp-4">
-                        {provider.description || "Saved custom provider configuration."}
-                      </p>
+                    <p className="mt-3 min-h-[5.25rem] text-sm leading-7 text-zinc-500 line-clamp-4">
+                      {provider.description || "Saved custom provider configuration."}
+                    </p>
 
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-300">
-                          {provider.authType}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-300">
+                        {provider.authType}
+                      </span>
+                      {provider.category ? (
+                        <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+                          {provider.category}
                         </span>
-                        {provider.category ? (
-                          <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-                            {provider.category}
-                          </span>
-                        ) : null}
-                        {provider.hasCredentials ? (
-                          <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-300">
-                            Credentials saved
-                          </span>
-                        ) : null}
-                      </div>
+                      ) : null}
+                      {provider.hasCredentials ? (
+                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-300">
+                          Credentials saved
+                        </span>
+                      ) : null}
                     </div>
                   </div>
-
-                  {provider.docsUrl ? (
-                    <a
-                      href={provider.docsUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="shrink-0 rounded-xl border border-zinc-800 p-2 text-zinc-500 transition-colors hover:border-zinc-700 hover:text-white"
-                      aria-label={`Open ${provider.name} docs`}
-                    >
-                      <ExternalLink size={14} />
-                    </a>
-                  ) : <div className="w-9 shrink-0" />}
                 </div>
 
-                <div className="mt-6 border-t border-zinc-800/80 pt-4">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <button
-                      type="button"
-                      onClick={() => onConnect(provider)}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 transition-colors hover:border-zinc-600 hover:text-white"
-                    >
-                      <Link2 size={14} />
-                      {hasExistingConnection ? "Reconnect" : "Connect"}
-                    </button>
+                {provider.docsUrl ? (
+                  <a
+                    href={provider.docsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="shrink-0 rounded-xl border border-zinc-800 p-2 text-zinc-500 transition-colors hover:border-zinc-700 hover:text-white"
+                    aria-label={`Open ${provider.name} docs`}
+                  >
+                    <ExternalLink size={14} />
+                  </a>
+                ) : <div className="w-9 shrink-0" />}
+              </div>
 
-                    <button
-                      type="button"
-                      onClick={() => onEdit(provider.slug)}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
-                    >
-                      <Settings2 size={14} />
-                      Edit provider
-                    </button>
-                  </div>
+              <div className="mt-6 border-t border-zinc-800/80 pt-4">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => onConnect(provider)}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 transition-colors hover:border-zinc-600 hover:text-white"
+                  >
+                    <Link2 size={14} />
+                    {hasExistingConnection ? "Reconnect" : "Connect"}
+                  </button>
 
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => onDelete(provider)}
-                      disabled={deletingSlug === provider.slug}
-                      className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {deletingSlug === provider.slug ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <Trash2 size={14} />
-                      )}
-                      Delete integration
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(provider.slug)}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
+                  >
+                    <Settings2 size={14} />
+                    Edit provider
+                  </button>
+                </div>
+
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(provider)}
+                    disabled={deletingSlug === provider.slug}
+                    className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {deletingSlug === provider.slug ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
+                    Delete integration
+                  </button>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

@@ -30,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto h-screen">{children}</main>
+      <main className="h-screen min-w-0 flex-1 overflow-y-auto">{children}</main>
       {agentOpen && (
         <AgentTerminal
           key={agentSessionKey}

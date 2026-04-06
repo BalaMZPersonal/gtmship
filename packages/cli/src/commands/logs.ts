@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { parse as parseYaml } from "yaml";
+import { listLocalLogEntries } from "../lib/local-deployments.js";
 
 interface LogsOptions {
   workflow?: string;
@@ -41,7 +42,8 @@ export async function logsCommand(options: LogsOptions) {
   const configDefaults = readConfigProvider();
   const provider = (options.provider || configDefaults.provider) as
     | "aws"
-    | "gcp";
+    | "gcp"
+    | "local";
   const limit = parseInt(options.limit, 10) || 100;
 
   console.log(
@@ -51,10 +53,38 @@ export async function logsCommand(options: LogsOptions) {
   );
 
   try {
-    const { fetchLogs, streamLogs, parseDuration } = await import(
+    const { parseDuration } = await import("@gtmship/deploy-engine/logs");
+
+    if (provider === "local") {
+      const startTime = parseDuration(options.since);
+      const entries = listLocalLogEntries({
+        workflowId: options.workflow,
+        startTime,
+        limit,
+      });
+
+      if (entries.length === 0) {
+        console.log(chalk.yellow("  No local logs found for the given filters."));
+        return;
+      }
+
+      for (const entry of entries) {
+        const ts = formatTimestamp(entry.timestamp);
+        const colorize = LEVEL_COLORS[entry.level] || chalk.gray;
+        const levelTag = colorize(`[${entry.level.toUpperCase()}]`.padEnd(7));
+        const wfTag = entry.workflowId
+          ? chalk.cyan(`[${entry.workflowId}] `)
+          : "";
+        console.log(`  ${chalk.gray(ts)} ${levelTag} ${wfTag}${entry.message}`);
+      }
+
+      console.log(chalk.gray(`\n  ${entries.length} local log entries shown.`));
+      return;
+    }
+
+    const { fetchLogs, streamLogs } = await import(
       "@gtmship/deploy-engine/logs"
     );
-
     const startTime = parseDuration(options.since);
 
     const configPath = join(process.cwd(), "gtmship.config.yaml");

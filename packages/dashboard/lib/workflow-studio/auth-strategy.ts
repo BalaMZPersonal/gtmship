@@ -103,7 +103,7 @@ function matchConfiguredBackend(
 
 export function resolveAuthStrategyBackend(input: {
   strategy: ConnectionAuthStrategyStatus;
-  provider: "aws" | "gcp";
+  provider: "aws" | "gcp" | "local";
   region?: string;
   gcpProject?: string;
   requested?: {
@@ -113,6 +113,10 @@ export function resolveAuthStrategyBackend(input: {
     secretPrefix?: string;
   };
 }): ConnectionAuthStrategyBackend | null {
+  if (input.provider === "local") {
+    return null;
+  }
+
   const requestedKind = input.requested?.kind;
   const configured =
     requestedKind
@@ -199,17 +203,15 @@ function buildSecretManagerManifest(
   };
 }
 
+function buildCloudSecretManagerWarning(plan: WorkflowDeploymentPlan): string {
+  return `Cloud deployments to ${plan.provider.toUpperCase()} always use secret_manager auth. Enable Secret manager in Settings before deploying this workflow.`;
+}
+
 export function applyGlobalAuthStrategyToPlan(
   plan: WorkflowDeploymentPlan,
   strategy?: ConnectionAuthStrategyStatus | null
 ): WorkflowDeploymentPlan {
-  if (!strategy) {
-    return plan;
-  }
-
-  const warnings = cleanWarnings(plan.warnings);
-
-  if (strategy.mode === "proxy") {
+  if (plan.provider === "local") {
     return {
       ...plan,
       authMode: "proxy",
@@ -217,7 +219,53 @@ export function applyGlobalAuthStrategyToPlan(
         mode: "proxy",
         legacyModeAliasUsed: plan.auth?.legacyModeAliasUsed,
       },
-      warnings: uniqueWarnings(warnings),
+      warnings: uniqueWarnings(
+        cleanWarnings([
+          ...plan.warnings,
+          ...(plan.authMode !== "proxy"
+            ? [
+                "Local deployments always use proxy auth through the local GTMShip auth service.",
+              ]
+            : []),
+        ])
+      ),
+    };
+  }
+
+  const warnings = cleanWarnings(plan.warnings);
+  if (!strategy) {
+    return {
+      ...plan,
+      authMode: "secret_manager",
+      auth: {
+        mode: "secret_manager",
+        backend: plan.auth?.backend,
+        runtimeAccess: plan.auth?.runtimeAccess || "direct",
+        manifest: plan.auth?.manifest,
+        legacyModeAliasUsed: plan.auth?.legacyModeAliasUsed,
+      },
+      warnings: uniqueWarnings([
+        ...warnings,
+        buildCloudSecretManagerWarning(plan),
+      ]),
+    };
+  }
+
+  if (strategy.mode === "proxy") {
+    return {
+      ...plan,
+      authMode: "secret_manager",
+      auth: {
+        mode: "secret_manager",
+        backend: plan.auth?.backend,
+        runtimeAccess: plan.auth?.runtimeAccess || "direct",
+        manifest: plan.auth?.manifest,
+        legacyModeAliasUsed: plan.auth?.legacyModeAliasUsed,
+      },
+      warnings: uniqueWarnings([
+        ...warnings,
+        buildCloudSecretManagerWarning(plan),
+      ]),
     };
   }
 

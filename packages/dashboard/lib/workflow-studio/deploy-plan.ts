@@ -6,6 +6,7 @@ import type {
   WorkflowDeployAuthModeInput,
   WorkflowDeployProvider,
   WorkflowDeploySpec,
+  WorkflowDeployTargetMode,
   WorkflowDeploymentPlan,
   WorkflowPlannedBinding,
   WorkflowExecutionKind,
@@ -40,8 +41,78 @@ export interface DeploymentDefaults {
   authStrategy?: ConnectionAuthStrategyStatus | null;
 }
 
+function resolveDeployTargetMode(
+  deploy?: WorkflowDeploySpec
+): WorkflowDeployTargetMode {
+  if (deploy?.target === "cloud" || deploy?.target === "local") {
+    return deploy.target;
+  }
+
+  return deploy?.provider === "local" ? "local" : "cloud";
+}
+
+function resolveCloudDeployProvider(
+  deploy?: WorkflowDeploySpec,
+  defaults: DeploymentDefaults = {}
+): Exclude<WorkflowDeployProvider, "local"> {
+  if (deploy?.provider === "aws" || deploy?.provider === "gcp") {
+    return deploy.provider;
+  }
+
+  if (defaults.provider === "aws" || defaults.provider === "gcp") {
+    return defaults.provider;
+  }
+
+  return "aws";
+}
+
+function resolveEffectiveProvider(
+  deploy?: WorkflowDeploySpec,
+  defaults: DeploymentDefaults = {}
+): WorkflowDeployProvider {
+  return resolveDeployTargetMode(deploy) === "local"
+    ? "local"
+    : resolveCloudDeployProvider(deploy, defaults);
+}
+
+function resolveEffectiveRegion(
+  deploy: WorkflowDeploySpec | undefined,
+  defaults: DeploymentDefaults,
+  provider: WorkflowDeployProvider
+): string {
+  if (provider === "local") {
+    return "local";
+  }
+
+  if (deploy?.region && deploy.region !== "local") {
+    return deploy.region;
+  }
+
+  if (defaults.provider === provider && defaults.region) {
+    return defaults.region;
+  }
+
+  return defaultRegion(provider);
+}
+
+function resolveEffectiveGcpProject(
+  deploy: WorkflowDeploySpec | undefined,
+  defaults: DeploymentDefaults,
+  provider: WorkflowDeployProvider
+): string | undefined {
+  if (provider !== "gcp") {
+    return undefined;
+  }
+
+  return deploy?.gcpProject || defaults.gcpProject;
+}
+
 function defaultRegion(provider: WorkflowDeployProvider): string {
-  return provider === "gcp" ? "us-central1" : "us-east-1";
+  return provider === "gcp"
+    ? "us-central1"
+    : provider === "local"
+      ? "local"
+      : "us-east-1";
 }
 
 function normalizeWebhookPath(path?: string): string {
@@ -225,6 +296,12 @@ function buildResourcePlan(
   triggerType: WorkflowTriggerType,
   executionKind: WorkflowExecutionKind
 ): string[] {
+  if (provider === "local") {
+    return triggerType === "schedule"
+      ? ["Local Workflow Job", "Local Scheduler"]
+      : ["Local Workflow Job"];
+  }
+
   if (triggerType === "webhook") {
     if (provider === "gcp") {
       return executionKind === "service"
@@ -378,6 +455,16 @@ function buildWarnings(input: {
     );
   }
 
+  if (
+    input.provider === "local" &&
+    input.trigger.type !== "manual" &&
+    input.trigger.type !== "schedule"
+  ) {
+    warnings.push(
+      "Local deployments currently support only manual and schedule triggers."
+    );
+  }
+
   const integrationAccessCount = (input.requiredAccesses || []).filter(
     (access) => access.type === "integration"
   ).length;
@@ -435,12 +522,18 @@ export function buildWorkflowDeploymentPlan(
   defaults: DeploymentDefaults = {}
 ): WorkflowDeploymentPlan {
   const trigger = extractTriggerFromSource(input.code);
-  const provider = input.deploy?.provider || defaults.provider || "aws";
-  const region = input.deploy?.region || defaults.region || defaultRegion(provider);
-  const gcpProject = input.deploy?.gcpProject || defaults.gcpProject;
+  const provider = resolveEffectiveProvider(input.deploy, defaults);
+  const region = resolveEffectiveRegion(input.deploy, defaults, provider);
+  const gcpProject = resolveEffectiveGcpProject(input.deploy, defaults, provider);
   const explicitExecutionKind = input.deploy?.execution?.kind;
-  const executionKind = inferExecutionKind(trigger.type, explicitExecutionKind);
-  const normalizedAuth = normalizeAuthMode(input.deploy?.auth?.mode || "proxy");
+  const executionKind =
+    provider === "local"
+      ? "job"
+      : inferExecutionKind(trigger.type, explicitExecutionKind);
+  const normalizedAuth =
+    provider === "local"
+      ? { mode: "proxy" as const, legacyModeAliasUsed: false }
+      : normalizeAuthMode(input.deploy?.auth?.mode || "proxy");
   const authMode = normalizedAuth.mode;
   const bindings = inferBindings(input.bindings, input.requiredAccesses);
   const plannedBindings = normalizePlannedBindings(bindings);
@@ -479,6 +572,18 @@ export function buildWorkflowDeploymentPlan(
   if (authMode === "secret_manager" && !input.deploy?.auth?.backend?.kind) {
     warnings.push(
       "secret_manager auth requires deploy.auth.backend.kind (aws_secrets_manager or gcp_secret_manager)."
+    );
+  }
+
+  if (provider === "local" && explicitExecutionKind && explicitExecutionKind !== "job") {
+    warnings.push(
+      "Local deployments only support job execution. GTMShip will deploy this workflow as a local job."
+    );
+  }
+
+  if (provider === "local" && input.deploy?.auth?.mode && input.deploy.auth.mode !== "proxy") {
+    warnings.push(
+      "Local deployments always use proxy auth through the local GTMShip auth service."
     );
   }
 

@@ -189,7 +189,7 @@ function normalizeDeployTarget(value: unknown): DeployTarget | undefined {
   const deploy: DeployTarget = {};
 
   const provider = toStringValue(record.provider);
-  if (provider === "aws" || provider === "gcp") {
+  if (provider === "aws" || provider === "gcp" || provider === "local") {
     deploy.provider = provider;
   }
 

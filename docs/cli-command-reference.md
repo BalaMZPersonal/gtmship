@@ -30,7 +30,7 @@ gtmship triggers [--workflow <id>]
 ```
 
 - `gtmship init [name]`: Scaffold a new GTMShip project. Default name: `my-gtm-workflows`.
-- `gtmship dev`: Start the local GTMShip development environment.
+- `gtmship dev`: Start the local GTMShip development environment. This is the main entry point for a local-only run while you author, connect, validate, and preview workflows before deployment.
 - `gtmship validate`: Validate workflows and connection configs.
 - `gtmship build`: Build workflow code for deployment.
   Notes:
@@ -42,6 +42,17 @@ gtmship triggers [--workflow <id>]
   `--project <name>` is required for GCP deploys.
 - `gtmship logs`: View execution logs from deployed workflows.
 - `gtmship triggers`: Show trigger configuration and webhook URLs.
+
+### Typical local-only loop
+
+```bash
+gtmship init my-gtm-workflows
+gtmship dev
+gtmship connections connect hubspot
+gtmship validate
+```
+
+Use this loop when you want to build and test locally without provisioning cloud infrastructure yet. Add `gtmship deploy ...` only when the workflow needs to move into AWS or GCP for always-on execution.
 
 ## Legacy Connection Helper
 

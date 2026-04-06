@@ -1244,7 +1244,7 @@ export default function SetupPage() {
               <div>
                 <h2 className="text-lg font-semibold text-white">Secret storage</h2>
                 <p className="mt-1 text-sm leading-6 text-zinc-500">
-                  Proxy mode keeps GTMShip local and simple. Secret manager mode adds backend sync once cloud credentials are ready.
+                  Local preview and run flows stay on GTMShip's local encrypted storage. Cloud deployments use provider-matched secret managers once backend sync is configured.
                 </p>
               </div>
             </div>
@@ -1254,12 +1254,12 @@ export default function SetupPage() {
                 {
                   value: "proxy" as const,
                   title: "Proxy mode",
-                  body: "Connections stay in local encrypted storage and deploys use auth-service as the source of truth.",
+                  body: "Connections stay in local encrypted storage for previews, local runs, and local deployments.",
                 },
                 {
                   value: "secret_manager" as const,
                   title: "Secret manager",
-                  body: "Connections still write locally first, then sync to AWS or GCP secret backends for runtime access.",
+                  body: "Connections still write locally first, then sync to AWS or GCP secret backends for cloud runtime access.",
                 },
               ].map((option) => (
                 <button

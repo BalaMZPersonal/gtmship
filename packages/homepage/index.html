@@ -1,0 +1,4582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GTMship — Turn GTM Ideas into Running Automations</title>
+  <meta name="description" content="Describe what you want in plain English. GTMship's AI builds, validates, and deploys the workflow to your own cloud. Connect HubSpot, Salesforce, Slack, and 25+ tools.">
+  <meta property="og:title" content="GTMship — Your GTM team has ideas. GTMship turns them into automations.">
+  <meta property="og:description" content="Open-source platform that turns plain-English descriptions into deployed GTM workflows. Visual dashboard + CLI.">
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <link rel="stylesheet" href="shared/shared.css">
+  <style>
+    /* ========== RESET ========== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ========== TOKENS ========== */
+    :root {
+      --bg-deep: #0a0a0a;
+      --bg-surface: #111111;
+      --bg-elevated: #1a1a1a;
+      --bg-card: #141414;
+      --border-subtle: #222222;
+      --border-hover: #333333;
+
+      --zinc-950: #09090b;
+      --zinc-900: #18181b;
+      --zinc-800: #27272a;
+      --zinc-700: #3f3f46;
+      --zinc-600: #52525b;
+      --zinc-500: #71717a;
+      --zinc-400: #a1a1aa;
+      --zinc-300: #d4d4d8;
+
+      --accent-cyan: #00e5ff;
+      --accent-cyan-dim: #00e5ff22;
+      --accent-cyan-glow: 0 0 20px #00e5ff44, 0 0 60px #00e5ff11;
+      --accent-purple: #7c3aed;
+      --accent-purple-dim: #7c3aed22;
+
+      --blue-600: #2563eb;
+      --blue-500: #3b82f6;
+      --blue-700: #1d4ed8;
+
+      --emerald-300: #6ee7b7;
+      --emerald-500: #10b981;
+      --emerald-bg: rgba(16, 185, 129, 0.1);
+      --emerald-border: rgba(6, 95, 70, 0.4);
+
+      --amber-200: #fde68a;
+      --amber-300: #fcd34d;
+      --amber-bg: rgba(245, 158, 11, 0.1);
+      --amber-border: rgba(146, 64, 14, 0.4);
+
+      --rose-300: #fda4af;
+      --rose-bg: rgba(244, 63, 94, 0.1);
+      --rose-border: rgba(159, 18, 57, 0.4);
+
+      --text-primary: #e5e5e5;
+      --text-secondary: #888888;
+      --text-muted: #555555;
+
+      --font-heading: 'Oxanium', system-ui, sans-serif;
+      --font-body: 'Space Grotesk', system-ui, sans-serif;
+      --font-mono: 'Space Mono', 'Courier New', monospace;
+
+      --max-width: 1120px;
+    }
+
+    /* ========== BASE ========== */
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: hidden;
+    }
+
+    ::selection {
+      background: var(--accent-cyan);
+      color: #0a0a0a;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    img {
+      max-width: 100%;
+      display: block;
+    }
+
+    .wrap {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .section-title {
+      font-family: var(--font-heading);
+      font-weight: 800;
+      font-size: clamp(1.6rem, 3.5vw, 2.3rem);
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+    }
+
+    .section-sub {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      max-width: 520px;
+    }
+
+    .divider {
+      width: 100%;
+      height: 1px;
+      border: none;
+      background: linear-gradient(to right, transparent, var(--border-subtle), transparent);
+    }
+
+    /* ========== FLOATING PILL NAV ========== */
+    nav {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      background: rgba(20, 20, 20, 0.75);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 100px;
+      padding: 6px 8px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4), 0 0 40px rgba(0, 229, 255, 0.04);
+    }
+
+    nav .wrap {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2px;
+      list-style: none;
+      font-size: 0.82rem;
+      font-weight: 500;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      transition: all 0.2s;
+      padding: 7px 14px;
+      border-radius: 100px;
+      display: block;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .nav-divider {
+      width: 1px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 0 4px;
+      flex-shrink: 0;
+    }
+
+    .nav-gh {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 12px;
+      border-radius: 100px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: all 0.2s;
+    }
+
+    .nav-gh:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .nav-gh.is-disabled,
+    .btn-outline.is-disabled,
+    .btn-text.is-disabled,
+    .install-block.is-disabled {
+      cursor: default;
+    }
+
+    .nav-gh.is-disabled {
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .nav-gh.is-disabled:hover {
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .nav-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 16px;
+      background: var(--blue-600);
+      border: none;
+      border-radius: 100px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #fff;
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+
+    .nav-cta:hover { background: var(--blue-700); }
+
+    /* ========== HERO ========== */
+    .hero {
+      position: relative;
+      padding: 120px 0 80px;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, #333 0.8px, transparent 0.8px);
+      background-size: 28px 28px;
+      opacity: 0.12;
+      pointer-events: none;
+    }
+
+    /* Hero gradient orbs — uses inset positioning to stay within overflow:hidden */
+    .hero::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: radial-gradient(ellipse at 30% 15%, rgba(0, 229, 255, 0.10) 0%, transparent 50%),
+                  radial-gradient(ellipse at 70% 10%, rgba(124, 58, 237, 0.08) 0%, transparent 50%),
+                  radial-gradient(ellipse at 50% 80%, rgba(0, 229, 255, 0.04) 0%, transparent 40%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Animated ocean wave at bottom of hero */
+    .wave-divider {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      line-height: 0;
+      margin-top: -2px;
+    }
+
+    .wave-divider svg {
+      display: block;
+      width: 200%;
+      height: 48px;
+      animation: waveScroll 12s linear infinite;
+    }
+
+    @keyframes waveScroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    .wave-divider-sm svg {
+      height: 28px;
+      animation-duration: 18s;
+    }
+
+    /* Hero centered layout */
+    .hero .wrap {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+    }
+
+    .hero-text {
+      max-width: 680px;
+      text-align: center;
+    }
+
+    .hero-logo {
+      position: relative;
+      display: block;
+      margin: 0 auto 24px;
+      text-align: center;
+    }
+
+    .hero-logo img {
+      max-width: clamp(280px, 50vw, 520px);
+      height: auto;
+      display: inline-block;
+      filter: drop-shadow(0 0 40px rgba(0, 229, 255, 0.25)) drop-shadow(0 0 80px rgba(124, 58, 237, 0.15));
+    }
+
+    .hero-logo::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 120%;
+      height: 150%;
+      background: radial-gradient(ellipse at center, rgba(0, 229, 255, 0.1) 0%, rgba(124, 58, 237, 0.05) 40%, transparent 70%);
+      filter: blur(40px);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .hero-label {
+      color: var(--accent-cyan);
+      margin-bottom: 20px;
+    }
+
+    .hero h1 {
+      font-family: var(--font-heading);
+      font-weight: 800;
+      font-size: clamp(2.2rem, 5.5vw, 3.6rem);
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      margin-bottom: 24px;
+    }
+
+    .hero h1 .hl-cyan {
+      color: var(--accent-cyan);
+      text-shadow: 0 0 40px rgba(0, 229, 255, 0.4), 0 0 80px rgba(0, 229, 255, 0.15);
+    }
+    .hero h1 .hl-purple {
+      color: var(--accent-purple);
+      text-shadow: 0 0 40px rgba(124, 58, 237, 0.4), 0 0 80px rgba(124, 58, 237, 0.15);
+    }
+
+    .hero-sub {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      line-height: 1.7;
+      margin-bottom: 32px;
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .hero-install-hint {
+      margin-top: 16px;
+    }
+
+    .hero-install-hint code {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--zinc-500);
+      background: rgba(255,255,255,0.03);
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      background: var(--blue-600);
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: #fff;
+      transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+      box-shadow: 0 0 20px rgba(37, 99, 235, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn-primary:hover {
+      background: var(--blue-700);
+      transform: translateY(-2px);
+      box-shadow: 0 0 30px rgba(37, 99, 235, 0.45), 0 8px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    .btn-outline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border: 1px solid var(--border-hover);
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .btn-outline:hover { border-color: var(--zinc-500); color: var(--text-primary); }
+
+    .btn-outline.is-disabled {
+      color: var(--text-muted);
+      border-color: var(--border-subtle);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .btn-outline.is-disabled:hover {
+      border-color: var(--border-subtle);
+      color: var(--text-muted);
+    }
+
+    .btn-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 16px;
+      font-weight: 500;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      transition: color 0.2s;
+    }
+
+    .btn-text:hover { color: var(--accent-cyan); }
+
+    .btn-text.is-disabled {
+      color: var(--text-muted);
+    }
+
+    .btn-text.is-disabled:hover {
+      color: var(--text-muted);
+    }
+
+    /* ========== HERO MINI DASHBOARD ========== */
+    .hero-visual {
+      position: relative;
+      width: 100%;
+      max-width: 1000px;
+      perspective: 1200px;
+    }
+
+    .hero-visual::before {
+      content: '';
+      position: absolute;
+      inset: -40px;
+      background: radial-gradient(ellipse at center, rgba(0, 229, 255, 0.08) 0%, rgba(124, 58, 237, 0.04) 40%, transparent 70%);
+      border-radius: 24px;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    /* Soft light reflection under the dashboard */
+    .hero-visual::after {
+      content: '';
+      position: absolute;
+      bottom: -60px;
+      left: 10%;
+      right: 10%;
+      height: 80px;
+      background: radial-gradient(ellipse at center, rgba(0, 229, 255, 0.06) 0%, transparent 70%);
+      filter: blur(20px);
+      pointer-events: none;
+    }
+
+    .dash-preview {
+      background: var(--zinc-950);
+      border: 1px solid rgba(0, 229, 255, 0.12);
+      border-radius: 14px;
+      overflow: hidden;
+      display: flex;
+      box-shadow: 0 0 80px rgba(0, 229, 255, 0.08), 0 0 160px rgba(0, 229, 255, 0.03), 0 24px 80px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255,255,255,0.06) inset;
+      transform: rotateX(2deg);
+      transition: transform 0.6s ease;
+    }
+
+    .dash-preview:hover {
+      transform: rotateX(0deg);
+    }
+
+    /* Sidebar */
+    .dash-sidebar {
+      width: 160px;
+      background: var(--zinc-950);
+      border-right: 1px solid var(--zinc-800);
+      padding: 14px 0;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .dash-sidebar-brand {
+      padding: 0 14px 14px;
+    }
+
+    .dash-sidebar-title {
+      font-family: var(--font-heading);
+      font-size: 0.85rem;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+
+    .dash-sidebar-title span { color: var(--accent-cyan); }
+
+    .dash-sidebar-sub {
+      font-size: 0.58rem;
+      color: var(--zinc-600);
+      margin-top: 1px;
+    }
+
+    .dash-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 8px;
+    }
+
+    .dash-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--zinc-500);
+    }
+
+    .dash-nav-item i { font-size: 14px; }
+
+    .dash-nav-item.active {
+      background: var(--blue-600);
+      color: #fff;
+    }
+
+    /* Main content */
+    .dash-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    /* Top bar */
+    .dash-topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--zinc-800);
+      background: var(--zinc-950);
+    }
+
+    .dash-back {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: 1px solid var(--zinc-800);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--zinc-400);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .dash-wf-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dash-topbar-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .dash-action-btn {
+      padding: 4px 10px;
+      border: 1px solid var(--zinc-700);
+      border-radius: 6px;
+      font-size: 0.65rem;
+      font-weight: 500;
+      color: var(--zinc-400);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: transparent;
+    }
+
+    .dash-action-btn.primary {
+      background: var(--emerald-500);
+      border-color: var(--emerald-500);
+      color: #fff;
+    }
+
+    .dash-action-btn.deploy {
+      background: var(--blue-600);
+      border-color: var(--blue-600);
+      color: #fff;
+    }
+
+    /* Content area with tabs */
+    .dash-content {
+      display: flex;
+      flex: 1;
+      min-height: 320px;
+    }
+
+    /* Left: Chat panel */
+    .dash-chat {
+      width: 45%;
+      border-right: 1px solid var(--zinc-800);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .dash-chat-body {
+      flex: 1;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    .dash-chat-msg {
+      border-radius: 10px;
+      font-size: 0.72rem;
+      line-height: 1.6;
+      max-width: 92%;
+    }
+
+    .dash-chat-msg-user {
+      padding: 8px 12px;
+      background: rgba(37, 99, 235, 0.12);
+      border: 1px solid rgba(37, 99, 235, 0.2);
+      color: var(--zinc-300);
+      align-self: flex-end;
+      margin-left: auto;
+    }
+
+    .dash-chat-msg-ai {
+      padding: 10px 12px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      color: var(--zinc-400);
+    }
+
+    .dash-chat-msg-ai ol {
+      margin: 6px 0 0 14px;
+      padding: 0;
+    }
+
+    .dash-chat-msg-ai ol li {
+      margin-bottom: 4px;
+    }
+
+    .dash-chat-msg-ai .step-ok { color: var(--emerald-300); }
+    .dash-chat-msg-ai .step-pause { color: var(--amber-300); }
+
+    .dash-ai-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 4px;
+    }
+
+    .dash-ai-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      flex-shrink: 0;
+    }
+
+    .dash-ai-name {
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: var(--zinc-500);
+    }
+
+    .dash-chat-input {
+      margin: 8px 12px 12px;
+      padding: 10px 12px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .dash-chat-input-text {
+      font-size: 0.72rem;
+      color: var(--zinc-600);
+    }
+
+    .dash-chat-send {
+      padding: 4px 10px;
+      background: var(--blue-600);
+      border-radius: 6px;
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Right: Tabbed panel */
+    .dash-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .dash-right-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--zinc-800);
+      background: var(--zinc-950);
+    }
+
+    .dash-right-tab {
+      padding: 8px 12px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--zinc-500);
+      border-bottom: 2px solid transparent;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dash-right-tab i { font-size: 11px; }
+
+    .dash-right-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--blue-500);
+    }
+
+    .dash-right-body {
+      flex: 1;
+      padding: 14px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Flow diagram */
+    .flow-diagram {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .flow-diagram-label {
+      font-family: var(--font-mono);
+      font-size: 0.6rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--zinc-600);
+      margin-bottom: 12px;
+      align-self: flex-start;
+    }
+
+    .flow-diagram-badge {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      font-size: 0.58rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border: 1px solid var(--zinc-700);
+      border-radius: 5px;
+      color: var(--zinc-500);
+    }
+
+    .flow-node-box {
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-700);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 0.68rem;
+      color: var(--zinc-300);
+      text-align: center;
+      min-width: 140px;
+      max-width: 200px;
+    }
+
+    .flow-node-box.trigger {
+      border-color: var(--blue-500);
+      background: rgba(37, 99, 235, 0.08);
+    }
+
+    .flow-connector {
+      width: 1px;
+      height: 20px;
+      background: var(--zinc-700);
+      position: relative;
+    }
+
+    .flow-connector::after {
+      content: '';
+      position: absolute;
+      bottom: -3px;
+      left: -3px;
+      width: 7px;
+      height: 7px;
+      border-right: 1px solid var(--zinc-700);
+      border-bottom: 1px solid var(--zinc-700);
+      transform: rotate(45deg);
+    }
+
+    .flow-diamond {
+      width: 110px;
+      height: 55px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .flow-diamond::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-700);
+      transform: rotate(45deg) scale(0.7);
+      border-radius: 4px;
+    }
+
+    .flow-diamond span {
+      position: relative;
+      z-index: 1;
+      font-size: 0.6rem;
+      color: var(--zinc-400);
+      text-align: center;
+    }
+
+    .flow-branch {
+      display: flex;
+      gap: 20px;
+      position: relative;
+    }
+
+    .flow-branch::before {
+      content: '';
+      position: absolute;
+      top: -10px;
+      left: 25%;
+      right: 25%;
+      height: 1px;
+      background: var(--zinc-700);
+    }
+
+    .flow-branch-arm {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .flow-branch-label {
+      font-size: 0.55rem;
+      color: var(--zinc-600);
+      font-style: italic;
+      margin-bottom: 4px;
+    }
+
+    /* ========== INTEGRATIONS CAROUSEL ========== */
+    .integrations {
+      padding: 48px 0 0;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .integrations .label {
+      margin-bottom: 20px;
+      font-size: 0.78rem;
+    }
+
+    .integrations-sub {
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      margin-bottom: 24px;
+      max-width: 560px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .scroll-track {
+      display: flex;
+      width: max-content;
+      animation: scrollLoop 40s linear infinite;
+    }
+
+    @keyframes scrollLoop {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    .scroll-set {
+      display: flex;
+      gap: 12px;
+      padding-right: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 100px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      transition: border-color 0.2s;
+    }
+
+    .pill:hover { border-color: var(--border-hover); background: var(--bg-elevated); }
+    .pill img { width: 16px; height: 16px; }
+
+    .pill-custom {
+      border-color: rgba(0, 229, 255, 0.25);
+      background: rgba(0, 229, 255, 0.04);
+      color: var(--accent-cyan);
+      box-shadow: 0 0 16px rgba(0, 229, 255, 0.1);
+      font-weight: 600;
+    }
+
+    /* ========== SCROLL REVEAL ========== */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .reveal-delay-1 { transition-delay: 0.1s; }
+    .reveal-delay-2 { transition-delay: 0.2s; }
+    .reveal-delay-3 { transition-delay: 0.3s; }
+    .reveal-delay-4 { transition-delay: 0.4s; }
+    .reveal-delay-5 { transition-delay: 0.5s; }
+    .reveal-delay-6 { transition-delay: 0.6s; }
+
+    /* ========== STORY SECTION ========== */
+    .story {
+      padding: 100px 0 40px;
+    }
+
+    .story header {
+      text-align: center;
+      margin-bottom: 80px;
+    }
+
+    .story .section-sub {
+      margin: 0 auto;
+    }
+
+    .scene {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 60px;
+      align-items: center;
+      margin-bottom: 100px;
+    }
+
+    .scene:nth-child(even) {
+      direction: rtl;
+    }
+
+    .scene:nth-child(even) > * {
+      direction: ltr;
+    }
+
+    .scene-text {}
+
+    .scene-num {
+      font-family: var(--font-heading);
+      font-size: 4rem;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      opacity: 0.15;
+      line-height: 1;
+      margin-bottom: 12px;
+      text-shadow: 0 0 40px rgba(0, 229, 255, 0.2);
+    }
+
+    .scene-title {
+      font-family: var(--font-heading);
+      font-weight: 800;
+      font-size: 1.65rem;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+    }
+
+    .scene-body {
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      line-height: 1.7;
+      margin-bottom: 12px;
+    }
+
+    .scene-note {
+      font-size: 0.8rem;
+      color: var(--zinc-500);
+      font-style: italic;
+    }
+
+    .scene-visual {
+      position: relative;
+    }
+
+    /* ========== SCENE 1: CONNECTIONS GRID ========== */
+    .provider-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .provider-card {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.4s, box-shadow 0.4s;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.5s ease, transform 0.5s ease, border-color 0.4s, box-shadow 0.4s;
+    }
+
+    .provider-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .provider-card.connected {
+      border-color: var(--accent-cyan);
+      box-shadow: 0 0 20px rgba(0, 229, 255, 0.08);
+    }
+
+    .provider-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .provider-logo img {
+      width: 20px;
+      height: 20px;
+    }
+
+    .provider-name {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .provider-meta {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .provider-badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-oauth { background: rgba(124, 58, 237, 0.15); color: #a78bfa; }
+    .badge-apikey { background: rgba(37, 99, 235, 0.15); color: #93c5fd; }
+    .badge-crm { background: rgba(16, 185, 129, 0.1); color: var(--emerald-300); }
+    .badge-comm { background: rgba(245, 158, 11, 0.1); color: var(--amber-200); }
+    .badge-email { background: rgba(244, 63, 94, 0.1); color: var(--rose-300); }
+    .badge-pay { background: rgba(99, 91, 255, 0.1); color: #a5b4fc; }
+
+    .provider-connect-btn {
+      margin-top: auto;
+      padding: 5px 10px;
+      border: 1px solid var(--zinc-700);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--zinc-400);
+      font-size: 0.7rem;
+      font-weight: 500;
+      cursor: default;
+      transition: all 0.3s;
+    }
+
+    .provider-card.connected .provider-connect-btn {
+      border-color: var(--emerald-border);
+      background: var(--emerald-bg);
+      color: var(--emerald-300);
+    }
+
+    /* ========== SCENE 2: CHAT ========== */
+    .chat-demo {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .chat-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--zinc-800);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chat-header-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+    }
+
+    .chat-header-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--zinc-400);
+    }
+
+    .chat-body {
+      padding: 16px;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .chat-msg {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      max-width: 88%;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    .chat-msg.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .chat-msg-user {
+      background: rgba(37, 99, 235, 0.12);
+      border: 1px solid rgba(37, 99, 235, 0.2);
+      color: var(--zinc-300);
+      align-self: flex-end;
+      margin-left: auto;
+    }
+
+    .chat-msg-ai {
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      color: var(--zinc-400);
+    }
+
+    .chat-msg-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+
+    .chat-ai-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      flex-shrink: 0;
+    }
+
+    .chat-ai-name {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--zinc-500);
+    }
+
+    .chat-msg-text {
+      overflow: hidden;
+    }
+
+    .chat-typing {
+      display: inline-flex;
+      gap: 3px;
+      padding: 10px 14px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 12px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .chat-typing.visible { opacity: 1; }
+
+    .chat-typing-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--zinc-500);
+      animation: typingBounce 1.2s ease-in-out infinite;
+    }
+
+    .chat-typing-dot:nth-child(2) { animation-delay: 0.15s; }
+    .chat-typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30% { transform: translateY(-4px); }
+    }
+
+    .chat-tools {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 0 16px 12px;
+    }
+
+    .chat-tool-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      background: rgba(0, 229, 255, 0.06);
+      border: 1px solid rgba(0, 229, 255, 0.12);
+      border-radius: 6px;
+      font-size: 0.68rem;
+      font-weight: 500;
+      color: var(--accent-cyan);
+      opacity: 0;
+      transform: scale(0.9);
+      transition: opacity 0.3s, transform 0.3s;
+    }
+
+    .chat-tool-badge.visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .chat-input-demo {
+      margin: 0 16px 12px;
+      padding: 10px 14px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 10px;
+      font-size: 0.78rem;
+      color: var(--zinc-600);
+    }
+
+    /* ========== SCENE 3: CODE + FLOW ========== */
+    .build-demo {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .build-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--zinc-800);
+      padding: 0 12px;
+    }
+
+    .build-tab {
+      padding: 8px 12px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--zinc-500);
+      border-bottom: 2px solid transparent;
+    }
+
+    .build-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--blue-500);
+    }
+
+    .build-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .build-code {
+      padding: 14px;
+      border-right: 1px solid var(--zinc-800);
+      min-height: 240px;
+    }
+
+    .build-code pre {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      line-height: 1.8;
+      color: var(--zinc-400);
+    }
+
+    .build-code .kw { color: #c084fc; }
+    .build-code .str { color: #86efac; }
+    .build-code .fn { color: #93c5fd; }
+    .build-code .prop { color: var(--zinc-300); }
+    .build-code .cmt { color: var(--zinc-600); }
+
+    .code-line-anim {
+      opacity: 0;
+      transform: translateX(-8px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+
+    .code-line-anim.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .build-flow {
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .flow-svg {
+      width: 100%;
+      max-width: 260px;
+    }
+
+    .flow-node {
+      opacity: 0;
+      transform: scale(0.85);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    .flow-node.visible {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .flow-edge {
+      stroke-dasharray: 200;
+      stroke-dashoffset: 200;
+      transition: stroke-dashoffset 0.8s ease;
+    }
+
+    .flow-edge.visible {
+      stroke-dashoffset: 0;
+    }
+
+    /* ========== SCENE 4: PREVIEW ========== */
+    .preview-demo {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--zinc-800);
+    }
+
+    .preview-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    .preview-badge-pass {
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--emerald-bg);
+      border: 1px solid var(--emerald-border);
+      color: var(--emerald-300);
+    }
+
+    .preview-ops {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .preview-op {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 10px;
+      font-size: 0.78rem;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    .preview-op.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .preview-op-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 10px;
+    }
+
+    .op-success {
+      background: var(--emerald-bg);
+      border: 1px solid var(--emerald-border);
+      color: var(--emerald-300);
+    }
+
+    .op-pending {
+      background: var(--amber-bg);
+      border: 1px solid var(--amber-border);
+      color: var(--amber-300);
+      animation: pulseGlow 2s ease-in-out infinite;
+    }
+
+    .op-waiting {
+      background: rgba(113, 113, 122, 0.1);
+      border: 1px solid rgba(63, 63, 70, 0.4);
+      color: var(--zinc-500);
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
+      50% { box-shadow: 0 0 12px 2px rgba(251, 191, 36, 0.15); }
+    }
+
+    .preview-op-text {
+      flex: 1;
+      color: var(--zinc-300);
+    }
+
+    .preview-op-status {
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    .status-pass { background: var(--emerald-bg); border: 1px solid var(--emerald-border); color: var(--emerald-300); }
+    .status-approval { background: var(--amber-bg); border: 1px solid var(--amber-border); color: var(--amber-200); }
+    .status-waiting { background: rgba(63, 63, 70, 0.2); border: 1px solid rgba(63, 63, 70, 0.4); color: var(--zinc-500); }
+
+    .preview-approve-btn {
+      padding: 3px 10px;
+      background: var(--amber-bg);
+      border: 1px solid var(--amber-border);
+      border-radius: 6px;
+      color: var(--amber-200);
+      font-size: 0.68rem;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    /* ========== SCENE 5: DEPLOY ========== */
+    .deploy-demo {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+      padding: 16px;
+    }
+
+    .deploy-provider-toggle {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .deploy-provider-btn {
+      padding: 6px 14px;
+      border: 1px solid var(--zinc-700);
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--zinc-400);
+      background: transparent;
+      cursor: default;
+    }
+
+    .deploy-provider-btn.active {
+      border-color: var(--blue-500);
+      background: rgba(37, 99, 235, 0.1);
+      color: var(--blue-500);
+    }
+
+    .deploy-region {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .deploy-region-label {
+      font-size: 0.75rem;
+      color: var(--zinc-500);
+    }
+
+    .deploy-region-select {
+      padding: 5px 10px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 6px;
+      font-size: 0.75rem;
+      color: var(--zinc-300);
+    }
+
+    .deploy-btn {
+      width: 100%;
+      padding: 10px;
+      background: var(--blue-600);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: default;
+      margin-bottom: 14px;
+      transition: all 0.4s;
+    }
+
+    .deploy-btn.deploying {
+      background: var(--zinc-700);
+    }
+
+    .deploy-btn.success {
+      background: var(--emerald-500);
+    }
+
+    .deploy-infra {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .deploy-infra-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 8px;
+      font-size: 0.72rem;
+      color: var(--zinc-400);
+      opacity: 0;
+      transform: translateX(-8px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+
+    .deploy-infra-item.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .deploy-infra-icon {
+      font-size: 0.72rem;
+      color: var(--emerald-300);
+    }
+
+    .deploy-infra-label {
+      color: var(--zinc-500);
+      font-weight: 500;
+    }
+
+    .deploy-infra-value {
+      color: var(--zinc-300);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+    }
+
+    /* ========== SCENE 6: LOGS ========== */
+    .logs-demo {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .logs-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--zinc-800);
+    }
+
+    .logs-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .logs-filter-pill {
+      font-size: 0.65rem;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 100px;
+      border: 1px solid var(--zinc-700);
+      color: var(--zinc-400);
+    }
+
+    .logs-filter-pill.active {
+      border-color: var(--blue-500);
+      background: rgba(37, 99, 235, 0.1);
+      color: var(--blue-500);
+    }
+
+    .logs-body {
+      padding: 8px 0;
+      max-height: 280px;
+      overflow: hidden;
+    }
+
+    .log-entry {
+      display: grid;
+      grid-template-columns: 110px 42px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 5px 16px;
+      border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+      font-size: 0.72rem;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    .log-entry.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .log-time {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      color: var(--zinc-600);
+    }
+
+    .log-level {
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      text-align: center;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    .log-level-info {
+      color: var(--emerald-300);
+      background: var(--emerald-bg);
+    }
+
+    .log-level-warn {
+      color: var(--amber-200);
+      background: var(--amber-bg);
+    }
+
+    .log-level-error {
+      color: var(--rose-300);
+      background: var(--rose-bg);
+    }
+
+    .log-message {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--zinc-300);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ========== CONNECTIONS AGENT SECTION ========== */
+    .connections-agent {
+      padding: 80px 0;
+      position: relative;
+    }
+
+    .connections-agent::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(ellipse at center, rgba(0, 229, 255, 0.04) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .connections-agent header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .connections-agent .section-sub {
+      margin: 0 auto;
+      max-width: 560px;
+    }
+
+    .agent-columns {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-bottom: 32px;
+    }
+
+    .agent-col {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+    .agent-col:hover {
+      border-color: rgba(0, 229, 255, 0.2);
+      box-shadow: 0 0 24px rgba(0, 229, 255, 0.05);
+    }
+
+    .agent-col-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--zinc-800);
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .agent-col-body {
+      padding: 14px;
+    }
+
+    /* Column 1: Mini catalog */
+    .mini-search {
+      padding: 6px 10px;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 8px;
+      font-size: 0.72rem;
+      color: var(--zinc-500);
+      width: 100%;
+      margin-bottom: 10px;
+    }
+
+    .mini-category-pills {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .mini-cat-pill {
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-size: 0.62rem;
+      font-weight: 500;
+      border: 1px solid var(--zinc-700);
+      color: var(--zinc-500);
+    }
+
+    .mini-cat-pill.active {
+      border-color: var(--accent-cyan);
+      color: var(--accent-cyan);
+      background: rgba(0, 229, 255, 0.06);
+    }
+
+    .mini-provider-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .mini-provider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: var(--zinc-900);
+      border-radius: 8px;
+    }
+
+    .mini-provider-row img {
+      width: 16px;
+      height: 16px;
+    }
+
+    .mini-provider-row-name {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--zinc-300);
+      flex: 1;
+    }
+
+    .mini-provider-row-btn {
+      font-size: 0.6rem;
+      padding: 2px 6px;
+      border: 1px solid var(--zinc-700);
+      border-radius: 4px;
+      color: var(--zinc-500);
+    }
+
+    /* Column 2: OAuth modal */
+    .mini-modal {
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .mini-modal-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .mini-modal-sub {
+      font-size: 0.65rem;
+      color: var(--zinc-500);
+      margin-bottom: 12px;
+    }
+
+    .mini-field {
+      margin-bottom: 8px;
+    }
+
+    .mini-field-label {
+      font-size: 0.62rem;
+      font-weight: 500;
+      color: var(--zinc-500);
+      margin-bottom: 3px;
+      display: block;
+    }
+
+    .mini-field-input {
+      width: 100%;
+      padding: 5px 8px;
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 6px;
+      font-size: 0.68rem;
+      color: var(--zinc-300);
+      font-family: var(--font-mono);
+    }
+
+    .mini-authorize-btn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 7px;
+      background: var(--blue-600);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    /* Column 3: Agent chat */
+    .mini-agent-chat {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .mini-agent-msg {
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      line-height: 1.5;
+    }
+
+    .mini-agent-msg-user {
+      background: rgba(37, 99, 235, 0.12);
+      border: 1px solid rgba(37, 99, 235, 0.2);
+      color: var(--zinc-300);
+      align-self: flex-end;
+      margin-left: 20%;
+    }
+
+    .mini-agent-msg-ai {
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      color: var(--zinc-400);
+      margin-right: 10%;
+    }
+
+    /* Connection status strip */
+    .connection-strip {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .connection-status-card {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 10px;
+    }
+
+    .connection-status-card img {
+      width: 16px;
+      height: 16px;
+    }
+
+    .connection-status-name {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--zinc-300);
+    }
+
+    .connection-status-pill {
+      font-size: 0.62rem;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .pill-active { background: var(--emerald-bg); color: var(--emerald-300); border: 1px solid var(--emerald-border); }
+    .pill-expiring { background: var(--amber-bg); color: var(--amber-200); border: 1px solid var(--amber-border); }
+
+    /* ========== DASHBOARD + CLI SECTION ========== */
+    .dash-cli {
+      padding: 80px 0;
+    }
+
+    .dash-cli header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .dash-cli .section-sub {
+      margin: 0 auto;
+    }
+
+    .dash-cli-grid {
+      display: grid;
+      grid-template-columns: 1.8fr 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .dash-cli-panel {
+      background: var(--zinc-950);
+      border: 1px solid var(--zinc-800);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .dash-cli-panel-label {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--zinc-800);
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--zinc-400);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dash-cli-panel-label i { font-size: 14px; }
+
+    /* Full dashboard preview */
+    .full-dash-preview {
+      display: flex;
+    }
+
+    .full-dash-sidebar {
+      width: 140px;
+      background: var(--zinc-950);
+      border-right: 1px solid var(--zinc-800);
+      padding: 12px 0;
+      flex-shrink: 0;
+    }
+
+    .full-dash-brand {
+      padding: 0 12px 12px;
+    }
+
+    .full-dash-brand-text {
+      font-family: var(--font-heading);
+      font-size: 0.82rem;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+
+    .full-dash-brand-text span { color: var(--accent-cyan); }
+
+    .full-dash-brand-sub {
+      font-size: 0.6rem;
+      color: var(--zinc-500);
+    }
+
+    .full-dash-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 6px;
+    }
+
+    .full-dash-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--zinc-500);
+    }
+
+    .full-dash-nav-item.active {
+      background: var(--zinc-800);
+      color: #fff;
+    }
+
+    .full-dash-nav-item i { font-size: 12px; }
+
+    .full-dash-content {
+      flex: 1;
+      padding: 14px;
+      min-height: 300px;
+    }
+
+    .full-dash-tab-bar {
+      display: flex;
+      gap: 0;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--zinc-800);
+    }
+
+    .full-dash-tab {
+      padding: 6px 12px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--zinc-500);
+      border-bottom: 2px solid transparent;
+    }
+
+    .full-dash-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--blue-500);
+    }
+
+    .full-dash-workspace {
+      display: flex;
+      gap: 12px;
+    }
+
+    .full-dash-chat {
+      width: 45%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .full-dash-chat-msg {
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.68rem;
+      line-height: 1.5;
+    }
+
+    .full-dash-chat-user {
+      background: rgba(37, 99, 235, 0.12);
+      border: 1px solid rgba(37, 99, 235, 0.2);
+      color: var(--zinc-300);
+      align-self: flex-end;
+    }
+
+    .full-dash-chat-ai {
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      color: var(--zinc-400);
+    }
+
+    .full-dash-code {
+      flex: 1;
+      background: var(--zinc-900);
+      border: 1px solid var(--zinc-800);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .full-dash-code pre {
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      line-height: 1.7;
+      color: var(--zinc-400);
+    }
+
+    .full-dash-code .kw { color: #c084fc; }
+    .full-dash-code .str { color: #86efac; }
+    .full-dash-code .fn { color: #93c5fd; }
+
+    /* CLI terminal (reused) */
+    .terminal {
+      background: var(--zinc-950);
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--zinc-800);
+    }
+
+    .terminal-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .terminal-dot.r { background: #ff5f57; }
+    .terminal-dot.y { background: #febc2e; }
+    .terminal-dot.g { background: #28c840; }
+
+    .terminal-title {
+      margin-left: 8px;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--zinc-500);
+    }
+
+    .terminal-body {
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      line-height: 1.9;
+    }
+
+    .t-prompt { color: var(--emerald-300); }
+    .t-cmd { color: var(--text-primary); }
+    .t-out { color: var(--zinc-500); padding-left: 12px; }
+    .t-url { color: var(--accent-cyan); }
+    .t-gap { display: block; height: 6px; }
+
+    /* ========== FEATURES GRID ========== */
+    .features {
+      padding: 80px 0;
+    }
+
+    .features header {
+      margin-bottom: 48px;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .feat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      padding: 28px;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+
+    .feat-card:hover {
+      border-color: rgba(0, 229, 255, 0.15);
+      transform: translateY(-3px);
+      box-shadow: 0 0 30px rgba(0, 229, 255, 0.05), 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .feat-card.featured {
+      grid-column: span 2;
+      border-left: 3px solid var(--accent-cyan);
+      box-shadow: -4px 0 20px rgba(0, 229, 255, 0.06);
+    }
+
+    .feat-icon {
+      font-size: 1.4rem;
+      color: var(--accent-cyan);
+      margin-bottom: 14px;
+    }
+
+    .feat-card h3 {
+      font-family: var(--font-heading);
+      font-weight: 700;
+      font-size: 1.05rem;
+      margin-bottom: 8px;
+    }
+
+    .feat-card p {
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+
+    .feat-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 16px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--accent-cyan);
+      transition: color 0.2s, transform 0.15s;
+    }
+
+    .feat-link:hover {
+      color: #7cecff;
+      transform: translateX(2px);
+    }
+
+    /* ========== COMPARISON ========== */
+    .comparison {
+      padding: 40px 0 80px;
+    }
+
+    .comparison-shell {
+      position: relative;
+      padding: 36px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 22px;
+      background:
+        radial-gradient(circle at top right, rgba(124, 58, 237, 0.12), transparent 32%),
+        radial-gradient(circle at top left, rgba(0, 229, 255, 0.1), transparent 28%),
+        linear-gradient(180deg, rgba(20, 20, 20, 0.96), rgba(10, 10, 10, 0.98));
+      overflow: hidden;
+    }
+
+    .comparison-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.05), transparent);
+      pointer-events: none;
+    }
+
+    .comparison-header {
+      margin-bottom: 28px;
+    }
+
+    .comparison-header .section-sub {
+      max-width: 620px;
+    }
+
+    .comparison-table-wrap {
+      position: relative;
+      z-index: 1;
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      background: rgba(10, 10, 10, 0.7);
+    }
+
+    .comparison-table {
+      width: 100%;
+      min-width: 900px;
+      border-collapse: collapse;
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 18px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .comparison-table thead th {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .comparison-table tbody tr:last-child th,
+    .comparison-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .comparison-rowhead {
+      width: 150px;
+      min-width: 150px;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .comparison-product {
+      display: block;
+      margin-bottom: 6px;
+      font-family: var(--font-heading);
+      font-size: 1.08rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--text-primary);
+    }
+
+    .comparison-product-sub {
+      display: block;
+      color: var(--text-secondary);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .comparison-cell {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.65;
+    }
+
+    .comparison-cell strong {
+      color: var(--text-primary);
+    }
+
+    .comparison-table .is-gtm {
+      background: linear-gradient(180deg, rgba(0, 229, 255, 0.08), rgba(0, 229, 255, 0.02));
+    }
+
+    .comparison-points {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .comparison-point {
+      padding: 20px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .comparison-point i {
+      display: inline-flex;
+      margin-bottom: 12px;
+      font-size: 1.2rem;
+      color: var(--accent-cyan);
+    }
+
+    .comparison-point h3 {
+      font-family: var(--font-heading);
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+
+    .comparison-point p {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      line-height: 1.65;
+    }
+
+    .comparison-sources {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .comparison-sources-label {
+      width: 100%;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .source-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      transition: border-color 0.2s, color 0.2s, transform 0.15s;
+    }
+
+    .source-chip:hover {
+      border-color: var(--border-hover);
+      color: var(--text-primary);
+      transform: translateY(-1px);
+    }
+
+    /* ========== PRICING ========== */
+    .pricing {
+      padding: 20px 0 88px;
+    }
+
+    .pricing-shell {
+      position: relative;
+      padding: 38px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at top left, rgba(0, 229, 255, 0.1), transparent 28%),
+        radial-gradient(circle at top right, rgba(245, 158, 11, 0.1), transparent 24%),
+        linear-gradient(180deg, rgba(18, 18, 18, 0.98), rgba(10, 10, 10, 0.98));
+      overflow: hidden;
+    }
+
+    .pricing-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg, transparent, rgba(255, 255, 255, 0.03), transparent);
+      pointer-events: none;
+    }
+
+    .pricing-header {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+
+    .pricing-header .section-sub {
+      max-width: 680px;
+    }
+
+    .pricing-note {
+      padding: 22px;
+      border: 1px solid rgba(0, 229, 255, 0.14);
+      border-radius: 18px;
+      background: rgba(10, 10, 10, 0.58);
+    }
+
+    .pricing-note strong {
+      display: block;
+      margin-bottom: 8px;
+      font-family: var(--font-heading);
+      font-size: 1rem;
+      color: var(--text-primary);
+    }
+
+    .pricing-note p {
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      line-height: 1.7;
+    }
+
+    .pricing-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 22px;
+      align-items: start;
+    }
+
+    .pricing-cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .pricing-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 100%;
+      padding: 24px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(20, 20, 20, 0.98), rgba(10, 10, 10, 0.98));
+      overflow: hidden;
+    }
+
+    .pricing-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(0, 229, 255, 0.75), transparent);
+      opacity: 0.75;
+    }
+
+    .pricing-card.is-open-source::before {
+      background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.7), transparent);
+    }
+
+    .pricing-card.is-services::before {
+      background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.8), transparent);
+    }
+
+    .pricing-card.is-highlighted {
+      border-color: rgba(0, 229, 255, 0.3);
+      box-shadow: 0 0 24px rgba(0, 229, 255, 0.08);
+    }
+
+    .pricing-card-head {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .pricing-card-kicker {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .pricing-card-title {
+      font-family: var(--font-heading);
+      font-size: 1.18rem;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+
+    .pricing-card-price {
+      font-family: var(--font-heading);
+      font-size: clamp(1.7rem, 3vw, 2.2rem);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+    }
+
+    .pricing-card-price small {
+      display: block;
+      margin-top: 8px;
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+      font-weight: 500;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      letter-spacing: 0;
+    }
+
+    .pricing-card-copy {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.7;
+    }
+
+    .pricing-card-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      margin-top: 2px;
+    }
+
+    .pricing-card-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: var(--zinc-300);
+      font-size: 0.82rem;
+      line-height: 1.6;
+    }
+
+    .pricing-card-list i {
+      margin-top: 2px;
+      font-size: 0.9rem;
+      color: var(--accent-cyan);
+      flex-shrink: 0;
+    }
+
+    .pricing-card.is-open-source .pricing-card-list i {
+      color: var(--emerald-300);
+    }
+
+    .pricing-card.is-services .pricing-card-list i {
+      color: var(--amber-300);
+    }
+
+    .pricing-card-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: auto;
+      min-height: 44px;
+      padding: 12px 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 229, 255, 0.25);
+      background: rgba(0, 229, 255, 0.1);
+      color: var(--text-primary);
+      font-size: 0.84rem;
+      font-weight: 600;
+      transition: transform 0.15s, border-color 0.2s, background 0.2s;
+    }
+
+    .pricing-card-action:hover {
+      transform: translateY(-1px);
+      border-color: rgba(0, 229, 255, 0.45);
+      background: rgba(0, 229, 255, 0.16);
+    }
+
+    .pricing-card.is-open-source .pricing-card-action {
+      border-color: rgba(16, 185, 129, 0.26);
+      background: rgba(16, 185, 129, 0.1);
+    }
+
+    .pricing-card.is-open-source .pricing-card-action:hover {
+      border-color: rgba(16, 185, 129, 0.45);
+      background: rgba(16, 185, 129, 0.16);
+    }
+
+    .pricing-card.is-services .pricing-card-action {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: rgba(245, 158, 11, 0.08);
+    }
+
+    .pricing-card.is-services .pricing-card-action:hover {
+      border-color: rgba(245, 158, 11, 0.48);
+      background: rgba(245, 158, 11, 0.14);
+    }
+
+    .pricing-form-panel {
+      position: relative;
+      padding: 26px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      background: rgba(10, 10, 10, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .pricing-form-panel h3 {
+      font-family: var(--font-heading);
+      font-size: 1.28rem;
+      margin-bottom: 10px;
+    }
+
+    .pricing-form-panel p {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.7;
+    }
+
+    .pricing-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .pricing-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .pricing-field.is-full {
+      grid-column: 1 / -1;
+    }
+
+    .pricing-field label {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .pricing-field input,
+    .pricing-field select,
+    .pricing-field textarea {
+      width: 100%;
+      border: 1px solid var(--border-subtle);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      font-size: 0.94rem;
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+    }
+
+    .pricing-field input::placeholder,
+    .pricing-field textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    .pricing-field input:focus,
+    .pricing-field select:focus,
+    .pricing-field textarea:focus {
+      border-color: rgba(0, 229, 255, 0.45);
+      box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .pricing-field textarea {
+      min-height: 144px;
+      resize: vertical;
+    }
+
+    .pricing-form-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .pricing-submit {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 46px;
+      padding: 12px 18px;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(135deg, rgba(0, 229, 255, 0.9), rgba(34, 211, 238, 0.82));
+      color: #041014;
+      font-family: var(--font-body);
+      font-size: 0.92rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s, filter 0.2s, opacity 0.2s;
+    }
+
+    .pricing-submit:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
+
+    .pricing-submit:disabled {
+      opacity: 0.72;
+      cursor: wait;
+      transform: none;
+    }
+
+    .pricing-form-meta {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.65;
+    }
+
+    .pricing-status {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-secondary);
+      font-size: 0.86rem;
+      line-height: 1.6;
+    }
+
+    .pricing-status.is-pending {
+      border-color: rgba(0, 229, 255, 0.22);
+      color: var(--accent-cyan);
+    }
+
+    .pricing-status.is-success {
+      border-color: rgba(16, 185, 129, 0.24);
+      color: var(--emerald-300);
+    }
+
+    .pricing-status.is-error {
+      border-color: rgba(244, 63, 94, 0.28);
+      color: var(--rose-300);
+    }
+
+    .pricing-disclaimer {
+      position: relative;
+      z-index: 1;
+      margin-top: 20px;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      line-height: 1.7;
+    }
+
+    .pricing-sources {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .pricing-sources-label {
+      width: 100%;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .pricing-honeypot {
+      position: absolute;
+      left: -10000px;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+
+    /* ========== INSTALL BLOCK ========== */
+    .install-section {
+      padding: 40px 0;
+      text-align: center;
+    }
+
+    .install-section .label {
+      margin-bottom: 12px;
+    }
+
+    .install-block {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .install-block:hover { border-color: var(--border-hover); }
+
+    .install-block.is-disabled {
+      cursor: default;
+    }
+
+    .install-block.is-disabled:hover {
+      border-color: var(--border-subtle);
+    }
+
+    .install-block code {
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      color: var(--text-primary);
+    }
+
+    .copy-hint {
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .install-block:hover .copy-hint { color: var(--accent-cyan); }
+
+    .install-block.is-disabled .copy-hint,
+    .install-block.is-disabled:hover .copy-hint {
+      color: var(--text-muted);
+    }
+
+    /* ========== OPEN SOURCE CTA ========== */
+    .oss-cta {
+      padding: 80px 0;
+    }
+
+    .cta-box {
+      text-align: center;
+      padding: 64px 40px;
+      border: 1px solid rgba(0, 229, 255, 0.12);
+      border-radius: 20px;
+      background: linear-gradient(180deg, var(--bg-card), var(--bg-deep));
+      box-shadow: 0 0 40px rgba(0, 229, 255, 0.06), 0 0 100px rgba(0, 229, 255, 0.03), 0 20px 60px rgba(0, 0, 0, 0.4);
+    }
+
+    .cta-box h2 {
+      font-family: var(--font-heading);
+      font-weight: 800;
+      font-size: clamp(1.4rem, 3vw, 1.8rem);
+      margin-bottom: 12px;
+    }
+
+    .cta-box > p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      margin-bottom: 28px;
+    }
+
+    .cta-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    .cta-meta {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    /* ========== RESPONSIVE ========== */
+    @media (min-width: 1024px) {
+      .feat-card.featured {
+        grid-column: span 2;
+      }
+
+      .features-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    @media (max-width: 1023px) {
+      .scene {
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+
+      .scene:nth-child(even) { direction: ltr; }
+
+      .agent-columns {
+        grid-template-columns: 1fr;
+      }
+
+      .dash-cli-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .pricing-header,
+      .pricing-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .pricing-cards {
+        grid-template-columns: 1fr;
+      }
+
+      .comparison-points {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .full-dash-sidebar { width: 110px; }
+    }
+
+    @media (max-width: 860px) {
+      .wrap { padding: 0 20px; }
+
+      nav {
+        top: 12px;
+        width: min(calc(100% - 32px), 760px);
+        border-radius: 28px;
+      }
+
+      nav .wrap {
+        justify-content: space-between;
+      }
+
+      .nav-links {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .nav-links a,
+      .nav-gh,
+      .nav-cta {
+        padding-left: 10px;
+        padding-right: 10px;
+        font-size: 0.78rem;
+      }
+
+      .hero {
+        padding: 110px 0 64px;
+      }
+
+      .hero .wrap {
+        gap: 40px;
+      }
+
+      .hero-visual::before {
+        inset: -24px;
+      }
+    }
+
+    @media (max-width: 639px) {
+      .wrap { padding: 0 16px; }
+
+      nav {
+        top: 12px;
+        width: calc(100% - 24px);
+        padding: 6px;
+        border-radius: 22px;
+      }
+
+      nav .wrap {
+        gap: 8px;
+      }
+
+      .nav-links { display: none; }
+      .nav-divider { display: none; }
+
+      .nav-gh,
+      .nav-cta {
+        flex: 1 1 0;
+        min-width: 0;
+        justify-content: center;
+        padding: 10px 12px;
+        font-size: 0.78rem;
+      }
+
+      .hero {
+        padding: 92px 0 44px;
+      }
+
+      .hero .wrap {
+        gap: 28px;
+      }
+
+      .hero-text {
+        width: 100%;
+      }
+
+      .hero-label {
+        margin-bottom: 14px;
+        font-size: 0.68rem;
+        letter-spacing: 0.16em;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.1rem, 10vw, 2.8rem);
+        line-height: 1.04;
+        margin-bottom: 16px;
+      }
+
+      .hero h1 br {
+        display: none;
+      }
+
+      .hero-sub {
+        max-width: none;
+        margin-bottom: 24px;
+        font-size: 0.96rem;
+        line-height: 1.6;
+      }
+
+      .hero-actions {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+      }
+
+      .btn-primary,
+      .btn-outline {
+        width: 100%;
+        justify-content: center;
+        padding: 14px 18px;
+        font-size: 0.95rem;
+      }
+
+      .hero-install-hint {
+        margin-top: 12px;
+      }
+
+      .hero-install-hint code {
+        display: block;
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 0.72rem;
+        text-align: center;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+
+      .hero-visual {
+        max-width: none;
+      }
+
+      .hero-visual::before {
+        inset: -12px;
+      }
+
+      .hero-visual::after {
+        left: 0;
+        right: 0;
+        bottom: -36px;
+        height: 64px;
+      }
+
+      .dash-preview {
+        flex-direction: column;
+        border-radius: 16px;
+        transform: none;
+      }
+
+      .dash-preview:hover {
+        transform: none;
+      }
+
+      .dash-sidebar {
+        width: 100%;
+        gap: 10px;
+        border-right: none;
+        border-bottom: 1px solid var(--zinc-800);
+        padding: 12px;
+      }
+
+      .dash-sidebar-brand {
+        padding: 0;
+      }
+
+      .dash-sidebar-title {
+        font-size: 0.92rem;
+      }
+
+      .dash-sidebar-sub {
+        font-size: 0.64rem;
+      }
+
+      .dash-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 0;
+      }
+
+      .dash-nav-item {
+        padding: 6px 10px;
+        font-size: 0.7rem;
+        background: var(--zinc-900);
+        border: 1px solid var(--zinc-800);
+      }
+
+      .dash-nav-item.active {
+        border-color: rgba(37, 99, 235, 0.45);
+      }
+
+      .dash-topbar {
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 10px 12px;
+      }
+
+      .dash-back {
+        display: none;
+      }
+
+      .dash-wf-title {
+        width: 100%;
+        font-size: 0.78rem;
+        line-height: 1.35;
+        white-space: normal;
+      }
+
+      .dash-content {
+        flex-direction: column;
+        min-height: auto;
+      }
+
+      .dash-chat {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--zinc-800);
+      }
+
+      .dash-chat-body {
+        padding: 10px;
+      }
+
+      .dash-chat-msg {
+        max-width: 100%;
+        font-size: 0.74rem;
+      }
+
+      .dash-chat-input {
+        margin: 0 10px 10px;
+        gap: 8px;
+      }
+
+      .dash-chat-input-text {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .dash-topbar-actions { display: none; }
+
+      .dash-right-tabs {
+        padding: 0 10px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .dash-right-tabs::-webkit-scrollbar { display: none; }
+
+      .dash-right-tab {
+        white-space: nowrap;
+      }
+
+      .dash-right-body {
+        min-height: 220px;
+        padding: 12px;
+      }
+
+      .flow-node-box {
+        min-width: 112px;
+        max-width: 150px;
+        padding: 8px 12px;
+        font-size: 0.65rem;
+      }
+
+      .flow-branch { gap: 10px; }
+
+      .flow-diamond {
+        width: 88px;
+        height: 44px;
+      }
+
+      .flow-diamond span {
+        font-size: 0.52rem;
+      }
+
+      .provider-grid { grid-template-columns: repeat(2, 1fr); }
+
+      .build-split { grid-template-columns: 1fr; }
+      .build-code { border-right: none; border-bottom: 1px solid var(--zinc-800); }
+
+      .log-entry { grid-template-columns: 70px 36px 1fr; }
+
+      .features-grid { grid-template-columns: 1fr; }
+      .feat-card.featured { grid-column: span 1; }
+
+      .comparison {
+        padding: 28px 0 64px;
+      }
+
+      .pricing {
+        padding: 0 0 72px;
+      }
+
+      .comparison-shell {
+        padding: 22px 16px;
+        border-radius: 18px;
+      }
+
+      .pricing-shell {
+        padding: 22px 16px;
+        border-radius: 18px;
+      }
+
+      .pricing-note,
+      .pricing-form-panel,
+      .pricing-card {
+        padding: 20px;
+      }
+
+      .comparison-table {
+        min-width: 760px;
+      }
+
+      .comparison-rowhead {
+        min-width: 132px;
+      }
+
+      .comparison-points {
+        grid-template-columns: 1fr;
+      }
+
+      .pricing-form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .full-dash-preview { flex-direction: column; }
+      .full-dash-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--zinc-800); }
+      .full-dash-nav { flex-direction: row; flex-wrap: wrap; }
+      .full-dash-workspace { flex-direction: column; }
+      .full-dash-chat { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV (injected by shared/components.js) -->
+  <div id="site-header"></div>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-text">
+        <div class="hero-logo">
+          <img src="gtmship-logo.png" alt="GTMship">
+        </div>
+        <p class="label hero-label">Open Source GTM Platform</p>
+        <h1>Ship <span class="hl-cyan">GTM workflows</span> to the cloud<br>with <span class="hl-purple">AI</span> at the helm.</h1>
+        <p class="hero-sub">Describe what you want in plain English. The AI builds, validates, and deploys the workflow — all in your own cloud.</p>
+        <div class="hero-actions">
+          <a href="#story" class="btn-primary">
+            <i class="ph ph-anchor"></i> See the Voyage
+          </a>
+          <a href="docs/index.html" class="btn-outline">
+            <i class="ph ph-book-open"></i> Read the Docs
+          </a>
+        </div>
+        <div class="hero-install-hint">
+          <code>Homebrew formula coming soon</code>
+        </div>
+      </div>
+
+      <!-- Workflow builder dashboard below -->
+      <div class="hero-visual">
+        <div class="dash-preview">
+          <!-- Sidebar -->
+          <div class="dash-sidebar">
+            <div class="dash-sidebar-brand">
+              <div class="dash-sidebar-title"><i class="ph ph-sailboat" style="margin-right:4px;color:var(--accent-cyan);font-size:14px"></i>GTM<span>ship</span></div>
+              <div class="dash-sidebar-sub">Ship GTM workflows</div>
+            </div>
+            <div class="dash-nav">
+              <div class="dash-nav-item"><i class="ph ph-link"></i> Connections</div>
+              <div class="dash-nav-item active"><i class="ph ph-git-branch"></i> Workflows</div>
+              <div class="dash-nav-item"><i class="ph ph-rocket"></i> Deploy</div>
+              <div class="dash-nav-item"><i class="ph ph-scroll"></i> Logs</div>
+              <div class="dash-nav-item"><i class="ph ph-gear"></i> Settings</div>
+            </div>
+          </div>
+
+          <!-- Main -->
+          <div class="dash-main">
+            <!-- Top bar -->
+            <div class="dash-topbar">
+              <div class="dash-back"><i class="ph ph-arrow-left"></i></div>
+              <div class="dash-wf-title">Enrich Leads &rarr; Score &amp; Route to Slack</div>
+              <div class="dash-topbar-actions">
+                <div class="dash-action-btn"><i class="ph ph-check-circle"></i> Validate</div>
+                <div class="dash-action-btn"><i class="ph ph-play"></i> Preview</div>
+                <div class="dash-action-btn"><i class="ph ph-hammer"></i> Build</div>
+                <div class="dash-action-btn deploy"><i class="ph ph-cloud-arrow-up"></i> Deploy GCP</div>
+                <div class="dash-action-btn primary"><i class="ph ph-floppy-disk"></i> Save</div>
+              </div>
+            </div>
+
+            <!-- Content -->
+            <div class="dash-content">
+              <!-- Chat -->
+              <div class="dash-chat">
+                <div class="dash-chat-body">
+                  <div class="dash-chat-msg dash-chat-msg-ai">
+                    <div class="dash-ai-head">
+                      <span class="dash-ai-dot"></span>
+                      <span class="dash-ai-name">Workflow Builder Agent</span>
+                    </div>
+                    <div>Here's what the workflow does:</div>
+                    <ol>
+                      <li><strong>Fetches new contacts</strong> from HubSpot &mdash; <span class="step-ok">&#x2705; ran successfully</span></li>
+                      <li><strong>Enriches with Clearbit</strong> &mdash; company size, industry, revenue &mdash; <span class="step-ok">&#x2705; ran successfully</span></li>
+                      <li><strong>Sends to Slack</strong> #hot-leads &mdash; <span class="step-pause">&#x23F8; Paused &mdash; awaiting approval</span></li>
+                    </ol>
+                  </div>
+                  <div class="dash-chat-msg dash-chat-msg-ai">
+                    <div class="dash-ai-head">
+                      <span class="dash-ai-dot"></span>
+                      <span class="dash-ai-name">Workflow Builder Agent</span>
+                    </div>
+                    Head to the <strong>Preview</strong> tab to approve the write checkpoint before the Slack message sends.
+                  </div>
+                </div>
+                <div class="dash-chat-input">
+                  <span class="dash-chat-input-text">Describe the workflow, ask it to debug...</span>
+                  <span class="dash-chat-send"><i class="ph ph-paper-plane-tilt"></i> Send</span>
+                </div>
+              </div>
+
+              <!-- Right panel with tabs -->
+              <div class="dash-right">
+                <div class="dash-right-tabs">
+                  <div class="dash-right-tab active"><i class="ph ph-flow-arrow"></i> Flow</div>
+                  <div class="dash-right-tab"><i class="ph ph-code"></i> Code</div>
+                  <div class="dash-right-tab"><i class="ph ph-check-square"></i> Validation</div>
+                  <div class="dash-right-tab"><i class="ph ph-play"></i> Preview</div>
+                  <div class="dash-right-tab"><i class="ph ph-hammer"></i> Build</div>
+                  <div class="dash-right-tab"><i class="ph ph-rocket"></i> Deploy</div>
+                </div>
+                <div class="dash-right-body">
+                  <div class="flow-diagram-label">Live Diagram</div>
+                  <div class="flow-diagram-badge">Auto-rendered</div>
+                  <div class="flow-diagram">
+                    <div class="flow-node-box trigger">Manual Trigger</div>
+                    <div class="flow-connector"></div>
+                    <div class="flow-node-box">Fetch contacts from HubSpot</div>
+                    <div class="flow-connector"></div>
+                    <div class="flow-node-box">Enrich with Clearbit</div>
+                    <div class="flow-connector"></div>
+                    <div class="flow-diamond"><span>Score > 80?</span></div>
+                    <div class="flow-connector"></div>
+                    <div class="flow-branch">
+                      <div class="flow-branch-arm">
+                        <div class="flow-branch-label">Yes</div>
+                        <div class="flow-node-box" style="border-color:var(--emerald-500);background:rgba(16,185,129,0.06)">Post to Slack #hot-leads</div>
+                      </div>
+                      <div class="flow-branch-arm">
+                        <div class="flow-branch-label">No</div>
+                        <div class="flow-node-box">Add to nurture sequence</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAVE -->
+  <div class="wave-divider">
+    <svg viewBox="0 0 2400 48" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24 L2400 48 L0 48Z" fill="#0a0a0a" stroke="none"/>
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24" fill="none" stroke="#00e5ff18" stroke-width="1.5"/>
+    </svg>
+  </div>
+
+  <!-- INTEGRATIONS -->
+  <section class="integrations">
+    <p class="label" style="color: var(--accent-cyan); margin-bottom: 8px;">Cargo Manifest &mdash; Every Port, Every API</p>
+    <p class="integrations-sub" style="margin-bottom: 8px;">25+ pre-built connectors &mdash; plus the <strong style="color: var(--accent-cyan);">Connections Agent</strong> can dock <em>any</em> tool with an API.</p>
+    <p class="integrations-sub" style="margin-bottom: 24px; font-size: 0.8rem; color: var(--zinc-500);">Point it at the docs, and it configures auth, reads endpoints, and saves the connection. No custom integration code needed.</p>
+    <div class="scroll-track" aria-label="Supported integrations">
+      <div class="scroll-set">
+        <span class="pill"><img src="https://cdn.simpleicons.org/hubspot/FF7A59" alt="HubSpot">HubSpot</span>
+        <span class="pill"><img src="salesforce.svg" alt="Salesforce">Salesforce</span>
+        <span class="pill"><img src="slack.svg" alt="Slack">Slack</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/gmail/EA4335" alt="Gmail">Gmail</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/googlesheets/34A853" alt="Google Sheets">Google Sheets</span>
+        <span class="pill"><img src="sendgrid.svg" alt="SendGrid">SendGrid</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/stripe/635BFF" alt="Stripe">Stripe</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/notion/ffffff" alt="Notion">Notion</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/airtable/18BFFF" alt="Airtable">Airtable</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/linear/5E6AD2" alt="Linear">Linear</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/github/ffffff" alt="GitHub">GitHub</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/jira/0052CC" alt="Jira">Jira</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/intercom/6AFDEF" alt="Intercom">Intercom</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/zendesk/03363D" alt="Zendesk">Zendesk</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/shopify/7AB55C" alt="Shopify">Shopify</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/discord/5865F2" alt="Discord">Discord</span>
+        <span class="pill"><img src="twilio.svg" alt="Twilio">Twilio</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/mailchimp/FFE01B" alt="Mailchimp">Mailchimp</span>
+        <span class="pill pill-custom"><i class="ph ph-plus-circle" style="font-size:16px;color:var(--accent-cyan)"></i>Any API</span>
+      </div>
+      <div class="scroll-set" aria-hidden="true">
+        <span class="pill"><img src="https://cdn.simpleicons.org/hubspot/FF7A59" alt="">HubSpot</span>
+        <span class="pill"><img src="salesforce.svg" alt="">Salesforce</span>
+        <span class="pill"><img src="slack.svg" alt="">Slack</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/gmail/EA4335" alt="">Gmail</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/googlesheets/34A853" alt="">Google Sheets</span>
+        <span class="pill"><img src="sendgrid.svg" alt="">SendGrid</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/stripe/635BFF" alt="">Stripe</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/notion/ffffff" alt="">Notion</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/airtable/18BFFF" alt="">Airtable</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/linear/5E6AD2" alt="">Linear</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/github/ffffff" alt="">GitHub</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/jira/0052CC" alt="">Jira</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/intercom/6AFDEF" alt="">Intercom</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/zendesk/03363D" alt="">Zendesk</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/shopify/7AB55C" alt="">Shopify</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/discord/5865F2" alt="">Discord</span>
+        <span class="pill"><img src="twilio.svg" alt="">Twilio</span>
+        <span class="pill"><img src="https://cdn.simpleicons.org/mailchimp/FFE01B" alt="">Mailchimp</span>
+        <span class="pill pill-custom"><i class="ph ph-plus-circle" style="font-size:16px;color:var(--accent-cyan)"></i>Any API</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAVE -->
+  <div class="wave-divider wave-divider-sm" style="margin-top: 48px;">
+    <svg viewBox="0 0 2400 48" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24 L2400 48 L0 48Z" fill="#0a0a0a" stroke="none"/>
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24" fill="none" stroke="#00e5ff10" stroke-width="1"/>
+    </svg>
+  </div>
+
+  <!-- STORY -->
+  <section class="story" id="story">
+    <div class="wrap">
+      <header class="reveal">
+        <p class="label">The Voyage</p>
+        <h2 class="section-title">From the harbor to open water in six steps</h2>
+        <p class="section-sub">Follow a real lead enrichment workflow as it docks integrations, charts its course, clears inspection, and ships to the cloud.</p>
+      </header>
+
+      <!-- Scene 1: Connect -->
+      <div class="scene" data-scene="connect">
+        <div class="scene-text reveal">
+          <div class="scene-num">01</div>
+          <h3 class="scene-title">Custom Connections Agent</h3>
+          <p class="scene-body">Browse 25+ pre-built connectors or let the Custom Connections Agent configure any tool with an API. Click Connect and your tools are ready. The dashboard watches token health and auto-refreshes credentials.</p>
+          <p class="scene-note">Connect Google once and Gmail, Sheets, Docs, and Drive are all available through shared OAuth &mdash; one auth flow, many services.</p>
+        </div>
+        <div class="scene-visual reveal reveal-delay-2">
+          <div class="provider-grid" id="provider-grid">
+            <div class="provider-card" style="transition-delay: 0s">
+              <div class="provider-logo"><img src="https://cdn.simpleicons.org/hubspot/FF7A59" alt=""></div>
+              <div class="provider-name">HubSpot</div>
+              <div class="provider-meta">
+                <span class="provider-badge badge-oauth">oauth2</span>
+                <span class="provider-badge badge-crm">crm</span>
+              </div>
+              <div class="provider-connect-btn">Connect</div>
+            </div>
+            <div class="provider-card" style="transition-delay: 0.1s">
+              <div class="provider-logo"><img src="salesforce.svg" alt=""></div>
+              <div class="provider-name">Salesforce</div>
+              <div class="provider-meta">
+                <span class="provider-badge badge-oauth">oauth2</span>
+                <span class="provider-badge badge-crm">crm</span>
+              </div>
+              <div class="provider-connect-btn">Connect</div>
+            </div>
+            <div class="provider-card" style="transition-delay: 0.2s">
+              <div class="provider-logo"><img src="slack.svg" alt=""></div>
+              <div class="provider-name">Slack</div>
+              <div class="provider-meta">
+                <span class="provider-badge badge-oauth">oauth2</span>
+                <span class="provider-badge badge-comm">messaging</span>
+              </div>
+              <div class="provider-connect-btn">Connect</div>
+            </div>
+            <div class="provider-card" style="transition-delay: 0.3s">
+              <div class="provider-logo"><img src="https://cdn.simpleicons.org/gmail/EA4335" alt=""></div>
+              <div class="provider-name">Gmail</div>
+              <div class="provider-meta">
+                <span class="provider-badge badge-oauth">oauth2</span>
+                <span class="provider-badge badge-email">email</span>
+              </div>
+              <div class="provider-connect-btn">Connect</div>
+            </div>
+            <div class="provider-card" style="transition-delay: 0.4s">
+              <div class="provider-logo"><img src="https://cdn.simpleicons.org/stripe/635BFF" alt=""></div>
+              <div class="provider-name">Stripe</div>
+              <div class="provider-meta">
+                <span class="provider-badge badge-apikey">api key</span>
+                <span class="provider-badge badge-pay">payments</span>
+              </div>
+              <div class="provider-connect-btn">Connect</div>
+            </div>
+            <div class="provider-card" style="transition-delay: 0.5s">
+              <div class="provider-logo"><img src="sendgrid.svg" alt=""></div>
+              <div class="provider-name">SendGrid</div>
+              <div class="provider-meta">
+                <span class="provider-badge badge-apikey">api key</span>
+                <span class="provider-badge badge-email">email</span>
+              </div>
+              <div class="provider-connect-btn">Connect</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 2: Chat -->
+      <div class="scene" data-scene="chat">
+        <div class="scene-text reveal">
+          <div class="scene-num">02</div>
+          <h3 class="scene-title">Workflow Builder Agent</h3>
+          <p class="scene-body">Open Workflow Studio and tell the Workflow Builder Agent what you want to build. It checks your connected integrations, reads their API docs, and drafts the workflow with the right routing, scoring, and execution steps.</p>
+        </div>
+        <div class="scene-visual reveal reveal-delay-2">
+          <div class="chat-demo">
+            <div class="chat-header">
+              <div class="chat-header-dot"></div>
+              <div class="chat-header-title">Workflow Builder Agent</div>
+            </div>
+            <div class="chat-body" id="chat-body">
+              <div class="chat-msg chat-msg-user" id="chat-user-msg">
+                <div class="chat-msg-text">When a new lead comes into HubSpot, enrich it with company data from Clearbit and route hot leads to Slack</div>
+              </div>
+              <div class="chat-typing" id="chat-typing">
+                <div class="chat-typing-dot"></div>
+                <div class="chat-typing-dot"></div>
+                <div class="chat-typing-dot"></div>
+              </div>
+              <div class="chat-msg chat-msg-ai" id="chat-ai-msg-1">
+                <div class="chat-msg-head">
+                  <span class="chat-ai-icon"></span>
+                  <span class="chat-ai-name">Workflow Builder Agent</span>
+                </div>
+                <div class="chat-msg-text" id="chat-ai-text-1">I'll create a lead enrichment workflow with scoring and Slack routing. Let me check your active connections and read the HubSpot API schema...</div>
+              </div>
+              <div class="chat-msg chat-msg-ai" id="chat-ai-msg-2">
+                <div class="chat-msg-head">
+                  <span class="chat-ai-icon"></span>
+                  <span class="chat-ai-name">Workflow Builder Agent</span>
+                </div>
+                <div class="chat-msg-text" id="chat-ai-text-2">I recommend using <strong>Staged AI Processing</strong> with <strong>Write Checkpoints</strong>. Here's the workflow &mdash; check the Code tab to review.</div>
+              </div>
+            </div>
+            <div class="chat-tools" id="chat-tools">
+              <div class="chat-tool-badge" style="transition-delay: 0s"><i class="ph ph-check-circle"></i> Checking connections</div>
+              <div class="chat-tool-badge" style="transition-delay: 0.15s"><i class="ph ph-book-open"></i> Reading HubSpot API</div>
+              <div class="chat-tool-badge" style="transition-delay: 0.3s"><i class="ph ph-code"></i> Generating workflow</div>
+            </div>
+            <div class="chat-input-demo">Describe your next workflow...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 3: Build -->
+      <div class="scene" data-scene="build">
+        <div class="scene-text reveal">
+          <div class="scene-num">03</div>
+          <h3 class="scene-title">Load the cargo</h3>
+          <p class="scene-body">The AI assembles your workflow in TypeScript &mdash; every integration call authenticated, every route type-safe. A flow diagram renders the shipping manifest so you see exactly what's on board and where it's headed.</p>
+        </div>
+        <div class="scene-visual reveal reveal-delay-2">
+          <div class="build-demo">
+            <div class="build-tabs">
+              <div class="build-tab">Flow</div>
+              <div class="build-tab active">Code</div>
+              <div class="build-tab">Preview</div>
+              <div class="build-tab">Build</div>
+            </div>
+            <div class="build-split">
+              <div class="build-code" id="build-code">
+                <pre id="code-lines"><span class="code-line-anim" style="transition-delay:0s"><span class="kw">import</span> { <span class="fn">defineWorkflow</span>, <span class="fn">triggers</span> }</span>
+<span class="code-line-anim" style="transition-delay:.08s">  <span class="kw">from</span> <span class="str">"@gtmship/sdk"</span>;</span>
+<span class="code-line-anim" style="transition-delay:.16s"></span>
+<span class="code-line-anim" style="transition-delay:.24s"><span class="kw">export default</span> <span class="fn">defineWorkflow</span>({</span>
+<span class="code-line-anim" style="transition-delay:.32s">  <span class="prop">id</span>: <span class="str">"enrich-lead"</span>,</span>
+<span class="code-line-anim" style="transition-delay:.40s">  <span class="prop">trigger</span>: <span class="fn">triggers</span>.<span class="fn">webhook</span>(<span class="str">"/enrich"</span>),</span>
+<span class="code-line-anim" style="transition-delay:.48s"></span>
+<span class="code-line-anim" style="transition-delay:.56s">  <span class="kw">async</span> <span class="fn">run</span>(<span class="prop">ctx</span>, <span class="prop">payload</span>) {</span>
+<span class="code-line-anim" style="transition-delay:.64s">    <span class="cmt">// Read lead from HubSpot</span></span>
+<span class="code-line-anim" style="transition-delay:.72s">    <span class="kw">const</span> lead = <span class="kw">await</span> <span class="prop">ctx</span></span>
+<span class="code-line-anim" style="transition-delay:.80s">      .<span class="fn">integration</span>(<span class="str">"hubspot"</span>)</span>
+<span class="code-line-anim" style="transition-delay:.88s">      .<span class="fn">read</span>(<span class="str">"/crm/v3/contacts"</span>);</span>
+<span class="code-line-anim" style="transition-delay:.96s"></span>
+<span class="code-line-anim" style="transition-delay:1.04s">    <span class="cmt">// Enrich with Clearbit</span></span>
+<span class="code-line-anim" style="transition-delay:1.12s">    <span class="kw">const</span> company = <span class="kw">await</span> <span class="prop">ctx</span></span>
+<span class="code-line-anim" style="transition-delay:1.20s">      .<span class="fn">integration</span>(<span class="str">"clearbit"</span>)</span>
+<span class="code-line-anim" style="transition-delay:1.28s">      .<span class="fn">read</span>(<span class="str">"/v2/companies"</span>);</span>
+<span class="code-line-anim" style="transition-delay:1.36s"></span>
+<span class="code-line-anim" style="transition-delay:1.44s">    <span class="cmt">// Score and route</span></span>
+<span class="code-line-anim" style="transition-delay:1.52s">    <span class="kw">if</span> (company.employees > <span class="str">50</span>) {</span>
+<span class="code-line-anim" style="transition-delay:1.60s">      <span class="kw">await</span> <span class="prop">ctx</span>.<span class="fn">integration</span>(<span class="str">"slack"</span>)</span>
+<span class="code-line-anim" style="transition-delay:1.68s">        .<span class="fn">write</span>(<span class="str">"/chat.postMessage"</span>,</span>
+<span class="code-line-anim" style="transition-delay:1.76s">        { <span class="prop">channel</span>: <span class="str">"#hot-leads"</span> });</span>
+<span class="code-line-anim" style="transition-delay:1.84s">    }</span>
+<span class="code-line-anim" style="transition-delay:1.92s">  }</span>
+<span class="code-line-anim" style="transition-delay:2.0s">});</span></pre>
+              </div>
+              <div class="build-flow">
+                <svg class="flow-svg" viewBox="0 0 220 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Edges (drawn behind nodes) -->
+                  <line class="flow-edge" x1="110" y1="38" x2="110" y2="72" stroke="#3b82f680" stroke-width="1.5" style="transition-delay: 1.4s"/>
+                  <line class="flow-edge" x1="110" y1="108" x2="110" y2="132" stroke="#3b82f680" stroke-width="1.5" style="transition-delay: 1.6s"/>
+                  <line class="flow-edge" x1="110" y1="168" x2="110" y2="192" stroke="#3b82f680" stroke-width="1.5" style="transition-delay: 1.8s"/>
+                  <line class="flow-edge" x1="110" y1="228" x2="70" y2="262" stroke="#3b82f680" stroke-width="1.5" style="transition-delay: 2.0s"/>
+                  <line class="flow-edge" x1="110" y1="228" x2="150" y2="262" stroke="#3b82f680" stroke-width="1.5" style="transition-delay: 2.0s"/>
+
+                  <!-- Nodes -->
+                  <g class="flow-node" style="transition-delay: 0.2s">
+                    <rect x="55" y="10" width="110" height="28" rx="6" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
+                    <text x="110" y="28" text-anchor="middle" fill="#e5e5e5" font-size="9" font-family="Space Grotesk">Webhook /enrich</text>
+                  </g>
+                  <g class="flow-node" style="transition-delay: 0.5s">
+                    <rect x="40" y="72" width="140" height="36" rx="8" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
+                    <text x="110" y="86" text-anchor="middle" fill="#93c5fd" font-size="8" font-family="Space Mono">ctx.integration("hubspot")</text>
+                    <text x="110" y="99" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">Read contacts</text>
+                  </g>
+                  <g class="flow-node" style="transition-delay: 0.8s">
+                    <rect x="40" y="132" width="140" height="36" rx="8" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
+                    <text x="110" y="146" text-anchor="middle" fill="#93c5fd" font-size="8" font-family="Space Mono">ctx.integration("clearbit")</text>
+                    <text x="110" y="159" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">Enrich company</text>
+                  </g>
+                  <g class="flow-node" style="transition-delay: 1.1s">
+                    <rect x="65" y="192" width="90" height="36" rx="8" fill="#18181b" stroke="#fcd34d40" stroke-width="1"/>
+                    <text x="110" y="207" text-anchor="middle" fill="#fde68a" font-size="8" font-family="Space Grotesk">Score Lead</text>
+                    <text x="110" y="219" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">employees > 50?</text>
+                  </g>
+                  <g class="flow-node" style="transition-delay: 1.5s">
+                    <rect x="15" y="262" width="110" height="28" rx="6" fill="#18181b" stroke="#10b98140" stroke-width="1"/>
+                    <text x="70" y="280" text-anchor="middle" fill="#6ee7b7" font-size="8" font-family="Space Grotesk">Post to #hot-leads</text>
+                  </g>
+                  <g class="flow-node" style="transition-delay: 1.5s">
+                    <rect x="95" y="262" width="110" height="28" rx="6" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
+                    <text x="150" y="280" text-anchor="middle" fill="#a1a1aa" font-size="8" font-family="Space Grotesk">Update CRM</text>
+                  </g>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 4: Preview -->
+      <div class="scene" data-scene="preview">
+        <div class="scene-text reveal">
+          <div class="scene-num">04</div>
+          <h3 class="scene-title">Dry dock inspection</h3>
+          <p class="scene-body">Before any ship leaves port, it gets inspected. GTMship runs your workflow in a sandbox &mdash; reads hit live APIs, but writes pause at checkpoints and wait for your signoff. No cargo goes overboard by accident.</p>
+        </div>
+        <div class="scene-visual reveal reveal-delay-2">
+          <div class="preview-demo">
+            <div class="preview-header">
+              <span class="preview-title">Preview Results</span>
+              <span class="preview-badge-pass" id="preview-badge">Passed</span>
+            </div>
+            <div class="preview-ops" id="preview-ops">
+              <div class="preview-op" style="transition-delay: 0s">
+                <div class="preview-op-icon op-success"><i class="ph ph-check"></i></div>
+                <div class="preview-op-text">Read HubSpot contacts</div>
+                <span class="preview-op-status status-pass">200 OK</span>
+              </div>
+              <div class="preview-op" style="transition-delay: 0.2s">
+                <div class="preview-op-icon op-success"><i class="ph ph-check"></i></div>
+                <div class="preview-op-text">Enrich via Clearbit</div>
+                <span class="preview-op-status status-pass">200 OK</span>
+              </div>
+              <div class="preview-op" style="transition-delay: 0.4s">
+                <div class="preview-op-icon op-pending"><i class="ph ph-shield-check"></i></div>
+                <div class="preview-op-text">Write: Update lead score in HubSpot</div>
+                <span class="preview-op-status status-approval">Awaiting approval</span>
+              </div>
+              <div class="preview-op" style="transition-delay: 0.6s">
+                <div class="preview-op-icon op-pending"><i class="ph ph-shield-check"></i></div>
+                <div class="preview-op-text">Write: Post to Slack #hot-leads</div>
+                <span class="preview-approve-btn">Approve</span>
+              </div>
+              <div class="preview-op" style="transition-delay: 0.8s">
+                <div class="preview-op-icon op-waiting"><i class="ph ph-clock"></i></div>
+                <div class="preview-op-text">Return enrichment summary</div>
+                <span class="preview-op-status status-waiting">Pending</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 5: Deploy -->
+      <div class="scene" data-scene="deploy">
+        <div class="scene-text reveal">
+          <div class="scene-num">05</div>
+          <h3 class="scene-title">Launch the ship</h3>
+          <p class="scene-body">Choose your waters &mdash; AWS or GCP. GTMship provisions the infrastructure, loads your secrets into the ship's vault, and launches. Your code sails on your own cloud account. You keep the keys.</p>
+        </div>
+        <div class="scene-visual reveal reveal-delay-2">
+          <div class="deploy-demo" id="deploy-demo">
+            <div class="deploy-provider-toggle">
+              <div class="deploy-provider-btn active">AWS</div>
+              <div class="deploy-provider-btn">GCP</div>
+            </div>
+            <div class="deploy-region">
+              <span class="deploy-region-label">Region</span>
+              <span class="deploy-region-select">US East (N. Virginia)</span>
+            </div>
+            <div class="deploy-btn" id="deploy-btn">Launch to AWS (us-east-1)</div>
+            <div class="deploy-infra" id="deploy-infra">
+              <div class="deploy-infra-item" style="transition-delay: 0s">
+                <span class="deploy-infra-icon"><i class="ph ph-check-circle"></i></span>
+                <span class="deploy-infra-label">Lambda</span>
+                <span class="deploy-infra-value">enrich-lead</span>
+              </div>
+              <div class="deploy-infra-item" style="transition-delay: 0.15s">
+                <span class="deploy-infra-icon"><i class="ph ph-check-circle"></i></span>
+                <span class="deploy-infra-label">API Gateway</span>
+                <span class="deploy-infra-value">xxx.lambda-url.us-east-1.on.aws</span>
+              </div>
+              <div class="deploy-infra-item" style="transition-delay: 0.3s">
+                <span class="deploy-infra-icon"><i class="ph ph-check-circle"></i></span>
+                <span class="deploy-infra-label">Secrets</span>
+                <span class="deploy-infra-value">3 secrets synced</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 6: Logs -->
+      <div class="scene" data-scene="logs">
+        <div class="scene-text reveal">
+          <div class="scene-num">06</div>
+          <h3 class="scene-title">Track the fleet</h3>
+          <p class="scene-body">Once your ships are at sea, watch them from the control room. Stream execution logs in real time, filter by vessel, time range, or signal level. Auto-refresh keeps the radar live while you investigate.</p>
+        </div>
+        <div class="scene-visual reveal reveal-delay-2">
+          <div class="logs-demo">
+            <div class="logs-header">
+              <span class="logs-title">Ship's Log &mdash; Execution</span>
+              <span class="logs-filter-pill active">Last 1h</span>
+              <span class="logs-filter-pill">Auto-refresh: on</span>
+            </div>
+            <div class="logs-body" id="logs-body">
+              <div class="log-entry" style="transition-delay: 0s">
+                <span class="log-time">14:32:01.204</span>
+                <span class="log-level log-level-info">info</span>
+                <span class="log-message">Webhook received: POST /enrich</span>
+              </div>
+              <div class="log-entry" style="transition-delay: 0.15s">
+                <span class="log-time">14:32:01.412</span>
+                <span class="log-level log-level-info">info</span>
+                <span class="log-message">Reading HubSpot contact for lead@acme.com</span>
+              </div>
+              <div class="log-entry" style="transition-delay: 0.3s">
+                <span class="log-time">14:32:02.087</span>
+                <span class="log-level log-level-info">info</span>
+                <span class="log-message">Clearbit enrichment: company_size=520, industry=SaaS</span>
+              </div>
+              <div class="log-entry" style="transition-delay: 0.45s">
+                <span class="log-time">14:32:02.134</span>
+                <span class="log-level log-level-warn">warn</span>
+                <span class="log-message">Write checkpoint: updating lead score to 87</span>
+              </div>
+              <div class="log-entry" style="transition-delay: 0.6s">
+                <span class="log-time">14:32:02.891</span>
+                <span class="log-level log-level-info">info</span>
+                <span class="log-message">Slack notification sent to #hot-leads</span>
+              </div>
+              <div class="log-entry" style="transition-delay: 0.75s">
+                <span class="log-time">14:32:03.102</span>
+                <span class="log-level log-level-info">info</span>
+                <span class="log-message">Workflow completed in 1.9s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAVE -->
+  <div class="wave-divider wave-divider-sm">
+    <svg viewBox="0 0 2400 48" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24 L2400 48 L0 48Z" fill="#0a0a0a" stroke="none"/>
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24" fill="none" stroke="#00e5ff10" stroke-width="1"/>
+    </svg>
+  </div>
+
+  <!-- CONNECTIONS AGENT -->
+  <section class="connections-agent" id="connections-agent">
+    <div class="wrap">
+      <header class="reveal">
+        <p class="label" style="color: var(--accent-cyan);">Custom Connections Agent</p>
+        <h2 class="section-title">Connect any API with the <span style="color: var(--accent-cyan);">Custom Connections Agent.</span></h2>
+        <p class="section-sub">Got an API? The Custom Connections Agent reads the docs, configures OAuth or API keys, and handles auth &mdash; even for tools we've never seen. No pre-built connector needed.</p>
+      </header>
+
+      <div class="agent-columns">
+        <div class="agent-col reveal">
+          <div class="agent-col-header"><i class="ph ph-compass" style="margin-right: 6px;"></i> Browse Integrations</div>
+          <div class="agent-col-body">
+            <div class="mini-search"><i class="ph ph-magnifying-glass" style="margin-right: 4px;"></i> Search integrations...</div>
+            <div class="mini-category-pills">
+              <span class="mini-cat-pill active">All</span>
+              <span class="mini-cat-pill">CRM</span>
+              <span class="mini-cat-pill">Email</span>
+              <span class="mini-cat-pill">Messaging</span>
+              <span class="mini-cat-pill">Payments</span>
+              <span class="mini-cat-pill" style="border-style: dashed;">Custom</span>
+            </div>
+            <div class="mini-provider-list">
+              <div class="mini-provider-row">
+                <img src="https://cdn.simpleicons.org/hubspot/FF7A59" alt="">
+                <span class="mini-provider-row-name">HubSpot</span>
+                <span class="mini-provider-row-btn">Connect</span>
+              </div>
+              <div class="mini-provider-row">
+                <img src="salesforce.svg" alt="">
+                <span class="mini-provider-row-name">Salesforce</span>
+                <span class="mini-provider-row-btn">Connect</span>
+              </div>
+              <div class="mini-provider-row" style="border: 1px dashed var(--zinc-700); background: transparent;">
+                <span style="width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,var(--accent-cyan),var(--accent-purple));display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;flex-shrink:0;"><i class="ph ph-plus"></i></span>
+                <span class="mini-provider-row-name" style="color: var(--zinc-400);">Any API...</span>
+                <span class="mini-provider-row-btn" style="border-color: var(--accent-cyan); color: var(--accent-cyan);">Add</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="agent-col reveal reveal-delay-2">
+          <div class="agent-col-header"><i class="ph ph-anchor" style="margin-right: 6px;"></i> Configure Auth</div>
+          <div class="agent-col-body">
+            <div class="mini-modal">
+              <div class="mini-modal-title">Connect HubSpot</div>
+              <div class="mini-modal-sub">OAuth2 authentication</div>
+              <div class="mini-field">
+                <label class="mini-field-label">Redirect URL</label>
+                <div class="mini-field-input">http://localhost:4000/auth/hubspot/callback</div>
+              </div>
+              <div class="mini-field">
+                <label class="mini-field-label">Client ID</label>
+                <div class="mini-field-input" style="color: var(--zinc-600);">Paste your HubSpot client ID</div>
+              </div>
+              <div class="mini-field">
+                <label class="mini-field-label">Client Secret</label>
+                <div class="mini-field-input" style="color: var(--zinc-600);">&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;</div>
+              </div>
+              <div class="mini-authorize-btn">Authorize with HubSpot</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="agent-col reveal reveal-delay-4">
+          <div class="agent-col-header"><i class="ph ph-lifebuoy" style="margin-right: 6px;"></i> Custom Connections Agent <span style="font-size: 0.6rem; color: var(--accent-cyan); font-weight: 500; margin-left: 4px;">any API</span></div>
+          <div class="agent-col-body">
+            <div class="mini-agent-chat">
+              <div class="mini-agent-msg mini-agent-msg-user">Connect my company's internal CRM &mdash; here are the API docs</div>
+              <div class="mini-agent-msg mini-agent-msg-ai">I've read the OpenAPI spec. It uses Bearer token auth with <strong>3 endpoints</strong>: contacts, deals, and activities. I'll configure the connection now.</div>
+              <div class="mini-agent-msg mini-agent-msg-ai" style="border-color: rgba(0, 229, 255, 0.2);">Connection configured and tested. Your custom CRM is ready to use in workflows.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="connection-strip reveal">
+        <div class="connection-status-card">
+          <img src="https://cdn.simpleicons.org/hubspot/FF7A59" alt="">
+          <span class="connection-status-name">HubSpot</span>
+          <span class="connection-status-pill pill-active">Active</span>
+        </div>
+        <div class="connection-status-card">
+          <img src="salesforce.svg" alt="">
+          <span class="connection-status-name">Salesforce</span>
+          <span class="connection-status-pill pill-active">Active</span>
+        </div>
+        <div class="connection-status-card">
+          <img src="https://cdn.simpleicons.org/gmail/EA4335" alt="">
+          <span class="connection-status-name">Gmail</span>
+          <span class="connection-status-pill pill-expiring">Expiring</span>
+        </div>
+        <div class="connection-status-card">
+          <img src="https://cdn.simpleicons.org/stripe/635BFF" alt="">
+          <span class="connection-status-name">Stripe</span>
+          <span class="connection-status-pill pill-active">Active</span>
+        </div>
+        <div class="connection-status-card" style="border-color: rgba(0, 229, 255, 0.25); box-shadow: 0 0 12px rgba(0, 229, 255, 0.06);">
+          <span style="width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;flex-shrink:0;"><i class="ph ph-plug"></i></span>
+          <span class="connection-status-name">Custom CRM</span>
+          <span class="connection-status-pill pill-active">Active</span>
+        </div>
+        <div class="connection-status-card" style="border-style: dashed; border-color: var(--zinc-700);">
+          <span style="width:16px;height:16px;border-radius:4px;background:var(--zinc-800);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--zinc-500);flex-shrink:0;"><i class="ph ph-plus"></i></span>
+          <span class="connection-status-name" style="color: var(--zinc-500);">Any API...</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAVE -->
+  <div class="wave-divider wave-divider-sm">
+    <svg viewBox="0 0 2400 48" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24 L2400 48 L0 48Z" fill="#0a0a0a" stroke="none"/>
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24" fill="none" stroke="#00e5ff10" stroke-width="1"/>
+    </svg>
+  </div>
+
+  <!-- DASHBOARD + CLI -->
+  <section class="dash-cli" id="dashboard">
+    <div class="wrap">
+      <header class="reveal">
+        <p class="label">Two Ways to Captain</p>
+        <h2 class="section-title">Bridge controls or command line. Same ship.</h2>
+        <p class="section-sub">Steer from the visual dashboard or the terminal. Every feature works in both, so you pick the helm that fits.</p>
+      </header>
+
+      <div class="dash-cli-grid">
+        <div class="dash-cli-panel reveal">
+          <div class="dash-cli-panel-label"><i class="ph ph-compass"></i> The Bridge &mdash; Visual Dashboard</div>
+          <div class="full-dash-preview">
+            <div class="full-dash-sidebar">
+              <div class="full-dash-brand">
+                <div class="full-dash-brand-text"><i class="ph ph-sailboat" style="margin-right:4px;color:var(--accent-cyan)"></i>GTM<span>ship</span></div>
+                <div class="full-dash-brand-sub">Ship GTM workflows</div>
+              </div>
+              <div class="full-dash-nav">
+                <div class="full-dash-nav-item"><i class="ph ph-link"></i> Connections</div>
+                <div class="full-dash-nav-item active"><i class="ph ph-git-branch"></i> Workflows</div>
+                <div class="full-dash-nav-item"><i class="ph ph-rocket"></i> Deploy</div>
+                <div class="full-dash-nav-item"><i class="ph ph-scroll"></i> Logs</div>
+                <div class="full-dash-nav-item"><i class="ph ph-gear"></i> Settings</div>
+              </div>
+            </div>
+            <div class="full-dash-content">
+              <div class="full-dash-tab-bar">
+                <div class="full-dash-tab">Flow</div>
+                <div class="full-dash-tab active">Code</div>
+                <div class="full-dash-tab">Preview</div>
+                <div class="full-dash-tab">Build</div>
+                <div class="full-dash-tab">Deploy</div>
+              </div>
+              <div class="full-dash-workspace">
+                <div class="full-dash-chat">
+                  <div class="full-dash-chat-msg full-dash-chat-user">Route hot leads to the sales team on Slack</div>
+                  <div class="full-dash-chat-msg full-dash-chat-ai">I'll build a lead routing workflow with scoring logic. Checking your HubSpot, Clearbit, and Slack connections now...</div>
+                  <div class="full-dash-chat-msg full-dash-chat-ai">Generated the workflow. It uses Staged AI Processing to score leads and route them based on company size and intent signals.</div>
+                </div>
+                <div class="full-dash-code">
+                  <pre><span class="kw">export default</span> <span class="fn">defineWorkflow</span>({
+  <span class="str">"route-hot-leads"</span>,
+  trigger: <span class="fn">triggers</span>.webhook(),
+
+  <span class="kw">async</span> <span class="fn">run</span>(ctx, payload) {
+    <span class="kw">const</span> lead = <span class="kw">await</span> ctx
+      .integration(<span class="str">"hubspot"</span>)
+      .read(<span class="str">"/contacts"</span>);
+
+    <span class="kw">const</span> score = <span class="kw">await</span> ctx
+      .ai.generate({ ... });
+
+    <span class="kw">if</span> (score > 80) {
+      <span class="kw">await</span> ctx.integration(<span class="str">"slack"</span>)
+        .write(<span class="str">"/chat.post"</span>);
+    }
+  }
+});</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-cli-panel reveal reveal-delay-2">
+          <div class="dash-cli-panel-label"><i class="ph ph-terminal-window"></i> The Helm &mdash; CLI</div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot r"></span>
+              <span class="terminal-dot y"></span>
+              <span class="terminal-dot g"></span>
+              <span class="terminal-title">Terminal</span>
+            </div>
+            <div class="terminal-body">
+              <div><span class="t-prompt">$ </span><span class="t-cmd">gtmship open</span></div>
+              <div><span class="t-out">Dashboard: <span class="t-url">http://localhost:3000</span></span></div>
+              <div><span class="t-out">Auth service: <span class="t-url">http://localhost:4000</span></span></div>
+              <span class="t-gap"></span>
+              <div><span class="t-prompt">$ </span><span class="t-cmd">gtmship connections connect hubspot</span></div>
+              <div><span class="t-out">Opening OAuth flow...</span></div>
+              <div><span class="t-out">Connected HubSpot (oauth2)</span></div>
+              <span class="t-gap"></span>
+              <div><span class="t-prompt">$ </span><span class="t-cmd">gtmship deploy --provider aws</span></div>
+              <div><span class="t-out">Building enrich-lead...</span></div>
+              <div><span class="t-out">Deploying to AWS Lambda...</span></div>
+              <div><span class="t-out">Live at <span class="t-url">https://xxx.lambda-url.us-east-1.on.aws</span></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAVE -->
+  <div class="wave-divider wave-divider-sm">
+    <svg viewBox="0 0 2400 48" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24 L2400 48 L0 48Z" fill="#0a0a0a" stroke="none"/>
+      <path d="M0 24 C150 8, 350 40, 600 24 C850 8, 1050 40, 1200 24 C1350 8, 1550 40, 1800 24 C2050 8, 2250 40, 2400 24" fill="none" stroke="#00e5ff10" stroke-width="1"/>
+    </svg>
+  </div>
+
+  <!-- FEATURES -->
+  <section class="features" id="features">
+    <div class="wrap">
+      <header class="reveal">
+        <p class="label">Ship's Equipment</p>
+        <h2 class="section-title">Everything aboard for the voyage</h2>
+        <p class="section-sub">From docking integrations to tracking your fleet at sea.</p>
+      </header>
+      <div class="features-grid">
+        <div class="feat-card featured reveal">
+          <div class="feat-icon"><i class="ph ph-compass"></i></div>
+          <h3>Workflow Builder Agent</h3>
+          <p>Chat with the Workflow Builder Agent to build automations. It reads your API docs, generates validated code, and helps you iterate from prompt to deploy.</p>
+          <a class="feat-link" href="docs/workflow-builder-agent/index.html">Read Workflow Builder Agent docs <i class="ph ph-arrow-right"></i></a>
+        </div>
+        <div class="feat-card reveal">
+          <div class="feat-icon"><i class="ph ph-anchor"></i></div>
+          <h3>Custom Connections Agent</h3>
+          <p>25+ pre-built connectors, plus the Custom Connections Agent can configure any tool with an API. Point it at the docs, it handles auth. Tokens auto-refresh, credentials stay encrypted.</p>
+          <a class="feat-link" href="docs/custom-connections-agent/index.html">Read Custom Connections Agent docs <i class="ph ph-arrow-right"></i></a>
+        </div>
+        <div class="feat-card reveal">
+          <div class="feat-icon"><i class="ph ph-lifebuoy"></i></div>
+          <h3>Dry Dock Checkpoints</h3>
+          <p>Every write operation drops anchor and waits for your signal. Preview runs the workflow in a dry dock so you see exactly what sails before it touches live water.</p>
+          <a class="feat-link" href="docs/write-checkpoints/index.html">Read write checkpoint docs <i class="ph ph-arrow-right"></i></a>
+        </div>
+        <div class="feat-card reveal">
+          <div class="feat-icon"><i class="ph ph-sailboat"></i></div>
+          <h3>Multi-Ocean Deploy</h3>
+          <p>Launch to AWS Lambda or GCP Cloud Run. GTMship rigs the infrastructure, stows your secrets, and sets the course. Your code sails in your cloud account.</p>
+          <a class="feat-link" href="docs/deployment/index.html">Read deployment docs <i class="ph ph-arrow-right"></i></a>
+        </div>
+        <div class="feat-card reveal">
+          <div class="feat-icon"><i class="ph ph-scroll"></i></div>
+          <h3>Ship's Log &mdash; AI Memory</h3>
+          <p>GTMship remembers your provider configurations, API patterns, and business rules across sessions. No re-explaining your stack every time you come back.</p>
+          <a class="feat-link" href="docs/ai-memory/index.html">Read AI memory docs <i class="ph ph-arrow-right"></i></a>
+        </div>
+        <div class="feat-card reveal">
+          <div class="feat-icon"><i class="ph ph-steering-wheel"></i></div>
+          <h3>Bridge + Helm</h3>
+          <p>Full visual dashboard for building and monitoring. Full CLI for automation and CI pipelines. Captain from the bridge or the helm &mdash; same ship.</p>
+          <a class="feat-link" href="docs/dashboard-cli/index.html">Read dashboard + CLI docs <i class="ph ph-arrow-right"></i></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPARISON -->
+  <section class="comparison" id="comparison">
+    <div class="wrap">
+      <div class="comparison-shell">
+        <div class="comparison-header">
+          <header class="reveal">
+            <p class="label" style="color: var(--accent-cyan);">Choose Your Vessel</p>
+            <h2 class="section-title">GTMship sits in a different lane than Zapier, Make, and n8n.</h2>
+            <p class="section-sub">Those products are strong automation platforms. GTMship is built for teams that want AI to author the workflow, preview risky changes before they write, and deploy the result into their own cloud account.</p>
+          </header>
+        </div>
+
+        <div class="comparison-table-wrap reveal reveal-delay-2">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col" class="is-gtm">
+                  <span class="comparison-product">GTMship</span>
+                  <span class="comparison-product-sub">AI GTM platform</span>
+                </th>
+                <th scope="col">
+                  <span class="comparison-product">Zapier</span>
+                  <span class="comparison-product-sub">Task-based SaaS</span>
+                </th>
+                <th scope="col">
+                  <span class="comparison-product">Make</span>
+                  <span class="comparison-product-sub">Visual scenario builder</span>
+                </th>
+                <th scope="col">
+                  <span class="comparison-product">n8n</span>
+                  <span class="comparison-product-sub">Developer workflow engine</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row" class="comparison-rowhead">What it is</th>
+                <td class="comparison-cell is-gtm"><strong>Plain-English to deployed GTM workflow.</strong> GTMship builds validated workflow code, configures connections, and ships the result to your cloud.</td>
+                <td class="comparison-cell">Managed app-to-app automation for quick business workflows.</td>
+                <td class="comparison-cell">Canvas-based automation builder for multi-step scenarios and branching logic.</td>
+                <td class="comparison-cell">Workflow automation and AI agent builder for technical teams.</td>
+              </tr>
+              <tr>
+                <th scope="row" class="comparison-rowhead">Ownership</th>
+                <td class="comparison-cell is-gtm"><strong>Open source, MIT licensed.</strong> You keep control of the code path and runtime footprint.</td>
+                <td class="comparison-cell">Managed SaaS product.</td>
+                <td class="comparison-cell">Managed SaaS product.</td>
+                <td class="comparison-cell">Cloud service plus self-hosted option.</td>
+              </tr>
+              <tr>
+                <th scope="row" class="comparison-rowhead">Where it runs</th>
+                <td class="comparison-cell is-gtm"><strong>Your AWS Lambda or GCP Cloud Run account.</strong> Secrets, logs, and deployment stay with your cloud footprint.</td>
+                <td class="comparison-cell">Zapier cloud.</td>
+                <td class="comparison-cell">Make cloud.</td>
+                <td class="comparison-cell">n8n Cloud or your own self-hosted runtime.</td>
+              </tr>
+              <tr>
+                <th scope="row" class="comparison-rowhead">Vendor meter</th>
+                <td class="comparison-cell is-gtm"><strong>Deployment-first.</strong> GTMship is designed around shipping workflows to your cloud instead of charging by tasks, credits, or executions in a vendor runtime.</td>
+                <td class="comparison-cell">Tasks.</td>
+                <td class="comparison-cell">Credits.</td>
+                <td class="comparison-cell">Executions.</td>
+              </tr>
+              <tr>
+                <th scope="row" class="comparison-rowhead">Entry price</th>
+                <td class="comparison-cell is-gtm"><strong>Free self-hosted by default, with optional managed hosting from $9/mo.</strong> GTMship leads with OSS and only adds a paid path for teams that want us to host or run the workflow for them.</td>
+                <td class="comparison-cell">$19.99/mo for 750 tasks, billed annually.</td>
+                <td class="comparison-cell">$9/mo for 10,000 credits, billed annually.</td>
+                <td class="comparison-cell">EUR20/mo for 2,500 executions, billed annually, or self-host the Community Edition.</td>
+              </tr>
+              <tr>
+                <th scope="row" class="comparison-rowhead">AI surface</th>
+                <td class="comparison-cell is-gtm"><strong>Workflow Builder Agent, Custom Connections Agent, and AI Memory.</strong> AI authors the workflow and remembers project context across sessions.</td>
+                <td class="comparison-cell">Zapier Agents.</td>
+                <td class="comparison-cell">Make AI Agents.</td>
+                <td class="comparison-cell">AI Agent node.</td>
+              </tr>
+              <tr>
+                <th scope="row" class="comparison-rowhead">Best fit</th>
+                <td class="comparison-cell is-gtm"><strong>GTM teams that need custom APIs, guarded write flows, and production deployment ownership.</strong></td>
+                <td class="comparison-cell">Teams optimizing for easy app coverage and fast no-code setup.</td>
+                <td class="comparison-cell">Ops teams that want richer visual logic without running infrastructure.</td>
+                <td class="comparison-cell">Technical teams comfortable operating the workflow runtime.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="comparison-points">
+          <div class="comparison-point reveal">
+            <i class="ph ph-cloud-arrow-up"></i>
+            <h3>Own the runtime</h3>
+            <p>GTMship deploys to your cloud account, so your infrastructure, secrets, and logs stay in the environment your team already governs.</p>
+          </div>
+          <div class="comparison-point reveal reveal-delay-1">
+            <i class="ph ph-plugs-connected"></i>
+            <h3>Bring any API aboard</h3>
+            <p>The Custom Connections Agent is built for the long tail of GTM tooling, not only the apps already present in a vendor marketplace.</p>
+          </div>
+          <div class="comparison-point reveal reveal-delay-2">
+            <i class="ph ph-lifebuoy"></i>
+            <h3>Preview before you write</h3>
+            <p>Dry-dock previews and write checkpoints give teams a safer path for CRM updates, enrichment, and routing logic.</p>
+          </div>
+          <div class="comparison-point reveal reveal-delay-3">
+            <i class="ph ph-steering-wheel"></i>
+            <h3>Bridge and Helm together</h3>
+            <p>Operate visually in the dashboard or automate from the CLI and CI pipeline without switching to a separate product tier.</p>
+          </div>
+        </div>
+
+        <div class="comparison-sources reveal reveal-delay-4">
+          <p class="comparison-sources-label">Official sources used for competitor research</p>
+          <a class="source-chip" href="https://zapier.com/pricing"><i class="ph ph-arrow-square-out"></i> Zapier pricing</a>
+          <a class="source-chip" href="https://zapier.com/agents"><i class="ph ph-arrow-square-out"></i> Zapier Agents</a>
+          <a class="source-chip" href="https://www.make.com/en/pricing"><i class="ph ph-arrow-square-out"></i> Make pricing</a>
+          <a class="source-chip" href="https://www.make.com/en/ai-agents"><i class="ph ph-arrow-square-out"></i> Make AI Agents</a>
+          <a class="source-chip" href="https://n8n.io/pricing/"><i class="ph ph-arrow-square-out"></i> n8n pricing</a>
+          <a class="source-chip" href="https://docs.n8n.io/integrations/builtin/cluster-nodes/root-nodes/n8n-nodes-langchain.agent/"><i class="ph ph-arrow-square-out"></i> n8n AI Agent docs</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="install-section">
+    <p class="label">Board the Ship</p>
+    <div class="install-block is-disabled">
+      <code>Homebrew install coming soon</code>
+      <span class="copy-hint">Coming soon</span>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section class="pricing" id="pricing">
+    <div class="wrap">
+      <div class="pricing-shell">
+        <div class="pricing-header">
+          <header class="reveal">
+            <p class="label" style="color: var(--accent-cyan);">Optional Commercial Help</p>
+            <h2 class="section-title">Open source stays the default. If you want us to host it or run it with you, here are the starting points.</h2>
+            <p class="section-sub">These are inquiry-only offers for teams that want a lighter lift than self-hosting. The open-source path remains the norm, and every paid option starts with a quick scope check before we commit.</p>
+          </header>
+          <div class="pricing-note reveal reveal-delay-1">
+            <strong>Economical by design</strong>
+            <p>Anchored in April 2026 using Google AI scraper against official infrastructure and automation pricing pages from Google Cloud, n8n, Zapier, Make, and Workato. The hosted tier stays intentionally lean because scale-to-zero infrastructure is inexpensive at small volumes and the service tier is productized instead of agency-priced.</p>
+          </div>
+        </div>
+
+        <div class="pricing-grid">
+          <div class="pricing-cards">
+            <article class="pricing-card is-open-source reveal">
+              <div class="pricing-card-head">
+                <div class="pricing-card-kicker">Default Path</div>
+                <h3 class="pricing-card-title">Open Source / Self-Host</h3>
+                <div class="pricing-card-price">Free<small>Run GTMship in your own stack, your own cloud, your own control plane.</small></div>
+              </div>
+              <p class="pricing-card-copy">Best for teams that want the full OSS path and are comfortable owning deployment, credentials, and runtime operations themselves.</p>
+              <ul class="pricing-card-list">
+                <li><i class="ph ph-check-circle"></i> MIT-licensed core product experience</li>
+                <li><i class="ph ph-check-circle"></i> Deploy to your own AWS Lambda or GCP Cloud Run footprint</li>
+                <li><i class="ph ph-check-circle"></i> Best fit when your team wants maximum control</li>
+              </ul>
+              <a class="pricing-card-action" href="docs/index.html"><i class="ph ph-book-open"></i> Read the Docs</a>
+            </article>
+
+            <article class="pricing-card is-highlighted reveal reveal-delay-1">
+              <div class="pricing-card-head">
+                <div class="pricing-card-kicker">Hosted Option</div>
+                <h3 class="pricing-card-title">Managed Hosting</h3>
+                <div class="pricing-card-price">Starting at $9/mo<small>Growth from $29/mo for multiple workflows, higher run volume, or more hands-on support.</small></div>
+              </div>
+              <p class="pricing-card-copy">For teams that want GTMship hosted for them instead of owning the infra from day one.</p>
+              <ul class="pricing-card-list">
+                <li><i class="ph ph-cloud-arrow-up"></i> We run and maintain the workflow runtime for you</li>
+                <li><i class="ph ph-chart-line-up"></i> Built for light-to-moderate workflow volume with room to grow</li>
+                <li><i class="ph ph-lifebuoy"></i> Includes a contact-first onboarding path instead of self-serve signup</li>
+              </ul>
+              <a class="pricing-card-action" href="pricing/index.html?interest=hosted#pricing-inquiry"><i class="ph ph-paper-plane-tilt"></i> Ask about hosted GTMship</a>
+            </article>
+
+            <article class="pricing-card is-services reveal reveal-delay-2">
+              <div class="pricing-card-head">
+                <div class="pricing-card-kicker">Done-For-You</div>
+                <h3 class="pricing-card-title">GTM Services</h3>
+                <div class="pricing-card-price">Starting at $49/workflow<small>Maintenance is $19/mo per workflow when you want us to keep it running and tuned.</small></div>
+              </div>
+              <p class="pricing-card-copy">For customers who want us to design, build, launch, and operate the workflow instead of just giving them the tooling.</p>
+              <ul class="pricing-card-list">
+                <li><i class="ph ph-wrench"></i> Scoped build-and-handover for one core GTM workflow</li>
+                <li><i class="ph ph-arrows-clockwise"></i> Optional monthly maintenance for monitoring and minor iterations</li>
+                <li><i class="ph ph-rocket-launch"></i> Best fit for lean teams that need execution, not just software</li>
+              </ul>
+              <a class="pricing-card-action" href="pricing/index.html?interest=services#pricing-inquiry"><i class="ph ph-chat-circle-dots"></i> Talk to us about services</a>
+            </article>
+          </div>
+
+          <aside class="pricing-form-panel reveal reveal-delay-2">
+            <h3>Prefer the full pricing page?</h3>
+            <p>The dedicated pricing page now hosts the inquiry form and the hosted-versus-services breakdown for teams exploring a commercial option.</p>
+            <div style="display: grid; gap: 12px; margin-top: 22px;">
+              <a class="pricing-card-action" href="pricing/index.html"><i class="ph ph-currency-circle-dollar"></i> Open pricing page</a>
+              <a class="pricing-card-action" href="pricing/index.html?interest=hosted#pricing-inquiry"><i class="ph ph-cloud-arrow-up"></i> Start a hosting inquiry</a>
+              <a class="pricing-card-action" href="pricing/index.html?interest=services#pricing-inquiry"><i class="ph ph-wrench"></i> Start a services inquiry</a>
+            </div>
+            <p class="pricing-form-meta" style="margin-top: 18px;">The dedicated page is the primary place for commercial inquiries. The open-source self-hosted path remains the default.</p>
+          </aside>
+        </div>
+
+        <p class="pricing-disclaimer reveal reveal-delay-3">Hosted pricing is designed to stay economical while the open-source path remains the primary story. GTM services are productized packages, not unlimited agency retainers.</p>
+
+        <div class="pricing-sources reveal reveal-delay-4">
+          <p class="pricing-sources-label">Official sources used for pricing research</p>
+          <a class="source-chip" href="https://cloud.google.com/run/pricing"><i class="ph ph-arrow-square-out"></i> Cloud Run pricing</a>
+          <a class="source-chip" href="https://zapier.com/pricing"><i class="ph ph-arrow-square-out"></i> Zapier pricing</a>
+          <a class="source-chip" href="https://www.make.com/en/pricing"><i class="ph ph-arrow-square-out"></i> Make pricing</a>
+          <a class="source-chip" href="https://n8n.io/pricing/"><i class="ph ph-arrow-square-out"></i> n8n pricing</a>
+          <a class="source-chip" href="https://www.workato.com/pricing"><i class="ph ph-arrow-square-out"></i> Workato pricing</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- OPEN SOURCE CTA -->
+  <section class="oss-cta">
+    <div class="wrap">
+      <div class="cta-box reveal">
+        <h2>Open Source. MIT Licensed. Built in the Open.</h2>
+        <p>GTMship is a community-built vessel. The public GitHub repo and contribution flow are still on the way, but the product docs are live now.</p>
+        <div class="cta-actions">
+          <span class="btn-outline is-disabled">
+            <i class="ph ph-star"></i> GitHub Coming Soon
+          </span>
+          <a href="docs/index.html" class="btn-text">
+            Read the Docs <i class="ph ph-arrow-right"></i>
+          </a>
+        </div>
+        <p class="cta-meta">MIT License &middot; TypeScript &middot; pnpm monorepo</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER (injected by shared/components.js) -->
+  <div id="site-footer"></div>
+
+  <!-- JS -->
+  <script src="shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '',
+      page: 'home',
+      showLogo: false
+    });
+  </script>
+  <script>
+    // ===== SCROLL REVEAL =====
+    const revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+
+    document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+    // ===== SCENE ANIMATIONS =====
+    const scenePlayed = new Set();
+
+    const sceneObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const scene = entry.target.dataset.scene;
+          if (scenePlayed.has(scene)) return;
+          scenePlayed.add(scene);
+          playScene(scene);
+        }
+      });
+    }, { threshold: 0.2 });
+
+    document.querySelectorAll('[data-scene]').forEach(el => sceneObserver.observe(el));
+
+    function playScene(scene) {
+      switch (scene) {
+        case 'connect': playConnectScene(); break;
+        case 'chat': playChatScene(); break;
+        case 'build': playBuildScene(); break;
+        case 'preview': playPreviewScene(); break;
+        case 'deploy': playDeployScene(); break;
+        case 'logs': playLogsScene(); break;
+      }
+    }
+
+    // Scene 1: Provider cards appear, then HubSpot highlights
+    function playConnectScene() {
+      const cards = document.querySelectorAll('#provider-grid .provider-card');
+      cards.forEach((card, i) => {
+        setTimeout(() => card.classList.add('visible'), i * 150);
+      });
+      // Highlight HubSpot after all cards appear
+      setTimeout(() => {
+        cards[0].classList.add('connected');
+        cards[0].querySelector('.provider-connect-btn').textContent = 'Connected';
+      }, cards.length * 150 + 600);
+    }
+
+    // Scene 2: Chat messages appear sequentially
+    function playChatScene() {
+      const userMsg = document.getElementById('chat-user-msg');
+      const typing = document.getElementById('chat-typing');
+      const aiMsg1 = document.getElementById('chat-ai-msg-1');
+      const aiMsg2 = document.getElementById('chat-ai-msg-2');
+      const tools = document.querySelectorAll('#chat-tools .chat-tool-badge');
+
+      // User message
+      setTimeout(() => userMsg.classList.add('visible'), 200);
+
+      // Typing indicator
+      setTimeout(() => typing.classList.add('visible'), 1000);
+
+      // AI message 1 (hide typing)
+      setTimeout(() => {
+        typing.classList.remove('visible');
+        aiMsg1.classList.add('visible');
+      }, 2200);
+
+      // Tool badges
+      setTimeout(() => {
+        tools.forEach((badge, i) => {
+          setTimeout(() => badge.classList.add('visible'), i * 200);
+        });
+      }, 2800);
+
+      // AI message 2
+      setTimeout(() => aiMsg2.classList.add('visible'), 3800);
+    }
+
+    // Scene 3: Code lines + flow nodes appear
+    function playBuildScene() {
+      const lines = document.querySelectorAll('#code-lines .code-line-anim');
+      const nodes = document.querySelectorAll('.flow-node');
+      const edges = document.querySelectorAll('.flow-edge');
+
+      // Code lines with staggered delay (already in CSS transition-delay)
+      lines.forEach(line => line.classList.add('visible'));
+
+      // Flow nodes after a brief delay
+      setTimeout(() => {
+        nodes.forEach(node => node.classList.add('visible'));
+      }, 400);
+
+      // Flow edges after nodes
+      setTimeout(() => {
+        edges.forEach(edge => edge.classList.add('visible'));
+      }, 800);
+    }
+
+    // Scene 4: Preview operations appear
+    function playPreviewScene() {
+      const ops = document.querySelectorAll('#preview-ops .preview-op');
+      ops.forEach((op, i) => {
+        setTimeout(() => op.classList.add('visible'), i * 250);
+      });
+    }
+
+    // Scene 5: Deploy button state change + infra items
+    function playDeployScene() {
+      const btn = document.getElementById('deploy-btn');
+      const items = document.querySelectorAll('#deploy-infra .deploy-infra-item');
+
+      // Deploying state
+      setTimeout(() => {
+        btn.classList.add('deploying');
+        btn.textContent = 'Launching...';
+      }, 400);
+
+      // Success state
+      setTimeout(() => {
+        btn.classList.remove('deploying');
+        btn.classList.add('success');
+        btn.textContent = 'Ship launched successfully';
+      }, 2000);
+
+      // Infrastructure items
+      setTimeout(() => {
+        items.forEach((item, i) => {
+          setTimeout(() => item.classList.add('visible'), i * 200);
+        });
+      }, 2400);
+    }
+
+    // Scene 6: Log entries appear
+    function playLogsScene() {
+      const entries = document.querySelectorAll('#logs-body .log-entry');
+      entries.forEach((entry, i) => {
+        setTimeout(() => entry.classList.add('visible'), i * 200);
+      });
+    }
+
+    // ===== SMOOTH SCROLL =====
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', (e) => {
+        const target = document.querySelector(a.getAttribute('href'));
+        if (target) { e.preventDefault(); target.scrollIntoView({ behavior: 'smooth' }); }
+      });
+    });
+
+  </script>
+</body>
+</html>

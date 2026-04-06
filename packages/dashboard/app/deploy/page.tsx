@@ -7,6 +7,7 @@ import {
   Cloud,
   ExternalLink,
   Loader2,
+  Play,
   RefreshCw,
   Rocket,
 } from "lucide-react";
@@ -24,6 +25,7 @@ import {
   buildDeploymentLogsHref,
   getDeploymentInfra,
   getScopedWorkflowDeployments,
+  isDashboardLocalRunSuccess,
   isDashboardDeploySuccess,
   loadCloudDeploySettings,
 } from "@/lib/deploy";
@@ -91,11 +93,97 @@ function formatProviderComputeLabel(
   provider: WorkflowDeployProvider,
   computeType?: string | null
 ): string {
+  if (provider === "local") {
+    return "Local Workflow Job";
+  }
+
   if (provider === "aws") {
     return "Lambda Function";
   }
 
   return computeType === "job" ? "Cloud Run Job" : "Cloud Run Service";
+}
+
+function formatTriggerSummary(deployment: WorkflowDeploymentOverview): string {
+  if (deployment.triggerType === "manual") {
+    return "Manual";
+  }
+
+  if (deployment.triggerType === "schedule") {
+    const triggerConfig =
+      deployment.triggerConfig && typeof deployment.triggerConfig === "object"
+        ? (deployment.triggerConfig as Record<string, unknown>)
+        : {};
+    const cron =
+      typeof triggerConfig.cron === "string"
+        ? triggerConfig.cron
+        : typeof triggerConfig.schedule === "string"
+          ? triggerConfig.schedule
+          : "";
+    const timezone =
+      typeof triggerConfig.timezone === "string" ? triggerConfig.timezone : "";
+    return cron ? `${cron}${timezone ? ` (${timezone})` : ""}` : "Scheduled";
+  }
+
+  if (deployment.triggerType === "webhook") {
+    return "Webhook";
+  }
+
+  if (deployment.triggerType === "event") {
+    const triggerConfig =
+      deployment.triggerConfig && typeof deployment.triggerConfig === "object"
+        ? (deployment.triggerConfig as Record<string, unknown>)
+        : {};
+    return typeof triggerConfig.eventName === "string"
+      ? `Event: ${triggerConfig.eventName}`
+      : "Event";
+  }
+
+  return "Unknown";
+}
+
+function formatRunOutput(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function parsePayloadDraft(raw: string): {
+  payload?: unknown;
+  error?: string;
+} {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  try {
+    return {
+      payload: JSON.parse(trimmed),
+    };
+  } catch {
+    return {
+      error: "Payload must be valid JSON.",
+    };
+  }
+}
+
+interface LocalRunCardState {
+  status: "idle" | "running" | "success" | "error";
+  message?: string;
+  output?: string;
+  deploymentId?: string | null;
+  executionId?: string | null;
 }
 
 export default function DeployPage() {
@@ -111,8 +199,18 @@ export default function DeployPage() {
   const [plansLoading, setPlansLoading] = useState(false);
   const [plansError, setPlansError] = useState("");
   const [usedSharedPlanner, setUsedSharedPlanner] = useState(false);
+  const [localRunDrafts, setLocalRunDrafts] = useState<Record<string, string>>(
+    {}
+  );
+  const [localRunStates, setLocalRunStates] = useState<
+    Record<string, LocalRunCardState>
+  >({});
   const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [savedRegions, setSavedRegions] = useState({ aws: "us-east-1", gcp: "us-central1" });
+  const [savedRegions, setSavedRegions] = useState({
+    aws: "us-east-1",
+    gcp: "us-central1",
+    local: "local",
+  });
   const [workflowList, setWorkflowList] = useState<WorkflowListItem[]>([]);
   const [selectedWorkflow, setSelectedWorkflow] = useState("");
   const [deploymentOverviewLoading, setDeploymentOverviewLoading] = useState(false);
@@ -124,12 +222,24 @@ export default function DeployPage() {
     WorkflowDeploymentOverview[]
   >([]);
 
-  const regions = provider === "aws" ? awsRegions : gcpRegions;
+  const regions =
+    provider === "aws"
+      ? awsRegions
+      : provider === "gcp"
+        ? gcpRegions
+        : [{ value: "local", label: "Local machine" }];
   const workflowNameBySlug = useMemo(() => {
     const map = new Map<string, string>();
     for (const workflow of workflowList) {
       map.set(workflow.slug, workflow.title || workflow.slug);
       map.set(workflow.workflowId, workflow.title || workflow.workflowId);
+    }
+    return map;
+  }, [workflowList]);
+  const workflowSlugById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const workflow of workflowList) {
+      map.set(workflow.workflowId, workflow.slug);
     }
     return map;
   }, [workflowList]);
@@ -229,6 +339,7 @@ export default function DeployPage() {
     setRegion(savedRegions[nextProvider]);
     setResult(null);
     setStatus("idle");
+    setLocalRunStates({});
   };
 
   async function loadPlans() {
@@ -273,7 +384,7 @@ export default function DeployPage() {
       setDeploymentOverviewError("");
       try {
         const fetchOverviews = async () => {
-          const overviews = await api.getWorkflowDeploymentsForWorkflow({
+        const overviews = await api.getWorkflowDeploymentsForWorkflow({
             workflowId: selectedWorkflowId || undefined,
             workflowSlug: selectedWorkflow || undefined,
             provider,
@@ -352,6 +463,83 @@ export default function DeployPage() {
     setDeploying(false);
   };
 
+  const handleRunLocalWorkflow = async (
+    deployment: WorkflowDeploymentOverview
+  ) => {
+    const workflowId = deployment.workflowId;
+    const payloadDraft = localRunDrafts[workflowId] || "";
+    const payloadResult = parsePayloadDraft(payloadDraft);
+
+    if (payloadResult.error) {
+      setLocalRunStates((current) => ({
+        ...current,
+        [workflowId]: {
+          status: "error",
+          message: payloadResult.error,
+          output: "",
+          deploymentId: deployment.id,
+        },
+      }));
+      return;
+    }
+
+    setLocalRunStates((current) => ({
+      ...current,
+      [workflowId]: {
+        status: "running",
+        message: "Running local workflow...",
+        output: "",
+        deploymentId: deployment.id,
+      },
+    }));
+
+    try {
+      const response = await api.runLocalWorkflow({
+        workflowId,
+        workflowSlug: workflowSlugById.get(workflowId),
+        payload: payloadResult.payload,
+      });
+
+      if (!isDashboardLocalRunSuccess(response)) {
+        setLocalRunStates((current) => ({
+          ...current,
+          [workflowId]: {
+            status: "error",
+            message: response.error,
+            output: formatRunOutput(response.output),
+            deploymentId: response.deploymentId || deployment.id,
+            executionId: response.executionId || null,
+          },
+        }));
+      } else {
+        setLocalRunStates((current) => ({
+          ...current,
+          [workflowId]: {
+            status: "success",
+            message: `Local workflow ${response.workflowId} completed successfully.`,
+            output: formatRunOutput(response.output),
+            deploymentId: response.deploymentId || deployment.id,
+            executionId: response.executionId || null,
+          },
+        }));
+        void loadDeploymentOverviews();
+      }
+    } catch (error) {
+      setLocalRunStates((current) => ({
+        ...current,
+        [workflowId]: {
+          status: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Local workflow run failed.",
+          output: "",
+          deploymentId: deployment.id,
+        },
+      }));
+    }
+  };
+
   const resolveInfraValue = (key: DashboardDeployInfraKey): string | null => {
     const deployedValue = result?.[key];
     if (typeof deployedValue === "string" && deployedValue.trim()) {
@@ -395,7 +583,7 @@ export default function DeployPage() {
       <div className="rounded-lg border border-zinc-800 p-6 space-y-5">
         <div>
           <label className="mb-1.5 block text-xs text-zinc-500">
-            Cloud Provider
+            Deployment Target
           </label>
           <div className="flex gap-2">
             <button
@@ -418,22 +606,40 @@ export default function DeployPage() {
             >
               <Cloud size={14} /> GCP
             </button>
+            <button
+              onClick={() => handleProviderChange("local")}
+              className={`flex items-center gap-2 rounded-md border px-4 py-2 text-sm transition-colors ${
+                provider === "local"
+                  ? "border-blue-600 bg-blue-600/10 text-white"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-600"
+              }`}
+            >
+              <Cloud size={14} /> Local
+            </button>
           </div>
         </div>
 
         <div>
           <label className="mb-1.5 block text-xs text-zinc-500">Region</label>
-          <select
-            value={region}
-            onChange={(event) => setRegion(event.target.value)}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
-          >
-            {regions.map((entry) => (
-              <option key={entry.value} value={entry.value}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
+          {provider === "local" ? (
+            <input
+              value="local"
+              readOnly
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-400 outline-none"
+            />
+          ) : (
+            <select
+              value={region}
+              onChange={(event) => setRegion(event.target.value)}
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-600"
+            >
+              {regions.map((entry) => (
+                <option key={entry.value} value={entry.value}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {provider === "gcp" ? (
@@ -483,6 +689,13 @@ export default function DeployPage() {
           )}
         </button>
 
+        {provider === "local" ? (
+          <p className="text-xs text-zinc-500">
+            Local deployments are listed below. Manual local workflows can be
+            triggered from their deployment cards with an optional JSON payload.
+          </p>
+        ) : null}
+
         {selectedPlanSecretSummary ? (
           <DeploymentSecretSyncCard
             summary={selectedPlanSecretSummary}
@@ -513,6 +726,7 @@ export default function DeployPage() {
             ) : null}
           </div>
         ) : null}
+
       </div>
 
       <div className="mt-6 rounded-lg border border-zinc-800 p-6">
@@ -536,7 +750,11 @@ export default function DeployPage() {
       <div className="mt-6 rounded-lg border border-zinc-800 p-6">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-sm font-medium">
-            {provider === "gcp" ? "GCP Deployment Status" : "AWS Deployment Status"}
+            {provider === "gcp"
+              ? "GCP Deployment Status"
+              : provider === "local"
+                ? "Local Deployment Status"
+                : "AWS Deployment Status"}
           </h3>
           <div className="flex items-center gap-2">
             {(deploymentOverviewError || hasDeploymentSyncWarning) ? (
@@ -590,6 +808,8 @@ export default function DeployPage() {
           <p className="text-xs text-zinc-500">
             {provider === "gcp"
               ? "No GCP deployment records found for the current filters."
+              : provider === "local"
+                ? "No local deployment records found for the current filters."
               : "No AWS deployment records found for the current filters."}
           </p>
         ) : null}
@@ -599,6 +819,14 @@ export default function DeployPage() {
             const executions = deployment.recentExecutions || [];
             const latestExecution: WorkflowExecutionHistoryEntry | null =
               executions[0] || null;
+            const localRunState: LocalRunCardState =
+              localRunStates[deployment.workflowId] || {
+                status: "idle",
+              };
+            const workflowSlug =
+              workflowSlugById.get(deployment.workflowId) ||
+              selectedWorkflow ||
+              undefined;
             const planSecretSyncSummary = buildWorkflowSecretSyncSummary(
               selectedPlans.filter(
                 (plan) => plan.workflowId === deployment.workflowId
@@ -634,6 +862,10 @@ export default function DeployPage() {
 
                 <div className="mt-3 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
                   <p>
+                    <span className="text-zinc-500">Trigger:</span>{" "}
+                    {formatTriggerSummary(deployment)}
+                  </p>
+                  <p>
                     <span className="text-zinc-500">Region:</span>{" "}
                     {deployment.platform?.region || deployment.region || "N/A"}
                   </p>
@@ -643,6 +875,12 @@ export default function DeployPage() {
                       {deployment.platform?.gcpProject ||
                         deployment.gcpProject ||
                         "N/A"}
+                    </p>
+                  ) : provider === "local" ? (
+                    <p>
+                      <span className="text-zinc-500">Local Logs:</span>{" "}
+                      {(deployment.platform as { logPath?: string | null } | null)
+                        ?.logPath || "N/A"}
                     </p>
                   ) : (
                     <p>
@@ -659,6 +897,14 @@ export default function DeployPage() {
                   <p>
                     <span className="text-zinc-500">Last deployed:</span>{" "}
                     {formatDateTime(deployment.deployedAt || deployment.updatedAt)}
+                  </p>
+                  <p>
+                    <span className="text-zinc-500">Latest run:</span>{" "}
+                    {latestExecution
+                      ? `${formatDateTime(
+                          latestExecution.startedAt || latestExecution.completedAt
+                        )} (${latestExecution.triggerSource || "manual"})`
+                      : "No runs yet"}
                   </p>
                 </div>
 
@@ -698,6 +944,92 @@ export default function DeployPage() {
                   />
                 ) : null}
 
+                {provider === "local" && deployment.triggerType === "manual" ? (
+                  <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/60 p-3">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                          Manual Run
+                        </p>
+                        {localRunState.executionId ? (
+                          <Link
+                            href={buildDeploymentLogsHref({
+                              provider: "local",
+                              deploymentId:
+                                localRunState.deploymentId || deployment.id,
+                              workflowId: deployment.workflowId,
+                              workflowSlug: workflowSlug,
+                              executionName: localRunState.executionId,
+                            })}
+                            className="text-[11px] text-blue-300 hover:text-blue-200"
+                          >
+                            View latest run logs
+                          </Link>
+                        ) : null}
+                      </div>
+                      <textarea
+                        value={localRunDrafts[deployment.workflowId] || ""}
+                        onChange={(event) =>
+                          setLocalRunDrafts((current) => ({
+                            ...current,
+                            [deployment.workflowId]: event.target.value,
+                          }))
+                        }
+                        placeholder='Optional JSON payload, for example {"dryRun":true}'
+                        className="min-h-24 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white outline-none focus:border-blue-600"
+                      />
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => void handleRunLocalWorkflow(deployment)}
+                          disabled={localRunState.status === "running"}
+                          className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-900 disabled:opacity-50"
+                        >
+                          {localRunState.status === "running" ? (
+                            <>
+                              <Loader2 size={12} className="animate-spin" /> Running...
+                            </>
+                          ) : (
+                            <>
+                              <Play size={12} /> Run now
+                            </>
+                          )}
+                        </button>
+                        <span className="text-[11px] text-zinc-500">
+                          Leave the payload blank to run with an empty input.
+                        </span>
+                      </div>
+
+                      {localRunState.status === "success" ? (
+                        <div className="rounded-md border border-green-800 bg-green-900/20 px-3 py-2 text-xs text-green-300">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle size={12} />
+                            {localRunState.message}
+                          </div>
+                          {localRunState.output ? (
+                            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded border border-green-900/40 bg-black/30 p-3 text-[11px] text-green-200/80">
+                              {localRunState.output}
+                            </pre>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {localRunState.status === "error" ? (
+                        <div className="rounded-md border border-red-800 bg-red-900/20 px-3 py-2 text-xs text-red-300">
+                          <div className="flex items-center gap-2">
+                            <AlertCircle size={12} />
+                            {localRunState.message || "Local workflow run failed."}
+                          </div>
+                          {localRunState.output ? (
+                            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded border border-red-900/40 bg-black/30 p-3 text-[11px] text-red-200/80">
+                              {localRunState.output}
+                            </pre>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
                 {executions.length > 0 ? (
                   <div className="mt-3 space-y-2">
                     <p className="text-[11px] uppercase tracking-wide text-zinc-500">
@@ -717,6 +1049,9 @@ export default function DeployPage() {
                             {" -> "}
                             {formatDateTime(execution.completedAt)}
                           </p>
+                          <p className="text-zinc-500">
+                            Trigger: {execution.triggerSource || "manual"}
+                          </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <span
@@ -731,7 +1066,7 @@ export default function DeployPage() {
                               provider,
                               deploymentId: deployment.id,
                               workflowId: deployment.workflowId,
-                              workflowSlug: selectedWorkflow || undefined,
+                              workflowSlug: workflowSlug,
                               executionName:
                                 execution.executionName || undefined,
                             })}
@@ -885,7 +1220,10 @@ export default function DeployPage() {
                   provider,
                   deploymentId: primaryDeploymentOverview.id,
                   workflowId: primaryDeploymentOverview.workflowId,
-                  workflowSlug: selectedWorkflow || undefined,
+                  workflowSlug:
+                    workflowSlugById.get(primaryDeploymentOverview.workflowId) ||
+                    selectedWorkflow ||
+                    undefined,
                   executionName:
                     primaryDeploymentOverview.recentExecutions?.[0]
                       ?.executionName || undefined,

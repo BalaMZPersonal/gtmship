@@ -1,13 +1,16 @@
+import { spawn } from "node:child_process";
 import { NextResponse } from "next/server";
 import {
   getAuthStrategy,
   listActiveConnections,
 } from "@/lib/workflow-studio/auth-service";
+import { resolveCliInvocation } from "@/lib/runtime/cli";
 import { buildWorkflowDeploymentPlanForArtifact } from "@/lib/workflow-studio/deployment";
 import {
   listStoredWorkflows,
   loadStoredWorkflow,
 } from "@/lib/workflow-studio/storage";
+import { resolveProjectRoot } from "@/lib/workflow-studio/project-root";
 
 function readQueryString(value: string | null): string | undefined {
   const trimmed = value?.trim();
@@ -182,6 +185,29 @@ function buildAwsPlatformOutputs(input: {
   };
 }
 
+function buildLocalPlatformOutputs(input: {
+  output?: string | null;
+  apiEndpoint?: string | null;
+  computeId?: string | null;
+  schedulerJobId?: string | null;
+}): Record<string, string> {
+  const outputText = input.output || "";
+  return {
+    apiEndpoint:
+      input.apiEndpoint || extractOutputValue(outputText, "API Endpoint") || "",
+    computeId:
+      input.computeId || extractOutputValue(outputText, "Compute") || "",
+    databaseEndpoint: extractOutputValue(outputText, "Database") || "",
+    storageBucket: extractOutputValue(outputText, "Storage") || "",
+    schedulerJobId:
+      input.schedulerJobId ||
+      extractOutputValue(outputText, "schedulerJobId") ||
+      "",
+    localLogPath: extractOutputValue(outputText, "localLogPath") || "",
+    localManifestPath: extractOutputValue(outputText, "localManifestPath") || "",
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -189,6 +215,106 @@ export async function POST(request: Request) {
     const workflow = readQueryString(searchParams.get("workflow"));
     const region = readQueryString(searchParams.get("region"));
     const gcpProject = readQueryString(searchParams.get("gcpProject"));
+
+    if (provider === "local") {
+      const cliInvocation = resolveCliInvocation();
+      const resolution = await resolveProjectRoot();
+      const projectRoot =
+        resolution.projectRoot || process.env.PROJECT_ROOT || process.cwd();
+      const workflowId = workflow
+        ? (await loadStoredWorkflow(workflow).catch(() => null))?.workflowId || workflow
+        : undefined;
+      const args = [
+        ...cliInvocation.baseArgs,
+        "deployments",
+        "reconcile",
+        "--provider",
+        "local",
+        "--json",
+      ];
+
+      if (workflowId) {
+        args.push("--workflow", workflowId);
+      }
+
+      return await new Promise<NextResponse>((resolve) => {
+        const stdout: string[] = [];
+        const stderr: string[] = [];
+        const child = spawn(cliInvocation.command, args, {
+          cwd: projectRoot,
+          env: process.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk.toString()));
+        child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk.toString()));
+
+        child.on("close", (code) => {
+          const stdoutText = stdout.join("");
+          const stderrText = stderr.join("");
+          try {
+            const parsed = stdoutText.trim()
+              ? (JSON.parse(stdoutText) as {
+                  syncedCount?: number;
+                  deployments?: unknown[];
+                  error?: string;
+                })
+              : { syncedCount: 0, deployments: [] };
+            if (code === 0) {
+              resolve(
+                NextResponse.json({
+                  syncedCount:
+                    typeof parsed.syncedCount === "number"
+                      ? parsed.syncedCount
+                      : Array.isArray(parsed.deployments)
+                        ? parsed.deployments.length
+                        : 0,
+                  deployments: Array.isArray(parsed.deployments)
+                    ? parsed.deployments
+                    : [],
+                })
+              );
+              return;
+            }
+
+            resolve(
+              NextResponse.json(
+                {
+                  error:
+                    parsed.error ||
+                    stderrText.trim() ||
+                    "Failed to reconcile local workflow deployments.",
+                },
+                { status: 500 }
+              )
+            );
+          } catch {
+            resolve(
+              NextResponse.json(
+                {
+                  error:
+                    stderrText.trim() ||
+                    stdoutText.trim() ||
+                    "Failed to reconcile local workflow deployments.",
+                },
+                { status: 500 }
+              )
+            );
+          }
+        });
+
+        child.on("error", (error) => {
+          resolve(
+            NextResponse.json(
+              {
+                error: `Failed to start local deployment reconcile: ${error.message}`,
+              },
+              { status: 500 }
+            )
+          );
+        });
+      });
+    }
 
     const listing = await listStoredWorkflows();
     if (!listing.projectRootConfigured) {
@@ -251,6 +377,13 @@ export async function POST(request: Request) {
               stackOutputs: {},
               executionKind: plan.executionKind,
             })
+          : provider === "local"
+            ? buildLocalPlatformOutputs({
+                output: deploymentRun.output,
+                apiEndpoint: deploymentRun.apiEndpoint,
+                computeId: deploymentRun.computeId,
+                schedulerJobId: deploymentRun.schedulerJobId,
+              })
           : buildAwsPlatformOutputs({
               output: deploymentRun.output,
               apiEndpoint: deploymentRun.apiEndpoint,
@@ -262,6 +395,8 @@ export async function POST(request: Request) {
       const endpointUrl =
         provider === "gcp"
           ? platformOutputs.gcpEndpointUrl || null
+          : provider === "local"
+            ? platformOutputs.apiEndpoint || null
           : platformOutputs.endpointToken || platformOutputs.apiGatewayUrl || null;
       const schedulerId = platformOutputs.schedulerJobId || null;
       const resolvedRegion = region || deploymentRun.region || plan.region;
@@ -329,6 +464,15 @@ export async function POST(request: Request) {
                   gcpProject: resolvedProject,
                   region: resolvedRegion,
                 }
+              : provider === "local"
+                ? {
+                    computeType: "job",
+                    computeName: platformOutputs.computeId || plan.workflowId,
+                    endpointUrl,
+                    schedulerId,
+                    region: resolvedRegion,
+                    logPath: platformOutputs.localLogPath || null,
+                  }
               : {
                   computeType: "lambda",
                   computeName: platformOutputs.lambdaName || null,

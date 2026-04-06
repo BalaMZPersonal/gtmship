@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deployment | GTMship Docs</title>
+  <meta name="description" content="Learn how GTMship builds workflow artifacts, resolves bindings, and deploys to AWS Lambda or GCP Cloud Run.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs.css">
+  <link rel="stylesheet" href="../../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Feature Guide</div>
+      <h1>Deployment</h1>
+      <p>GTMship builds workflow artifacts for your cloud account, resolves the provider bindings that workflow needs, and deploys to supported AWS or GCP targets while keeping deployment state visible in the product.</p>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">AWS Lambda</span>
+        <span class="docs-pill">GCP Cloud Run</span>
+        <span class="docs-pill">Bindings</span>
+        <span class="docs-pill">Auth manifests</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Docs</div>
+          <a href="../index.html">Docs Home</a>
+          <a href="../index.html#how-it-works">How GTMship works</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a href="../workflow-builder-agent/index.html">Workflow Builder Agent</a>
+          <a href="../custom-connections-agent/index.html">Custom Connections Agent</a>
+          <a href="../write-checkpoints/index.html">Write Checkpoints</a>
+          <a class="active" href="index.html">Deployment</a>
+          <a href="../ai-memory/index.html">AI Memory</a>
+          <a href="../dashboard-cli/index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>What deployment covers</h2>
+          <p>Deployment is more than “zip and upload.” GTMship reads project config, inspects the workflow source, chooses cloud-specific execution settings, resolves connection bindings, packages the artifact, deploys it, and then syncs metadata back into the control plane.</p>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What deployment expects from the project</h2>
+          <ul class="docs-list-plain" style="margin-top: 18px;">
+            <li><strong>Workflow source:</strong> a draft with clear provider usage and runtime shape that has already gone through authoring and preview.</li>
+            <li><strong>Resolvable bindings:</strong> every external system the workflow needs should map to a real connection or a deploy-time binding choice.</li>
+            <li><strong>Project config:</strong> GTMship needs cloud target, region, and any workflow overrides defined in <span class="docs-inline-code">gtmship.config.yaml</span>.</li>
+            <li><strong>Cloud access:</strong> the deploy engine still needs the credentials and permissions required to create or update cloud-side resources.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Planner sequence</h2>
+          <ol style="margin-top: 18px;">
+            <li>Read <span class="docs-inline-code">gtmship.config.yaml</span> and any workflow overrides.</li>
+            <li>Load the workflow source and infer trigger plus provider usage.</li>
+            <li>Resolve which connections should bind to each provider.</li>
+            <li>Choose provider, region, execution kind, auth mode, and resource plan.</li>
+            <li>Validate cloud-specific constraints.</li>
+            <li>Build the deployable artifact.</li>
+            <li>Resolve cloud credentials and deploy through the deploy engine.</li>
+            <li>Sync deployment metadata, bindings, auth manifests, and resource inventory back into GTMship.</li>
+          </ol>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What you choose vs what GTMship infers</h2>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">You choose</div>
+              <h3>Where and how the workflow should run</h3>
+              <p>You still decide the cloud provider, region, deployment timing, and whether runtime credentials should stay in proxy mode or move into secret-manager mode.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">GTMship infers</div>
+              <h3>How to package and bind the artifact</h3>
+              <p>The platform figures out provider usage, resolves connection bindings, assembles auth manifests, builds the deployable artifact, and keeps the resulting deployment record in sync.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Cloud targets and auth flow</h2>
+          <div class="docs-two-col" style="margin-top: 18px;">
+            <div class="docs-card">
+              <div class="docs-card-kicker">AWS</div>
+              <h3>Lambda-based runtime</h3>
+              <p>Use GTMship to build the artifact, provision the resources it needs, and expose the live deployment URL and status back through the product.</p>
+            </div>
+            <div class="docs-card">
+              <div class="docs-card-kicker">GCP</div>
+              <h3>Cloud Run deployment flow</h3>
+              <p>Use project-specific settings like region and execution mode while GTMship validates constraints and assembles the cloud-side resources.</p>
+            </div>
+          </div>
+          <div class="docs-note" style="margin-top: 18px;">
+            Connection auth can stay in proxy mode or move to secret-manager mode, depending on how you want deployed workloads to access credentials.
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What GTMship syncs back</h2>
+          <ul style="margin-top: 18px;">
+            <li>Deployment records and live status.</li>
+            <li>Provider bindings and auth manifests.</li>
+            <li>Cloud resource inventory needed for inspection and troubleshooting.</li>
+            <li>Logs and runtime metadata surfaced through the dashboard and CLI.</li>
+          </ul>
+          <pre class="docs-code" style="margin-top: 18px;"><code>config + workflow source
+  -> binding resolution
+  -> build artifact
+  -> deploy to AWS/GCP
+  -> sync status + metadata back</code></pre>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Related docs</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="../dashboard-cli/index.html">See deploy flows in dashboard and CLI</a>
+            <a class="docs-ghost-link" href="../custom-connections-agent/index.html">See how connections bind into deploys</a>
+            <a class="docs-ghost-link" href="../write-checkpoints/index.html">Return to safe preview flow</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+
+  <script src="../../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../../',
+      page: 'docs-sub',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Docs Home', href: '../index.html' },
+        { label: 'Previous: Checkpoints', href: '../write-checkpoints/index.html' },
+        { label: 'Next: Memory', href: '../ai-memory/index.html' }
+      ],
+      primaryAction: { label: 'Docs Home', href: '../index.html' }
+    });
+  </script>
+</body>
+</html>

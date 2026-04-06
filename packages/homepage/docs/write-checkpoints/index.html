@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Write Checkpoints | GTMship Docs</title>
+  <meta name="description" content="Learn how GTMship validation and preview use write checkpoints to pause risky operations for approval.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@700;800&family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../docs.css">
+  <link rel="stylesheet" href="../../shared/shared.css">
+</head>
+<body>
+  <div id="site-header"></div>
+
+  <main class="docs-shell">
+    <section class="docs-hero">
+      <div class="docs-eyebrow">Feature Guide</div>
+      <h1>Write Checkpoints</h1>
+      <p>Write checkpoints are GTMship's safety rail for previewing workflows. They let the system execute reads and reasoning steps while pausing live mutations until an operator approves them.</p>
+      <div class="docs-pill-row" style="margin-top: 18px;">
+        <span class="docs-pill">Validation</span>
+        <span class="docs-pill">Preview</span>
+        <span class="docs-pill">Needs approval</span>
+        <span class="docs-pill">Safe writes</span>
+      </div>
+    </section>
+
+    <div class="docs-layout">
+      <aside class="docs-sidebar">
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Docs</div>
+          <a href="../index.html">Docs Home</a>
+          <a href="../index.html#quickstart">Quickstart</a>
+        </div>
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-title">Feature Guides</div>
+          <a href="../workflow-builder-agent/index.html">Workflow Builder Agent</a>
+          <a href="../custom-connections-agent/index.html">Custom Connections Agent</a>
+          <a class="active" href="index.html">Write Checkpoints</a>
+          <a href="../deployment/index.html">Deployment</a>
+          <a href="../ai-memory/index.html">AI Memory</a>
+          <a href="../dashboard-cli/index.html">Dashboard + CLI</a>
+        </div>
+      </aside>
+
+      <article class="docs-content">
+        <section class="docs-panel">
+          <h2>Why checkpoints exist</h2>
+          <p>In GTM workflows, reads are often cheap and safe, but writes can change CRM records, send messages, or update downstream systems. Checkpoints keep preview useful without pretending that risky writes should execute automatically.</p>
+          <div class="docs-callout" style="margin-top: 18px;">
+            The preview goal is confidence. You get to see what the workflow intends to do before live data changes.
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>How validation uses them</h2>
+          <p>Validation checks the draft before preview. One of the runtime rules GTMship enforces is that every <span class="docs-inline-code">ctx.*.write(...)</span> call must include a checkpoint. That prevents hidden writes from slipping into a draft unnoticed.</p>
+        </section>
+
+        <section class="docs-panel">
+          <h2>What a checkpoint should show</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3>Target action</h3>
+              <p>The operator should be able to see what system is about to change and what write operation is being attempted.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Object context</h3>
+              <p>Good checkpoints make the target record, object type, or downstream resource clear enough to review without digging through raw code.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Payload summary</h3>
+              <p>The intended write body should be inspectable so reviewers can spot bad field mappings, wrong values, or unexpected side effects.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Approval reason</h3>
+              <p>There should be a clear explanation for why this write pauses, especially when the workflow mixes safe reads with high-impact mutations.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Preview states</h2>
+          <div class="docs-grid" style="margin-top: 18px;">
+            <div class="docs-card">
+              <h3><span class="docs-inline-code">success</span></h3>
+              <p>The preview completed with no blocked writes or runtime errors.</p>
+            </div>
+            <div class="docs-card">
+              <h3><span class="docs-inline-code">needs_approval</span></h3>
+              <p>The preview reached one or more write checkpoints and needs operator approval before those writes continue.</p>
+            </div>
+            <div class="docs-card">
+              <h3><span class="docs-inline-code">error</span></h3>
+              <p>The preview failed because of a code, auth, or runtime problem that needs fixing before deployment.</p>
+            </div>
+            <div class="docs-card">
+              <h3>Recorded operations</h3>
+              <p>Preview captures what the workflow tried to read, write, and branch on so the draft can be refined with concrete feedback.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Common writes that pause in preview</h2>
+          <ul class="docs-list-plain" style="margin-top: 18px;">
+            <li><strong>CRM mutations:</strong> creating leads, updating lifecycle stages, or overwriting owner fields.</li>
+            <li><strong>Outbound communications:</strong> sending messages, emails, or notifications to real people or channels.</li>
+            <li><strong>System-of-record changes:</strong> updating tickets, tasks, or internal records that other teams depend on.</li>
+            <li><strong>Any non-idempotent external write:</strong> if retrying the call blindly could be risky, GTMship treats it as something worth reviewing.</li>
+          </ul>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Typical operator flow</h2>
+          <ol style="margin-top: 18px;">
+            <li>Generate or revise the workflow draft.</li>
+            <li>Run validation to catch missing checkpoints or unsupported patterns.</li>
+            <li>Preview with sample input.</li>
+            <li>Inspect the pending write and decide whether to approve or revise the draft.</li>
+            <li>Only move forward to build or deploy after the write path is understood.</li>
+          </ol>
+          <pre class="docs-code" style="margin-top: 18px;"><code>draft
+  -> validate
+  -> preview
+  -> needs_approval?
+      yes -> inspect + approve or revise
+      no  -> continue to build/deploy</code></pre>
+        </section>
+
+        <section class="docs-panel">
+          <h2>Related docs</h2>
+          <div class="docs-link-row" style="margin-top: 18px;">
+            <a class="docs-primary-link" href="../deployment/index.html">See what happens after preview</a>
+            <a class="docs-ghost-link" href="../workflow-builder-agent/index.html">Return to workflow authoring</a>
+            <a class="docs-ghost-link" href="../dashboard-cli/index.html">See where preview lives in the UI and CLI</a>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+
+  <script src="../../shared/components.js"></script>
+  <script>
+    initSharedComponents({
+      basePath: '../../',
+      page: 'docs-sub',
+      showLogo: true,
+      brandSuffix: 'Docs',
+      topbarLinks: [
+        { label: 'Docs Home', href: '../index.html' },
+        { label: 'Previous: Custom Connections Agent', href: '../custom-connections-agent/index.html' },
+        { label: 'Next: Deployment', href: '../deployment/index.html' }
+      ],
+      primaryAction: { label: 'Docs Home', href: '../index.html' }
+    });
+  </script>
+</body>
+</html>

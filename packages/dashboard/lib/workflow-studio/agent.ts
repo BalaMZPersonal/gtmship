@@ -13,7 +13,9 @@ import { researchWeb, researchWebInputSchema } from "@/lib/research";
 import {
   generateWorkflowArtifact,
   parseGroundedApiContext,
+  parseGtmPatternContext,
 } from "./ai";
+import { matchGtmPatterns } from "./gtm-patterns";
 import { fetchAndFilterOpenApiSpec } from "./openapi-spec";
 import { buildWorkflowArtifact } from "./build";
 import { buildWorkflowPlanFromArtifact } from "./deploy-plan";
@@ -174,7 +176,8 @@ Your capabilities:
 Critical behavior:
 1. Treat this as an agentic workflow design/debug session, not a one-shot generator.
 2. When integrations are involved, inspect active connections early and read the provider reference before searching the open web.
-3. API Grounding — Before calling generateWorkflowDraft, ground every API endpoint the workflow will use:
+3. Workflow Heuristics — When a user describes a new workflow, call suggestGtmPatterns with the user's intent to check if generalized workflow heuristics apply. These heuristics are intentionally broad: persistent state, deduplication, batching, staged AI, branching, staged pipelines, quality gates, writeback, and approvals. Only recommend heuristics that genuinely fit the user's request (check relevanceScore and matchedKeywords). If no heuristics match, proceed normally — do not force them. When heuristics do apply, mention them briefly and incorporate their analysisGuidance and codeGuidance into the instructions parameter of generateWorkflowDraft using the "WORKFLOW HEURISTIC CONTEXT:" marker.
+4. API Grounding — Before calling generateWorkflowDraft, ground every API endpoint the workflow will use:
    a. Call readIntegrationReference for each provider to get metadata, docsUrl, and connection status.
    b. Call fetchOpenApiSpec with the provider slug and a query describing the endpoints you need.
       - If it returns structured endpoint definitions, use those directly as grounded context.
@@ -197,22 +200,22 @@ Critical behavior:
         Docs: <source URL>
    This prevents hallucinated endpoints, wrong field names, and incorrect request formats.
    g. After grounding is complete, use saveMemory to save the key grounded endpoints for each provider (category: "integration", scope: "app"). This avoids re-grounding the same provider in future conversations.
-4. If researchWeb returns noUsefulResults or weak matches, try alternative queries (e.g. "<provider> REST API endpoints", "<provider> developer documentation") before falling back to general knowledge. Never fabricate an endpoint path from memory alone when research tools are available.
-5. If the user says they configured connections, asks you to recheck connections, or returns from the Connections Agent, call listActiveConnections first, test the relevant providers when possible, and only continue generating/fixing/building after you verify the needed access is ready.
-6. Documentation handling should mirror the connection agent:
+5. If researchWeb returns noUsefulResults or weak matches, try alternative queries (e.g. "<provider> REST API endpoints", "<provider> developer documentation") before falling back to general knowledge. Never fabricate an endpoint path from memory alone when research tools are available.
+6. If the user says they configured connections, asks you to recheck connections, or returns from the Connections Agent, call listActiveConnections first, test the relevant providers when possible, and only continue generating/fixing/building after you verify the needed access is ready.
+7. Documentation handling should mirror the connection agent:
    - Prefer active integration/provider docs first.
    - If you still need docs, use researchWeb with mode="research".
    - If you already have a concrete public URL, use researchWeb with mode="scrape".
    - Do not guess documentation URLs.
-7. The command runner is a single-command sandbox using execFile (NOT a shell). These will NOT work: pipes (|), redirection (> >>), chaining (&& ;), subshells ($(...)), globbing (*). Each executeCommand call runs exactly one command. To test an endpoint: executeCommand('curl -s http://localhost:4000/proxy/gmail/gmail/v1/users/me/profile --max-time 10'). To process output from a previous call, run a separate executeCommand with jq, python3 -c, or node -e.
-8. The current draft, if any, is available in the scratch workspace as draft.ts and sample-payload.json.
-9. The saved workflow runtime itself MUST stay constrained to WorkflowContext helpers. Do not try to give the saved workflow shell access, child_process, fs, raw fetch, or external imports.
-10. Unless the latest user message explicitly asks to build, package, ship, or deploy, stop after generateWorkflowDraft and explain the current draft/preview state. Do not call buildWorkflowDraft on your own.
-11. Never pass approved write checkpoints through the chat tools. Users must approve write checkpoints only from the Preview or Build sections of the Workflow Studio UI.
-12. If preview returns needs_approval, say so clearly and stop. Do not continue preview approvals or call buildWorkflowDraft automatically after needs_approval.
-13. There is no deploy tool in this chat flow. Never say a workflow was deployed, published, or live unless a later tool explicitly confirms a real deployment.
-14. If validation, preview, or build exposes a code issue, analyze it and call generateWorkflowDraft again with repair instructions.
-15. Intelligent Error Recovery — When preview, validation, or build fails with an API-related error:
+8. The command runner is a single-command sandbox using execFile (NOT a shell). These will NOT work: pipes (|), redirection (> >>), chaining (&& ;), subshells ($(...)), globbing (*). Each executeCommand call runs exactly one command. To test an endpoint: executeCommand('curl -s http://localhost:4000/proxy/gmail/gmail/v1/users/me/profile --max-time 10'). To process output from a previous call, run a separate executeCommand with jq, python3 -c, or node -e.
+9. The current draft, if any, is available in the scratch workspace as draft.ts and sample-payload.json.
+10. The saved workflow runtime itself MUST stay constrained to WorkflowContext helpers. Do not try to give the saved workflow shell access, child_process, fs, raw fetch, or external imports.
+11. Unless the latest user message explicitly asks to build, package, ship, or deploy, stop after generateWorkflowDraft and explain the current draft/preview state. Do not call buildWorkflowDraft on your own.
+12. Never pass approved write checkpoints through the chat tools. Users must approve write checkpoints only from the Preview or Build sections of the Workflow Studio UI.
+13. If preview returns needs_approval, say so clearly and stop. Do not continue preview approvals or call buildWorkflowDraft automatically after needs_approval.
+14. There is no deploy tool in this chat flow. Never say a workflow was deployed, published, or live unless a later tool explicitly confirms a real deployment.
+15. If validation, preview, or build exposes a code issue, analyze it and call generateWorkflowDraft again with repair instructions.
+16. Intelligent Error Recovery — When preview, validation, or build fails with an API-related error:
     a. Identify which specific API call failed. Check preview operations for non-2xx responseStatus values and error messages referencing endpoints or providers.
     b. Test the failing endpoint in isolation using executeCommand with curl through the auth proxy:
        curl http://localhost:4000/proxy/<provider-slug>/<the-failing-path>
@@ -222,12 +225,12 @@ Critical behavior:
     f. If isolated test succeeds but workflow still fails: the issue is in code logic (wrong field access, missing data transform). Include the actual response shape from the test in repair instructions.
     g. Call generateWorkflowDraft with detailed repair instructions including test results and documentation findings.
     Never retry generateWorkflowDraft with the same information. Always add new evidence from isolated testing or documentation research.
-16. If the issue is external, such as missing access or invalid credentials, explain that clearly and stop rewriting code.
-17. If connections are still missing or blocked after a recheck, stop and summarize exactly which providers are still not ready.
-18. Do not remove or weaken legitimate write checkpoints just to avoid preview-only approvals. Workflow Studio preview can require multiple sequential approvals in the UI.
-19. If any tool returns an error, treat that step as failed. Do not say the workflow is done or describe changes as completed unless a later tool result confirms success.
-20. A generateWorkflowDraft error means the draft was not updated. Retry with clearer repair instructions or explain the failure.
-21. Memory usage:
+17. If the issue is external, such as missing access or invalid credentials, explain that clearly and stop rewriting code.
+18. If connections are still missing or blocked after a recheck, stop and summarize exactly which providers are still not ready.
+19. Do not remove or weaken legitimate write checkpoints just to avoid preview-only approvals. Workflow Studio preview can require multiple sequential approvals in the UI.
+20. If any tool returns an error, treat that step as failed. Do not say the workflow is done or describe changes as completed unless a later tool result confirms success.
+21. A generateWorkflowDraft error means the draft was not updated. Retry with clearer repair instructions or explain the failure.
+22. Memory usage:
     a. At the start of every conversation, call recallMemories with scope "all" and relevant provider names to load both app-level and this workflow's prior context.
     b. After successfully grounding API endpoints, save provider-level knowledge (base URL, auth type, API quirks) as scope "app" — it's reusable across workflows. Save workflow-specific endpoint usage (which endpoints THIS workflow calls, field mappings) as scope "workflow".
     c. After a successful build/preview, save the working approach as scope "workflow" — these details are specific to this workflow and should not leak into other workflows.
@@ -293,6 +296,43 @@ export async function createWorkflowAgentResponse(
         tools: {
       saveMemory: createSaveMemoryTool({ source: "workflow", workflowId: draft?.slug }),
       recallMemories: createRecallMemoriesTool({ workflowId: draft?.slug }),
+
+      suggestGtmPatterns: tool({
+        description:
+          "Retrieve generalized workflow heuristics that match the user's workflow intent. " +
+          "These heuristics are broad design recommendations such as storage, deduplication, batching, routing, staged handoffs, writeback, and approvals. " +
+          "Returns only heuristics that genuinely fit — check the relevanceScore and matchedKeywords " +
+          "to decide which to apply. If no heuristics match, proceed normally. " +
+          "Pass applicable pattern guidance in the instructions parameter of generateWorkflowDraft " +
+          "using the 'WORKFLOW HEURISTIC CONTEXT:' marker.",
+        parameters: z.object({
+          query: z
+            .string()
+            .describe("The user's workflow description or intent"),
+          activeProviderSlugs: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Active provider slugs to boost integration-relevant patterns"
+            ),
+        }),
+        execute: async ({ query, activeProviderSlugs }) => {
+          const matches = matchGtmPatterns(
+            query,
+            activeProviderSlugs || []
+          );
+          if (matches.length === 0) {
+            return {
+              patterns: [],
+              note: "No generalized workflow heuristics strongly match this workflow intent. Proceed with standard generation.",
+            };
+          }
+          return truncateToolResult(
+            { patterns: matches },
+            contextManager.getToolResultLimit()
+          );
+        },
+      }),
 
       listActiveConnections: tool({
         description:
@@ -489,6 +529,9 @@ export async function createWorkflowAgentResponse(
             const groundedApiContext = instructions
               ? parseGroundedApiContext(instructions)
               : undefined;
+            const patternContext = instructions
+              ? parseGtmPatternContext(instructions)
+              : undefined;
 
             const draftMessages = instructions?.trim()
               ? [
@@ -504,6 +547,7 @@ export async function createWorkflowAgentResponse(
               currentArtifact: draft,
               resolvedModel: model,
               groundedApiContext,
+              patternContext,
               onProgress(update) {
                 writeWorkflowDraftProgress(dataStream, toolCallId, update);
               },

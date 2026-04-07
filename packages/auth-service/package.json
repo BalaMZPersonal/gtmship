@@ -1,6 +1,6 @@
 {
   "name": "@gtmship/auth-service",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "GTMShip Auth Service — Self-hosted OAuth manager for GTM integrations",
   "license": "MIT",
   "type": "module",

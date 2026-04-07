@@ -38,6 +38,10 @@ interface BuildWorkflowsOptions {
   push?: boolean;
 }
 
+interface BrewInstallOptions {
+  cask?: boolean;
+}
+
 const CLOUD_RUN_IMAGE_PLATFORM = "linux/amd64";
 
 // ---------------------------------------------------------------------------
@@ -62,37 +66,55 @@ const GCLOUD_TIMEOUT_MS = 30 * 1000;
 
 /**
  * Build an env object whose PATH includes common locations for `docker` and
- * `gcloud` on macOS (Homebrew on Apple Silicon & Intel, Docker Desktop, and
- * gcloud SDK default install paths).  This ensures `execSync` can find these
- * binaries even when the CLI is launched from a minimal shell environment
- * (e.g. a GUI app or a Homebrew-installed binary).
+ * `gcloud` on macOS and Linux (Homebrew, Docker Desktop, and common Cloud SDK
+ * install paths). This ensures child processes can find these binaries even
+ * when the CLI is launched from a minimal shell environment, such as the
+ * packaged Homebrew app launcher.
  */
-function buildEnrichedEnv(): NodeJS.ProcessEnv {
-  const extra = [
-    "/opt/homebrew/bin",               // Homebrew on Apple Silicon
-    "/usr/local/bin",                   // Homebrew on Intel / Docker Desktop symlinks
-    "/Applications/Docker.app/Contents/Resources/bin", // Docker Desktop for Mac
-    join(process.env.HOME || "", "google-cloud-sdk", "bin"), // gcloud default install
-    "/usr/local/google-cloud-sdk/bin",  // alt gcloud location
-  ];
+export function resolveToolPathCandidates(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const homebrewPrefix = env.HOMEBREW_PREFIX || "";
+  return Array.from(
+    new Set(
+      [
+        homebrewPrefix ? join(homebrewPrefix, "bin") : "",
+        homebrewPrefix ? join(homebrewPrefix, "share", "google-cloud-sdk", "bin") : "",
+        "/opt/homebrew/bin",
+        "/opt/homebrew/share/google-cloud-sdk/bin",
+        "/usr/local/bin",
+        "/usr/local/share/google-cloud-sdk/bin",
+        "/home/linuxbrew/.linuxbrew/bin",
+        "/home/linuxbrew/.linuxbrew/share/google-cloud-sdk/bin",
+        "/Applications/Docker.app/Contents/Resources/bin",
+        join(env.HOME || "", "google-cloud-sdk", "bin"),
+        "/usr/local/google-cloud-sdk/bin",
+      ].filter(Boolean),
+    ),
+  );
+}
 
-  const currentPath = process.env.PATH || "";
+export function buildEnrichedEnv(
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const extra = resolveToolPathCandidates(baseEnv);
+  const currentPath = baseEnv.PATH || "";
   const existingDirs = new Set(currentPath.split(":"));
   const additions = extra.filter((p) => !existingDirs.has(p));
+  const pathParts = currentPath ? [currentPath, ...additions] : additions;
 
   return {
-    ...process.env,
-    PATH: additions.length > 0
-      ? `${currentPath}:${additions.join(":")}`
-      : currentPath,
+    ...baseEnv,
+    PATH: pathParts.join(":"),
   };
 }
 
-const enrichedEnv = buildEnrichedEnv();
-
 /** Wrapper around execSync that always uses the enriched PATH. */
 function execWithPath(command: string, options?: ExecSyncOptions): string | Buffer {
-  return execSync(command, { ...options, env: { ...enrichedEnv, ...options?.env } });
+  return execSync(command, {
+    ...options,
+    env: buildEnrichedEnv({ ...process.env, ...options?.env }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -144,18 +166,65 @@ function isRunningUnderHomebrew(): boolean {
   );
 }
 
-function brewInstall(packages: string[]): void {
+function isGcloudInstalled(): boolean {
+  try {
+    execWithPath("gcloud --version", { stdio: "pipe", timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function brewInstall(packages: string[], options: BrewInstallOptions = {}): void {
   const brewBin = process.env.HOMEBREW_PREFIX
     ? join(process.env.HOMEBREW_PREFIX, "bin", "brew")
     : process.platform === "darwin"
       ? "/opt/homebrew/bin/brew"
       : "/home/linuxbrew/.linuxbrew/bin/brew";
 
-  console.log(chalk.gray(`  Installing ${packages.join(", ")} via Homebrew...`));
-  execWithPath(`${brewBin} install ${packages.join(" ")}`, {
+  const installArgs = [options.cask ? "--cask" : "", ...packages].filter(Boolean);
+  console.log(
+    chalk.gray(
+      `  Installing ${packages.join(", ")} via Homebrew${options.cask ? " cask" : ""}...`,
+    ),
+  );
+  execWithPath(`${brewBin} install ${installArgs.join(" ")}`, {
     stdio: "inherit",
     timeout: 300_000, // 5 minutes for install
   });
+}
+
+function ensureGcloudAvailable(): void {
+  if (isGcloudInstalled()) {
+    return;
+  }
+
+  if (isRunningUnderHomebrew() && process.platform === "darwin") {
+    try {
+      brewInstall(["gcloud-cli"], { cask: true });
+    } catch (err) {
+      throw new Error(
+        `Failed to auto-install Google Cloud CLI via Homebrew. Install manually: brew install --cask gcloud-cli\n` +
+        `  ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (isGcloudInstalled()) {
+      return;
+    }
+  }
+
+  const installCommand =
+    process.platform === "darwin"
+      ? "brew install --cask gcloud-cli"
+      : "Install the Google Cloud CLI for your platform";
+
+  throw new Error(
+    "Google Cloud CLI (`gcloud`) is required to push workflow images to Artifact Registry.\n" +
+    `  Install it with: ${installCommand}\n` +
+    "  GTMShip searches common Homebrew and Cloud SDK paths automatically, including\n" +
+    "  /opt/homebrew/bin and /opt/homebrew/share/google-cloud-sdk/bin.",
+  );
 }
 
 /**
@@ -500,6 +569,8 @@ function ensureArtifactRegistryRepo(
   gcpProject: string,
   region: string,
 ): void {
+  ensureGcloudAvailable();
+
   const repoName = "gtmship-workflows";
   // Check if repo already exists (fast path)
   try {

@@ -279,9 +279,13 @@ export GTMSHIP_POSTGRES_BIN="\${GTMSHIP_POSTGRES_BIN:-}"
 # macOS tool locations are on PATH so child processes (e.g. docker build)
 # can find them even when launched from a minimal shell environment.
 for _p in "\${HOMEBREW_PREFIX:-/opt/homebrew}/bin" \
+          "\${HOMEBREW_PREFIX:-/opt/homebrew}/share/google-cloud-sdk/bin" \
           /opt/homebrew/bin \
+          /opt/homebrew/share/google-cloud-sdk/bin \
           /usr/local/bin \
+          /usr/local/share/google-cloud-sdk/bin \
           /home/linuxbrew/.linuxbrew/bin \
+          /home/linuxbrew/.linuxbrew/share/google-cloud-sdk/bin \
           /Applications/Docker.app/Contents/Resources/bin \
           "\${HOME}/google-cloud-sdk/bin" \
           /usr/local/google-cloud-sdk/bin; do

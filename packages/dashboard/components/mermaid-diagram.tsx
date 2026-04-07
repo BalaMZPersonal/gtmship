@@ -190,9 +190,6 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
             <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-zinc-500">
               Live Diagram
             </p>
-            <p className="mt-1 text-sm text-zinc-400">
-              Mermaid preview styled to match the GTMShip workspace.
-            </p>
           </div>
           <div className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-blue-200">
             Auto-rendered

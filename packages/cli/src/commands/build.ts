@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, type ExecSyncOptions } from "node:child_process";
 import { createWriteStream, cpSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -55,6 +55,45 @@ const DOCKER_PUSH_MAX_RETRIES = 3;
 
 /** Timeout for gcloud CLI calls (30 seconds). */
 const GCLOUD_TIMEOUT_MS = 30 * 1000;
+
+// ---------------------------------------------------------------------------
+// Enriched PATH for child processes
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an env object whose PATH includes common locations for `docker` and
+ * `gcloud` on macOS (Homebrew on Apple Silicon & Intel, Docker Desktop, and
+ * gcloud SDK default install paths).  This ensures `execSync` can find these
+ * binaries even when the CLI is launched from a minimal shell environment
+ * (e.g. a GUI app or a Homebrew-installed binary).
+ */
+function buildEnrichedEnv(): NodeJS.ProcessEnv {
+  const extra = [
+    "/opt/homebrew/bin",               // Homebrew on Apple Silicon
+    "/usr/local/bin",                   // Homebrew on Intel / Docker Desktop symlinks
+    "/Applications/Docker.app/Contents/Resources/bin", // Docker Desktop for Mac
+    join(process.env.HOME || "", "google-cloud-sdk", "bin"), // gcloud default install
+    "/usr/local/google-cloud-sdk/bin",  // alt gcloud location
+  ];
+
+  const currentPath = process.env.PATH || "";
+  const existingDirs = new Set(currentPath.split(":"));
+  const additions = extra.filter((p) => !existingDirs.has(p));
+
+  return {
+    ...process.env,
+    PATH: additions.length > 0
+      ? `${currentPath}:${additions.join(":")}`
+      : currentPath,
+  };
+}
+
+const enrichedEnv = buildEnrichedEnv();
+
+/** Wrapper around execSync that always uses the enriched PATH. */
+function execWithPath(command: string, options?: ExecSyncOptions): string | Buffer {
+  return execSync(command, { ...options, env: { ...enrichedEnv, ...options?.env } });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -292,7 +331,7 @@ function buildDockerImage(
 
   // Cloud Run requires an amd64-compatible Linux image even when developers
   // build locally from Apple Silicon hosts.
-  execSync(`docker build --platform ${CLOUD_RUN_IMAGE_PLATFORM} -t ${imageTag} ${outDir}`, {
+  execWithPath(`docker build --platform ${CLOUD_RUN_IMAGE_PLATFORM} -t ${imageTag} ${outDir}`, {
     stdio: "pipe",
     timeout: DOCKER_BUILD_TIMEOUT_MS,
   });
@@ -307,7 +346,7 @@ function ensureArtifactRegistryRepo(
   const repoName = "gtmship-workflows";
   // Check if repo already exists (fast path)
   try {
-    execSync(
+    execWithPath(
       `gcloud artifacts repositories describe ${repoName} --location=${region} --project=${gcpProject}`,
       { stdio: "pipe", timeout: GCLOUD_TIMEOUT_MS },
     );
@@ -316,7 +355,7 @@ function ensureArtifactRegistryRepo(
     // Doesn't exist — create it
   }
 
-  execSync(
+  execWithPath(
     `gcloud artifacts repositories create ${repoName} --repository-format=docker --location=${region} --project=${gcpProject} --description="GTMShip workflow images"`,
     { stdio: "pipe", timeout: GCLOUD_TIMEOUT_MS },
   );
@@ -337,13 +376,13 @@ async function pushToArtifactRegistry(
 
   const remoteTag = `${registry}/${gcpProject}/${repoName}/${workflowId}:${versionTag}`;
 
-  execSync(`docker tag ${localTag} ${remoteTag}`, { stdio: "pipe" });
+  execWithPath(`docker tag ${localTag} ${remoteTag}`, { stdio: "pipe" });
 
   // Retry docker push with exponential backoff for transient network errors
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= DOCKER_PUSH_MAX_RETRIES; attempt++) {
     try {
-      execSync(`docker push ${remoteTag}`, {
+      execWithPath(`docker push ${remoteTag}`, {
         stdio: "inherit",
         timeout: DOCKER_PUSH_TIMEOUT_MS,
       });
@@ -484,7 +523,7 @@ export async function buildCommand(options: BuildOptions): Promise<void> {
   // Check Docker availability for GCP
   if (provider === "gcp") {
     try {
-      execSync("docker info", { stdio: "pipe" });
+      execWithPath("docker info", { stdio: "pipe" });
     } catch {
       console.log(
         chalk.red(

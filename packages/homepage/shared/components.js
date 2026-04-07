@@ -37,8 +37,13 @@
   // ---- Docs / Pricing sticky topbar ----
   function renderSiteTopbar(config) {
     var links = siteLinks(config.basePath);
-
-    var brandText = 'GTM<span>ship</span>' + (config.brandSuffix ? ' ' + config.brandSuffix : '');
+    var brandLabel = config.brandSuffix
+      ? '<span class="docs-brand-label">' + config.brandSuffix + '</span>'
+      : '';
+    var brandContent = config.showLogo === false
+      ? '<span class="docs-brand-mark"></span>'
+        + '<span class="docs-brand-wordmark">GTM<span class="docs-brand-wordmark-accent">ship</span></span>'
+      : '<img class="docs-brand-logo" src="' + config.basePath + 'gtmship-logo-topbar.png" alt="GTMship" width="320" height="135" decoding="async">';
 
     var topbarLinksHtml = (config.topbarLinks || []).map(function (l) {
       return '<a href="' + l.href + '">' + l.label + '</a>';
@@ -54,13 +59,11 @@
         + config.primaryAction.href + '">' + config.primaryAction.label + '</a>';
     }
 
-    var brandMark = '<span class="docs-brand-mark"></span>';
-
     return '<header class="docs-topbar">'
       + '<div class="docs-topbar-inner">'
       +   '<a class="docs-brand" href="' + links.homepage + '">'
-      +     brandMark
-      +     brandText
+      +     brandContent
+      +     brandLabel
       +   '</a>'
       +   '<nav class="docs-topbar-links">' + topbarLinksHtml + '</nav>'
       +   '<div class="docs-topbar-actions">' + actionsHtml + '</div>'

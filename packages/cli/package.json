@@ -1,6 +1,6 @@
 {
   "name": "@gtmship/cli",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "GTMShip CLI — Build, validate, and deploy GTM workflows",
   "license": "MIT",
   "type": "module",

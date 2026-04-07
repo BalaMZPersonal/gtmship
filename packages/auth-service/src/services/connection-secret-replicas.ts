@@ -385,6 +385,21 @@ async function loadGcpClient(
     }
   }
 
+  const hasAmbientGcpCredentials = Boolean(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.GCE_METADATA_HOST ||
+      process.env.K_SERVICE ||
+      process.env.FUNCTION_TARGET ||
+      process.env.FUNCTION_NAME ||
+      process.env.GAE_SERVICE
+  );
+
+  if (!credentials && !hasAmbientGcpCredentials) {
+    throw new Error(
+      "GCP Secret Manager requires either a configured GCP service account key or ambient Google credentials."
+    );
+  }
+
   const config: Record<string, unknown> = {};
   if (credentials) {
     config.credentials = credentials;
@@ -607,7 +622,16 @@ export async function loadConfiguredSecretBackendTargets(): Promise<
     normalizeText(await readSetting("gcp_project_id")) ||
     normalizeText(process.env.GOOGLE_CLOUD_PROJECT);
   const rawGcpServiceAccount = await readSetting("gcp_service_account_key");
-  if (rawGcpServiceAccount || gcpProject) {
+  const hasAmbientGcpCredentials = Boolean(
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.GCE_METADATA_HOST ||
+      process.env.K_SERVICE ||
+      process.env.FUNCTION_TARGET ||
+      process.env.FUNCTION_NAME ||
+      process.env.GAE_SERVICE
+  );
+
+  if (rawGcpServiceAccount || (gcpProject && hasAmbientGcpCredentials)) {
     let projectId = gcpProject;
     if (!projectId && rawGcpServiceAccount) {
       try {

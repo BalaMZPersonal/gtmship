@@ -14,9 +14,12 @@ import { deployLocalWorkflow } from "../lib/local-deployments.js";
 /** Default timeout for HTTP requests to auth service / control plane. */
 const FETCH_TIMEOUT_MS = 15_000;
 
-function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+/** Extended timeout for operations that sync secrets to external backends. */
+const FETCH_TIMEOUT_EXTENDED_MS = 60_000;
+
+function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, { ...init, signal: controller.signal }).finally(() =>
     clearTimeout(timer),
   );
@@ -437,6 +440,7 @@ async function syncWorkflowControlPlane(
         }),
       }),
     },
+    FETCH_TIMEOUT_EXTENDED_MS,
   );
 
   if (!response.ok) {
@@ -486,7 +490,8 @@ async function preflightWorkflowAuth(
           };
         }),
       }),
-    }
+    },
+    FETCH_TIMEOUT_EXTENDED_MS,
   );
 
   if (!response.ok) {
@@ -708,10 +713,14 @@ export async function deployCommand(options: DeployOptions) {
         `Secret-manager preflight passed (${preflight.validatedCount} workflow${preflight.validatedCount === 1 ? "" : "s"}, ${preflight.checkedBindings} binding${preflight.checkedBindings === 1 ? "" : "s"})`
       );
     } catch (err) {
+      const isTimeout = err instanceof DOMException && err.name === "AbortError";
+      const message = isTimeout
+        ? "Request to auth service timed out. The secret-manager sync may need more time — check that the auth service is running and responsive."
+        : err instanceof Error ? err.message : String(err);
       authPreflightSpinner.fail("Secret-manager preflight failed");
       console.log(
         chalk.red(
-          `  ${err instanceof Error ? err.message : String(err)}`
+          `  ${message}`
         ),
       );
       process.exit(1);

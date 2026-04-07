@@ -7,6 +7,12 @@ import test from "node:test";
 import { spawn } from "node:child_process";
 import { assertNoConflictingHealthyService } from "../dist/lib/local-runtime.js";
 
+function createTestLayout(name) {
+  return {
+    runtimeDebugLogPath: path.join(os.tmpdir(), `${name}.log`),
+  };
+}
+
 function reservePort() {
   return new Promise((resolve, reject) => {
     const server = http.createServer();
@@ -74,6 +80,7 @@ test("assertNoConflictingHealthyService rejects a foreign healthy service", asyn
     await assert.rejects(
       () =>
         assertNoConflictingHealthyService({
+          layout: createTestLayout("gtmship-auth-conflict"),
           port,
           url: `http://127.0.0.1:${port}`,
           healthPath: "/health",
@@ -110,6 +117,7 @@ http.createServer((req, res) => {
   try {
     await waitForReady(`http://127.0.0.1:${port}/api/health`);
     const result = await assertNoConflictingHealthyService({
+      layout: createTestLayout("gtmship-dashboard-external"),
       port,
       url: `http://127.0.0.1:${port}`,
       healthPath: "/api/health",

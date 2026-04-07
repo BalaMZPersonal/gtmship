@@ -52,6 +52,7 @@ export interface RuntimeLayout {
   authLogPath: string;
   dashboardLogPath: string;
   localDispatchLogPath: string;
+  runtimeDebugLogPath: string;
   runtimeConfigPath: string;
   backgroundServiceKind: "launch-agent" | "systemd-user" | "none";
   backgroundServiceName: string | null;
@@ -320,6 +321,7 @@ export function resolveRuntimeLayout(): RuntimeLayout {
     authLogPath: path.join(logsDir, "auth-service.log"),
     dashboardLogPath: path.join(logsDir, "dashboard.log"),
     localDispatchLogPath: path.join(logsDir, "workflow-dispatch.log"),
+    runtimeDebugLogPath: path.join(logsDir, "runtime-debug.log"),
     runtimeConfigPath: path.join(appSupportDir, "runtime.json"),
     ...backgroundService,
     ...workflowScheduler,

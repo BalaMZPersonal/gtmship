@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, appendFileSync, constants, existsSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -39,6 +39,7 @@ interface RuntimeStatus {
   authLogPath: string;
   dashboardLogPath: string;
   postgresLogPath: string;
+  runtimeDebugLogPath: string;
 }
 
 function authServiceReady(body: string): boolean {
@@ -78,6 +79,12 @@ function ensureDir(dir: string): void {
 
 function ensureFileParent(filePath: string): void {
   ensureDir(path.dirname(filePath));
+}
+
+function appendRuntimeDebugLog(layout: RuntimeLayout, message: string): void {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  ensureFileParent(layout.runtimeDebugLogPath);
+  appendFileSync(layout.runtimeDebugLogPath, line, "utf8");
 }
 
 function safeUnlink(filePath: string): void {
@@ -146,38 +153,96 @@ async function readProcessCommand(pid: number): Promise<string | null> {
 }
 
 async function stopStaleManagedProcess(
+  layout: RuntimeLayout,
   pidPath: string,
   expectedEntrypoint: string
 ): Promise<boolean> {
   const pid = readPidFile(pidPath);
   if (!pid || !isProcessRunning(pid)) {
+    appendRuntimeDebugLog(
+      layout,
+      `No stale managed process found for ${pidPath} (pid missing or not running).`
+    );
     return false;
   }
 
   const command = await readProcessCommand(pid);
   if (command && command.includes(expectedEntrypoint)) {
+    appendRuntimeDebugLog(
+      layout,
+      `Managed process ${pid} matches expected entrypoint for ${pidPath}; keeping it for now.`
+    );
     return false;
   }
 
+  appendRuntimeDebugLog(
+    layout,
+    `Stopping stale managed process ${pid} from ${pidPath}. Command: ${command || "(unknown)"}`
+  );
   await stopPidFile(pidPath);
   return true;
 }
 
 async function stopManagedProcessIfMatching(
+  layout: RuntimeLayout,
   pidPath: string,
   expectedEntrypoint: string
 ): Promise<boolean> {
   const pid = readPidFile(pidPath);
   if (!pid || !isProcessRunning(pid)) {
+    appendRuntimeDebugLog(
+      layout,
+      `No matching managed process found for ${pidPath} (pid missing or not running).`
+    );
     return false;
   }
 
   const command = await readProcessCommand(pid);
   if (!command || !command.includes(expectedEntrypoint)) {
+    appendRuntimeDebugLog(
+      layout,
+      `Managed process ${pid} for ${pidPath} does not match expected entrypoint. Command: ${command || "(unknown)"}`
+    );
     return false;
   }
 
+  appendRuntimeDebugLog(
+    layout,
+    `Stopping matching managed process ${pid} from ${pidPath} before restart. Command: ${command}`
+  );
   await stopPidFile(pidPath);
+  return true;
+}
+
+async function stopManagedListenerIfPidMatches(input: {
+  layout: RuntimeLayout;
+  pidPath: string;
+  port: number;
+  serviceLabel: string;
+}): Promise<boolean> {
+  const managedPid = readPidFile(input.pidPath);
+  if (!managedPid || !isProcessRunning(managedPid)) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `No managed pid available to refresh ${input.serviceLabel} on port ${input.port}.`
+    );
+    return false;
+  }
+
+  const listenerPid = await findListeningPid(input.port);
+  if (!listenerPid || listenerPid !== managedPid) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `Managed pid ${managedPid} for ${input.serviceLabel} does not own listener on port ${input.port}. Listener pid: ${listenerPid || "none"}.`
+    );
+    return false;
+  }
+
+  appendRuntimeDebugLog(
+    input.layout,
+    `Stopping managed ${input.serviceLabel} listener pid ${managedPid} on port ${input.port} before restart.`
+  );
+  await stopPidFile(input.pidPath);
   return true;
 }
 
@@ -221,6 +286,7 @@ async function resolveConflictingServiceCommand(port: number): Promise<string | 
 }
 
 export async function assertNoConflictingHealthyService(input: {
+  layout: RuntimeLayout;
   port: number;
   url: string;
   healthPath: string;
@@ -235,23 +301,96 @@ export async function assertNoConflictingHealthyService(input: {
     1_000
   );
   if (!healthy) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `No healthy service detected on ${input.url}${input.healthPath} for ${input.serviceLabel}.`
+    );
     return null;
   }
 
   const managedPid = readPidFile(input.pidPath);
   if (managedPid && isProcessRunning(managedPid)) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `Healthy ${input.serviceLabel} already running from managed pid ${managedPid}.`
+    );
     return "running";
   }
 
   const command = await resolveConflictingServiceCommand(input.port);
   if (command && command.includes(input.expectedEntrypoint)) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `Healthy ${input.serviceLabel} found on port ${input.port} as external runtime. Command: ${command}`
+    );
     return "external";
   }
 
   const detail = command ? `\nConflicting process: ${command}` : "";
+  appendRuntimeDebugLog(
+    input.layout,
+    `Conflicting healthy service found on port ${input.port} for ${input.serviceLabel}. Command: ${command || "(unknown)"}`
+  );
   throw new Error(
     `${input.serviceLabel} is already responding on ${input.url}, but it is not the current GTMShip runtime.${detail}\nStop the conflicting service before running GTMShip so it uses the expected local database and runtime.`
   );
+}
+
+async function stopHealthyServiceOnPort(input: {
+  layout: RuntimeLayout;
+  port: number;
+  url: string;
+  healthPath: string;
+  matcher: (body: string) => boolean;
+  serviceLabel: string;
+}): Promise<boolean> {
+  const healthy = await waitForHttp(
+    `${input.url}${input.healthPath}`,
+    input.matcher,
+    1_000
+  );
+  if (!healthy) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `No healthy ${input.serviceLabel} found on port ${input.port} during cleanup.`
+    );
+    return false;
+  }
+
+  const pid = await findListeningPid(input.port);
+  if (!pid || !isProcessRunning(pid)) {
+    appendRuntimeDebugLog(
+      input.layout,
+      `Healthy ${input.serviceLabel} responded on port ${input.port}, but no live listener pid was found during cleanup.`
+    );
+    return false;
+  }
+
+  const command = await readProcessCommand(pid);
+  appendRuntimeDebugLog(
+    input.layout,
+    `Stopping lingering ${input.serviceLabel} pid ${pid} on port ${input.port}. Command: ${command || "(unknown)"}`
+  );
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return false;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 7_500) {
+    if (!isProcessRunning(pid)) {
+      return true;
+    }
+    await sleep(250);
+  }
+
+  if (isProcessRunning(pid)) {
+    process.kill(pid, "SIGKILL");
+  }
+
+  return true;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -534,6 +673,10 @@ async function ensurePostgresCluster(
 ): Promise<void> {
   ensureDir(layout.postgresDir);
   const postgresEnv = withPostgresLocaleEnv();
+  appendRuntimeDebugLog(
+    layout,
+    `Ensuring PostgreSQL cluster at ${layout.postgresDataDir} using database URL ${layout.databaseUrl}.`
+  );
 
   if (!existsSync(path.join(layout.postgresDataDir, "PG_VERSION"))) {
     const initSpinner = ora("Initializing local PostgreSQL data directory...").start();
@@ -559,6 +702,7 @@ async function ensurePostgresCluster(
     }
 
     initSpinner.succeed("Initialized local PostgreSQL data directory");
+    appendRuntimeDebugLog(layout, `Initialized PostgreSQL data directory at ${layout.postgresDataDir}.`);
   }
 
   const status = await runCommand(
@@ -567,16 +711,29 @@ async function ensurePostgresCluster(
     { env: postgresEnv }
   );
   if (status.code === 0 && (await postgresPortReady(tools))) {
+    appendRuntimeDebugLog(
+      layout,
+      `PostgreSQL already running for ${layout.postgresDataDir} and accepting connections on port ${DEFAULT_DATABASE_PORT}.`
+    );
     return;
   }
 
   if (status.code === 0) {
+    appendRuntimeDebugLog(
+      layout,
+      `PostgreSQL reported running for ${layout.postgresDataDir}, but port ${DEFAULT_DATABASE_PORT} did not pass readiness check.`
+    );
     throw new Error(
       `PostgreSQL reports itself as running for ${layout.postgresDataDir}, but ${layout.databaseUrl} is not reachable. Stop the stale cluster or the conflicting listener on port ${DEFAULT_DATABASE_PORT} before running GTMShip.`
     );
   }
 
   if (await portInUse(DEFAULT_DATABASE_PORT)) {
+    const command = await resolveConflictingServiceCommand(DEFAULT_DATABASE_PORT);
+    appendRuntimeDebugLog(
+      layout,
+      `Port ${DEFAULT_DATABASE_PORT} already in use before PostgreSQL start. Listener: ${command || "(unknown)"}`
+    );
     throw new Error(
       `Port ${DEFAULT_DATABASE_PORT} is already in use. Stop the conflicting process before running GTMShip.`
     );
@@ -597,6 +754,10 @@ async function ensurePostgresCluster(
   });
 
   if (start.code !== 0) {
+    appendRuntimeDebugLog(
+      layout,
+      `Failed to start PostgreSQL for ${layout.postgresDataDir}. stderr: ${start.stderr || "(empty)"} stdout: ${start.stdout || "(empty)"}`
+    );
     startSpinner.fail("Failed to start PostgreSQL");
     throw new Error(start.stderr || start.stdout || "pg_ctl start failed.");
   }
@@ -615,6 +776,10 @@ async function ensurePostgresCluster(
   }
 
   startSpinner.succeed("PostgreSQL is running");
+  appendRuntimeDebugLog(
+    layout,
+    `Started PostgreSQL for ${layout.postgresDataDir} on port ${DEFAULT_DATABASE_PORT}.`
+  );
 }
 
 async function ensureDatabase(
@@ -643,8 +808,14 @@ async function ensureDatabase(
     result.code !== 0 &&
     !/already exists/i.test(`${result.stdout}\n${result.stderr}`)
   ) {
+    appendRuntimeDebugLog(
+      layout,
+      `createdb failed for database gtmship on ${layout.databaseUrl}. stderr: ${result.stderr || "(empty)"} stdout: ${result.stdout || "(empty)"}`
+    );
     throw new Error(result.stderr || result.stdout || "createdb failed.");
   }
+
+  appendRuntimeDebugLog(layout, `Verified database "gtmship" exists on ${layout.databaseUrl}.`);
 }
 
 async function runPrismaMigrations(layout: RuntimeLayout): Promise<void> {
@@ -668,11 +839,19 @@ async function runPrismaMigrations(layout: RuntimeLayout): Promise<void> {
   );
 
   if (result.code !== 0) {
+    appendRuntimeDebugLog(
+      layout,
+      `Prisma migrate deploy failed for ${layout.authServiceSchemaPath}. stderr: ${result.stderr || "(empty)"} stdout: ${result.stdout || "(empty)"}`
+    );
     spinner.fail("Failed to apply database migrations");
     throw new Error(result.stderr || result.stdout || "prisma migrate deploy failed.");
   }
 
   spinner.succeed("Auth-service database is up to date");
+  appendRuntimeDebugLog(
+    layout,
+    `Prisma migrations applied successfully for ${layout.authServiceSchemaPath}.`
+  );
 }
 
 function ensureRuntimePrerequisites(
@@ -704,10 +883,17 @@ async function ensureAuthService(
   layout: RuntimeLayout,
   config: RuntimeConfig
 ): Promise<"running" | "external"> {
-  await stopStaleManagedProcess(pidFile(layout, "auth"), layout.authServiceEntry);
-  await stopManagedProcessIfMatching(pidFile(layout, "auth"), layout.authServiceEntry);
+  await stopStaleManagedProcess(layout, pidFile(layout, "auth"), layout.authServiceEntry);
+  await stopManagedProcessIfMatching(layout, pidFile(layout, "auth"), layout.authServiceEntry);
+  await stopManagedListenerIfPidMatches({
+    layout,
+    pidPath: pidFile(layout, "auth"),
+    port: DEFAULT_AUTH_PORT,
+    serviceLabel: "auth service",
+  });
 
   const existing = await assertNoConflictingHealthyService({
+    layout,
     port: DEFAULT_AUTH_PORT,
     url: layout.authUrl,
     healthPath: "/health",
@@ -721,6 +907,11 @@ async function ensureAuthService(
   }
 
   if (await portInUse(DEFAULT_AUTH_PORT)) {
+    const command = await resolveConflictingServiceCommand(DEFAULT_AUTH_PORT);
+    appendRuntimeDebugLog(
+      layout,
+      `Port ${DEFAULT_AUTH_PORT} already in use before auth-service start. Listener: ${command || "(unknown)"}`
+    );
     throw new Error(
       `Port ${DEFAULT_AUTH_PORT} is already in use by another process. GTMShip needs ${layout.authUrl}.`
     );
@@ -745,6 +936,10 @@ async function ensureAuthService(
   );
 
   if (!ready) {
+    appendRuntimeDebugLog(
+      layout,
+      `Auth service failed readiness checks at ${layout.authUrl}/health.`
+    );
     spinner.fail("Auth service failed to become ready");
     throw new Error(
       `Auth service failed to start. See ${layout.authLogPath} for details.`
@@ -752,6 +947,10 @@ async function ensureAuthService(
   }
 
   spinner.succeed("Auth service is running");
+  appendRuntimeDebugLog(
+    layout,
+    `Started auth service from ${layout.authServiceEntry} with auth URL ${layout.authUrl}.`
+  );
   return "running";
 }
 
@@ -760,15 +959,24 @@ async function ensureDashboard(
   config: RuntimeConfig
 ): Promise<"running" | "external"> {
   await stopStaleManagedProcess(
+    layout,
     pidFile(layout, "dashboard"),
     layout.dashboardServerEntry
   );
   await stopManagedProcessIfMatching(
+    layout,
     pidFile(layout, "dashboard"),
     layout.dashboardServerEntry
   );
+  await stopManagedListenerIfPidMatches({
+    layout,
+    pidPath: pidFile(layout, "dashboard"),
+    port: DEFAULT_DASHBOARD_PORT,
+    serviceLabel: "dashboard",
+  });
 
   const existing = await assertNoConflictingHealthyService({
+    layout,
     port: DEFAULT_DASHBOARD_PORT,
     url: layout.dashboardUrl,
     healthPath: "/api/health",
@@ -782,6 +990,11 @@ async function ensureDashboard(
   }
 
   if (await portInUse(DEFAULT_DASHBOARD_PORT)) {
+    const command = await resolveConflictingServiceCommand(DEFAULT_DASHBOARD_PORT);
+    appendRuntimeDebugLog(
+      layout,
+      `Port ${DEFAULT_DASHBOARD_PORT} already in use before dashboard start. Listener: ${command || "(unknown)"}`
+    );
     throw new Error(
       `Port ${DEFAULT_DASHBOARD_PORT} is already in use by another process. GTMShip needs ${layout.dashboardUrl}.`
     );
@@ -807,6 +1020,10 @@ async function ensureDashboard(
   );
 
   if (!ready) {
+    appendRuntimeDebugLog(
+      layout,
+      `Dashboard failed readiness checks at ${layout.dashboardUrl}/api/health.`
+    );
     spinner.fail("Dashboard failed to become ready");
     throw new Error(
       `Dashboard failed to start. See ${layout.dashboardLogPath} for details.`
@@ -814,6 +1031,10 @@ async function ensureDashboard(
   }
 
   spinner.succeed("Dashboard is running");
+  appendRuntimeDebugLog(
+    layout,
+    `Started dashboard from ${layout.dashboardServerEntry} with dashboard URL ${layout.dashboardUrl}.`
+  );
   return "running";
 }
 
@@ -1106,6 +1327,7 @@ export async function getLocalRuntimeStatus(): Promise<RuntimeStatus> {
     authLogPath: layout.authLogPath,
     dashboardLogPath: layout.dashboardLogPath,
     postgresLogPath: layout.postgresLogPath,
+    runtimeDebugLogPath: layout.runtimeDebugLogPath,
   };
 }
 
@@ -1116,6 +1338,10 @@ export async function startLocalRuntime(input: {
 } = {}): Promise<RuntimeStatus> {
   const layout = resolveRuntimeLayout();
   const requireDashboard = input.ensureDashboard !== false;
+  appendRuntimeDebugLog(
+    layout,
+    `Starting local runtime. installRoot=${layout.rootDir} projectRoot=${layout.projectRoot} authUrl=${layout.authUrl} dashboardUrl=${layout.dashboardUrl} postgresDir=${layout.postgresDataDir}`
+  );
 
   ensureRuntimePrerequisites(layout, {
     requireDashboard,
@@ -1152,9 +1378,26 @@ export async function startLocalRuntime(input: {
 export async function stopLocalRuntime(): Promise<RuntimeStatus> {
   const layout = resolveRuntimeLayout();
   const tools = resolvePostgresTools();
+  appendRuntimeDebugLog(layout, "Stopping local runtime.");
 
   await stopPidFile(pidFile(layout, "dashboard"));
   await stopPidFile(pidFile(layout, "auth"));
+  await stopHealthyServiceOnPort({
+    layout,
+    port: DEFAULT_DASHBOARD_PORT,
+    url: layout.dashboardUrl,
+    healthPath: "/api/health",
+    matcher: (body) => body.includes("\"service\":\"gtmship-dashboard\""),
+    serviceLabel: "dashboard",
+  });
+  await stopHealthyServiceOnPort({
+    layout,
+    port: DEFAULT_AUTH_PORT,
+    url: layout.authUrl,
+    healthPath: "/health",
+    matcher: authServiceReady,
+    serviceLabel: "auth service",
+  });
 
   if (existsSync(path.join(layout.postgresDataDir, "PG_VERSION"))) {
     await runCommand(tools.pgCtl, [
@@ -1212,5 +1455,6 @@ export function printRuntimeStatus(status: RuntimeStatus): void {
   console.log(`  Dashboard Log: ${status.dashboardLogPath}`);
   console.log(`  Auth Log:      ${status.authLogPath}`);
   console.log(`  Postgres Log:  ${status.postgresLogPath}`);
+  console.log(`  Runtime Debug: ${status.runtimeDebugLogPath}`);
   console.log("");
 }

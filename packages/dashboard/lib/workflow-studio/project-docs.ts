@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { WorkflowStudioArtifact } from "./types";
 import {
@@ -11,6 +11,15 @@ import {
 const execFileAsync = promisify(execFile);
 const MAX_PROJECT_FILE_BYTES = 64_000;
 const MAX_SEARCH_RESULTS = 20;
+const FALLBACK_IGNORED_DIRS = new Set([
+  ".git",
+  ".gtmship",
+  ".next",
+  ".turbo",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
 
 function trimContent(value: string, maxChars = 12_000): string {
   if (value.length <= maxChars) {
@@ -18,6 +27,122 @@ function trimContent(value: string, maxChars = 12_000): string {
   }
 
   return `${value.slice(0, maxChars)}\n\n... (content truncated)`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function compileSearchPattern(query: string): RegExp {
+  try {
+    return new RegExp(query);
+  } catch {
+    return new RegExp(escapeRegExp(query));
+  }
+}
+
+function compileGlobPattern(glob?: string): RegExp | null {
+  const trimmed = glob?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const escaped = trimmed
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "__DOUBLE_STAR__")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\?/g, "[^/]")
+    .replace(/__DOUBLE_STAR__/g, ".*");
+
+  return new RegExp(`^${escaped}$`);
+}
+
+export async function searchProjectFilesWithoutRipgrep(
+  projectRoot: string,
+  input: {
+    query: string;
+    glob?: string;
+    maxResults?: number;
+  },
+): Promise<Array<{ path: string; line: number; preview: string }>> {
+  const maxResults = Math.min(
+    Math.max(input.maxResults || 8, 1),
+    MAX_SEARCH_RESULTS,
+  );
+  const pattern = compileSearchPattern(input.query);
+  const globPattern = compileGlobPattern(input.glob);
+  const matches: Array<{ path: string; line: number; preview: string }> = [];
+
+  async function walk(relativeDir = ""): Promise<void> {
+    if (matches.length >= maxResults) {
+      return;
+    }
+
+    const absoluteDir = path.join(projectRoot, relativeDir);
+    const entries = await readdir(absoluteDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (matches.length >= maxResults) {
+        return;
+      }
+
+      const relativePath = relativeDir
+        ? path.posix.join(relativeDir, entry.name)
+        : entry.name;
+
+      if (entry.isDirectory()) {
+        if (!FALLBACK_IGNORED_DIRS.has(entry.name)) {
+          await walk(relativePath);
+        }
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      if (globPattern && !globPattern.test(relativePath)) {
+        continue;
+      }
+
+      const absolutePath = ensureWithinProjectRoot(
+        projectRoot,
+        path.join(projectRoot, relativePath),
+      );
+
+      let content = "";
+      try {
+        content = await readFile(absolutePath, {
+          encoding: "utf8",
+          flag: "r",
+        });
+      } catch {
+        continue;
+      }
+
+      if (content.includes("\u0000")) {
+        continue;
+      }
+
+      const lines = content
+        .slice(0, MAX_PROJECT_FILE_BYTES)
+        .split("\n");
+
+      for (let index = 0; index < lines.length; index += 1) {
+        if (pattern.test(lines[index])) {
+          matches.push({
+            path: absolutePath,
+            line: index + 1,
+            preview: lines[index].trim(),
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  await walk();
+  return matches;
 }
 
 export async function readProjectFile(relativePath: string): Promise<{
@@ -119,6 +244,24 @@ export async function searchProjectFiles(input: {
       matches,
     };
   } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      const matches = await searchProjectFilesWithoutRipgrep(
+        resolution.projectRoot,
+        input,
+      );
+
+      return {
+        projectRoot: resolution.projectRoot,
+        query: input.query,
+        matches,
+      };
+    }
+
     if (
       error &&
       typeof error === "object" &&

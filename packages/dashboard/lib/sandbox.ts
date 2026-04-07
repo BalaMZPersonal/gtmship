@@ -210,6 +210,10 @@ export async function executeCommand(
                 ? error.code
                 : 1
               : 1;
+          if ("code" in error && error.code === "ENOENT") {
+            stderr += `\nCommand "${exe}" is not installed on this system.`;
+            exitCode = 127;
+          }
           if ("killed" in error && error.killed) {
             stderr += "\nProcess killed (timeout or memory limit).";
           }

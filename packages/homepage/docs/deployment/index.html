@@ -57,7 +57,7 @@
             <li><strong>Workflow source:</strong> a draft with clear provider usage and runtime shape that has already gone through authoring and preview.</li>
             <li><strong>Resolvable bindings:</strong> every external system the workflow needs should map to a real connection or a deploy-time binding choice.</li>
             <li><strong>Project config:</strong> GTMship needs cloud target, region, and any workflow overrides defined in <span class="docs-inline-code">gtmship.config.yaml</span>.</li>
-            <li><strong>Cloud access:</strong> the deploy engine still needs the credentials, permissions, and local cloud CLIs required to create or update cloud-side resources.</li>
+            <li><strong>Cloud access:</strong> the deploy engine still needs the credentials, permissions, and local cloud CLIs required to create or update cloud-side resources. GTMship uses a project-local Pulumi backend by default, so brewed installs do not need a Pulumi Cloud login just to deploy.</li>
           </ul>
         </section>
 

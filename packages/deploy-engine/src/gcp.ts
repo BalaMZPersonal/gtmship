@@ -13,6 +13,7 @@
 import { LocalWorkspace } from "@pulumi/pulumi/automation/index.js";
 import * as pulumi from "@pulumi/pulumi";
 import * as gcp from "@pulumi/gcp";
+import { buildPulumiWorkspaceOptions } from "./pulumi-workspace.js";
 
 import type { DeployStatus } from "./aws.js";
 
@@ -396,7 +397,7 @@ export async function deployToGcp(
     stackName,
     projectName: PULUMI_PROJECT,
     program: createPulumiProgram(config, runtimeIdentity),
-  });
+  }, buildPulumiWorkspaceOptions());
 
   console.log("Configuring GCP project and region...");
   await stack.setConfig("gcp:project", { value: config.gcpProject });
@@ -444,7 +445,7 @@ export async function getGcpDeployStatus(
       stackName,
       projectName: PULUMI_PROJECT,
       program: async () => {},
-    });
+    }, buildPulumiWorkspaceOptions());
 
     const info = await stack.info();
     const outputs = await stack.outputs();
@@ -480,7 +481,7 @@ export async function destroyGcpStack(projectName: string, workflowId?: string):
     stackName,
     projectName: PULUMI_PROJECT,
     program: async () => {},
-  });
+  }, buildPulumiWorkspaceOptions());
 
   await stack.destroy({
     onOutput: (msg: string) => {
@@ -541,7 +542,7 @@ async function gcpStackExists(stackName: string): Promise<boolean> {
       stackName,
       projectName: PULUMI_PROJECT,
       program: async () => {},
-    });
+    }, buildPulumiWorkspaceOptions());
     return true;
   } catch {
     return false;

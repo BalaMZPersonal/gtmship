@@ -66,6 +66,7 @@ For cloud deploys:
 
 - `pulumi` is installed as a Homebrew dependency of `gtmship`
 - the CLI preflights `pulumi`, cloud credentials, enabled APIs, and other deploy prerequisites before it starts building artifacts
+- Pulumi state defaults to a project-local backend under `.gtmship/pulumi/`, so brewed installs do not require `pulumi login` or a `PULUMI_ACCESS_TOKEN` for standard local cloud deploys
 - the CLI auto-installs GCP-specific local helpers such as `gcloud-cli`, `docker`, and `colima` only when a workflow deploy actually needs them
 
 On headless Linux machines or VMs, use:

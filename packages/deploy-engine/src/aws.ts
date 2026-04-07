@@ -15,6 +15,7 @@ import { LocalWorkspace } from "@pulumi/pulumi/automation/index.js";
 import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
+import { buildPulumiWorkspaceOptions } from "./pulumi-workspace.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -459,7 +460,7 @@ export async function deployToAws(config: AwsConfig): Promise<DeployResult> {
     stackName,
     projectName: PULUMI_PROJECT,
     program: createPulumiProgram(config),
-  });
+  }, buildPulumiWorkspaceOptions());
 
   console.log("Configuring AWS region...");
   await stack.setConfig("aws:region", { value: config.region });
@@ -517,7 +518,7 @@ export async function getDeployStatus(
       projectName: PULUMI_PROJECT,
       // A dummy program is needed by the API but won't be executed for reads.
       program: async () => {},
-    });
+    }, buildPulumiWorkspaceOptions());
 
     const info = await stack.info();
     const outputs = await stack.outputs();
@@ -550,7 +551,7 @@ export async function destroyStack(projectName: string): Promise<void> {
     stackName: projectName,
     projectName: PULUMI_PROJECT,
     program: async () => {},
-  });
+  }, buildPulumiWorkspaceOptions());
 
   await stack.destroy({
     onOutput: (msg: string) => {

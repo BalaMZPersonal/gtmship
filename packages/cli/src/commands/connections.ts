@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import chalk from "chalk";
 import { apiGet, apiPost, apiDelete } from "../lib/api-client.js";
 import {
@@ -23,6 +23,29 @@ import {
   type CliConnectionSecretReplica,
   type CliSecretBackendKind,
 } from "../lib/connection-auth.js";
+
+function openUrlInBrowser(url: string): boolean {
+  const candidates =
+    process.platform === "darwin"
+      ? [{ command: "open", args: [url] }]
+      : process.platform === "linux"
+        ? [
+            { command: "xdg-open", args: [url] },
+            { command: "gio", args: ["open", url] },
+          ]
+        : [];
+
+  for (const candidate of candidates) {
+    try {
+      execFileSync(candidate.command, candidate.args, { stdio: "ignore" });
+      return true;
+    } catch {
+      // Try the next opener.
+    }
+  }
+
+  return false;
+}
 
 function renderConnectionSecretReplicas(
   replicas: CliConnectionSecretReplica[]
@@ -300,9 +323,7 @@ async function connectCommand(
       }
 
       // Open browser
-      try {
-        execSync(`open "${data.authorize_url}"`, { stdio: "ignore" });
-      } catch {
+      if (!openUrlInBrowser(data.authorize_url)) {
         console.log(
           chalk.cyan(`  Open this URL in your browser:\n  ${data.authorize_url}`),
         );

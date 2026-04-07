@@ -14,7 +14,12 @@ import {
   getWorkflowDeploymentRefs,
 } from "@/lib/deploy";
 import type { SetupStatusResponse } from "@/lib/setup";
-import type { ConnectionAuthStrategyStatus } from "@/lib/workflow-studio/types";
+import type {
+  ConnectionAuthStrategyStatus,
+  WorkflowDeploymentPlan,
+  WorkflowDeployProvider,
+  WorkflowStudioArtifact,
+} from "@/lib/workflow-studio/types";
 
 export interface MemoryRecord {
   id: string;
@@ -27,16 +32,17 @@ export interface MemoryRecord {
   updatedAt: string;
 }
 
-const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
+const AUTH_PROXY_BASE = "/api/auth-service";
 
 async function request(path: string, options?: RequestInit) {
-  const res = await fetch(`${AUTH_URL}${path}`, {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const res = await fetch(`${AUTH_PROXY_BASE}${normalizedPath}`, {
     ...options,
     headers: { "Content-Type": "application/json", ...options?.headers },
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
+    throw new Error(extractDashboardErrorMessage(body, `${res.status}`));
   }
   if (res.status === 204) {
     return null;
@@ -231,6 +237,16 @@ export const api = {
       method: "DELETE",
       body: JSON.stringify(input || {}),
     }),
+  getWorkflowDeploymentPlan: (input: {
+    artifact: WorkflowStudioArtifact;
+    provider?: WorkflowDeployProvider;
+    region?: string;
+    gcpProject?: string;
+  }) =>
+    localRequest<WorkflowDeploymentPlan>("/api/workflows/plan", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
 
   // Memory
   getMemories: (params?: {
@@ -405,9 +421,8 @@ export const api = {
 
   // Cloud auth validation
   validateCloudAuth: (provider: string) =>
-    fetch(`${AUTH_URL}/cloud-auth/validate`, {
+    request("/cloud-auth/validate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider }),
-    }).then((r) => r.json()),
+    }),
 };

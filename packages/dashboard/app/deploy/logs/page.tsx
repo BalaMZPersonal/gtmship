@@ -308,48 +308,52 @@ function LogsPageContent() {
     setAutoRefresh(nextProvider === "local");
   };
 
-  const loadDeployments = useCallback(async () => {
-    if (!providerReady || !provider) {
-      setGcpDeployments([]);
-      setDeploymentError("");
-      return;
-    }
-
-    setDeploymentsLoading(true);
-    setDeploymentError("");
-    try {
-      const fetchDeployments = async () => {
-        const deployments = await api.getWorkflowDeploymentsForWorkflow({
-          workflowId: workflowLookup.workflowId,
-          workflowSlug: workflowLookup.workflowSlug,
-          provider,
-          includeLive: true,
-          executionLimit: 10,
-        });
-        return Array.isArray(deployments) ? deployments : [];
-      };
-
-      let nextDeployments = await fetchDeployments();
-      if (nextDeployments.length === 0) {
-        await api.reconcileWorkflowDeployments({
-          provider,
-          workflow: queryWorkflowSlug || workflowId.trim() || undefined,
-        });
-        nextDeployments = await fetchDeployments();
+  const loadDeployments = useCallback(
+    async (options: { forceReconcile?: boolean } = {}) => {
+      const forceReconcile = options.forceReconcile === true;
+      if (!providerReady || !provider) {
+        setGcpDeployments([]);
+        setDeploymentError("");
+        return;
       }
 
-      setGcpDeployments(nextDeployments);
-    } catch (loadError) {
-      setGcpDeployments([]);
-      setDeploymentError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load deployments."
-      );
-    } finally {
-      setDeploymentsLoading(false);
-    }
-  }, [provider, providerReady, queryWorkflowSlug, workflowId, workflowLookup]);
+      setDeploymentsLoading(true);
+      setDeploymentError("");
+      try {
+        const fetchDeployments = async () => {
+          const deployments = await api.getWorkflowDeploymentsForWorkflow({
+            workflowId: workflowLookup.workflowId,
+            workflowSlug: workflowLookup.workflowSlug,
+            provider,
+            includeLive: true,
+            executionLimit: 10,
+          });
+          return Array.isArray(deployments) ? deployments : [];
+        };
+
+        let nextDeployments = await fetchDeployments();
+        if (forceReconcile) {
+          await api.reconcileWorkflowDeployments({
+            provider,
+            workflow: queryWorkflowSlug || workflowId.trim() || undefined,
+          });
+          nextDeployments = await fetchDeployments();
+        }
+
+        setGcpDeployments(nextDeployments);
+      } catch (loadError) {
+        setGcpDeployments([]);
+        setDeploymentError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load deployments."
+        );
+      } finally {
+        setDeploymentsLoading(false);
+      }
+    },
+    [provider, providerReady, queryWorkflowSlug, workflowId, workflowLookup]
+  );
 
   useEffect(() => {
     if (!provider) {
@@ -617,7 +621,9 @@ function LogsPageContent() {
                     <button
                       type="button"
                       onClick={() => {
-                        void loadDeployments();
+                        void loadDeployments({
+                          forceReconcile: visibleGcpDeployments.length === 0,
+                        });
                         void fetchLogs();
                       }}
                       disabled={loading || deploymentsLoading}

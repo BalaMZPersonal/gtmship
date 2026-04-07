@@ -44,7 +44,9 @@ import type { AiModelOption } from "@/lib/ai-config";
 import {
   buildDeploymentLogsHref,
   buildWorkflowSecretSyncSummary,
+  deriveWorkflowDeploymentRunTarget,
   type DashboardDeployInfraKey,
+  formatWorkflowDeploymentDisplayTarget,
   type GcpComputeType,
   type ResolvedCloudDeploySettings,
   type WorkflowDeployTarget,
@@ -55,6 +57,7 @@ import {
   isDashboardDeploySuccess,
   loadCloudDeploySettings,
   resolveWorkflowDeployTarget,
+  workflowDeploymentTargetsMatch,
 } from "@/lib/deploy";
 import { DeploymentSecretSyncCard } from "@/components/deployment-secret-sync-card";
 import { MermaidDiagram } from "@/components/mermaid-diagram";
@@ -81,6 +84,7 @@ import type {
   WorkflowAiConfig,
   WorkflowAiProviderSlug,
   WorkflowBuildResult,
+  WorkflowDeploymentPlan,
   WorkflowDeploymentRun,
   WorkflowDeployTargetMode,
   WorkflowListItem,
@@ -166,6 +170,35 @@ type WorkflowStudioProject = {
 };
 
 type WorkflowConnectionBlockerStatus = "missing" | "blocked" | "attention";
+
+function serializeForStateComparison(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function areWorkflowMessagesEqual(
+  left: WorkflowStudioMessage[],
+  right: WorkflowStudioMessage[]
+): boolean {
+  return serializeForStateComparison(left) === serializeForStateComparison(right);
+}
+
+function areWorkflowArtifactsEqual(
+  left: WorkflowStudioArtifact | null,
+  right: WorkflowStudioArtifact | null
+): boolean {
+  return serializeForStateComparison(left) === serializeForStateComparison(right);
+}
+
+function areWorkflowAccessRequirementsEqual(
+  left: WorkflowAccessRequirement[],
+  right: WorkflowAccessRequirement[]
+): boolean {
+  return serializeForStateComparison(left) === serializeForStateComparison(right);
+}
 
 interface WorkflowConnectionBlocker {
   key: string;
@@ -2025,6 +2058,8 @@ export function WorkflowStudio() {
   const [previewing, setPreviewing] = useState(false);
   const [building, setBuilding] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  const [deployingTargetMode, setDeployingTargetMode] =
+    useState<WorkflowDeployTargetMode | null>(null);
   const [deletingWorkflow, setDeletingWorkflow] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2035,6 +2070,12 @@ export function WorkflowStudio() {
     "refresh" | "retry"
   >("refresh");
   const [liveDeploymentError, setLiveDeploymentError] = useState("");
+  const [resolvedDeploymentPlan, setResolvedDeploymentPlan] =
+    useState<WorkflowDeploymentPlan | null>(null);
+  const [resolvedDeploymentPlanLoading, setResolvedDeploymentPlanLoading] =
+    useState(false);
+  const [resolvedDeploymentPlanError, setResolvedDeploymentPlanError] =
+    useState("");
   const [cloudSettings, setCloudSettings] =
     useState<ResolvedCloudDeploySettings | null>(null);
   const [showProjectPicker, setShowProjectPicker] = useState(false);
@@ -2084,7 +2125,10 @@ export function WorkflowStudio() {
   const deploymentDefaults = listing?.deploymentDefaults;
 
   const showEditor = artifact !== null;
-  const currentArtifact = artifact || emptyArtifact(deploymentDefaults);
+  const currentArtifact = useMemo(
+    () => artifact || emptyArtifact(deploymentDefaults),
+    [artifact, deploymentDefaults]
+  );
   const previewPendingApproval = currentArtifact.preview?.pendingApproval;
   const buildPendingApproval = currentArtifact.build?.preview?.pendingApproval;
   const previewCheckpointProgress = useMemo(
@@ -2123,58 +2167,67 @@ export function WorkflowStudio() {
         .map((checkpoint) => checkpoint.id),
     [buildCheckpointApprovalProgress]
   );
-  const effectiveDeployTarget = resolveWorkflowDeployTarget({
-    workflowDeploy: currentArtifact.deploy,
-    cloudSettings,
-    projectDefaults: deploymentDefaults,
-  });
-  const deployTarget = effectiveDeployTarget.target;
-  const effectiveProvider = effectiveDeployTarget.provider;
-  const effectiveRegion = effectiveDeployTarget.region;
-  const effectiveGcpProject = effectiveDeployTarget.gcpProject || "";
-  const effectiveCloudProvider = effectiveDeployTarget.cloudProvider;
-  const effectiveCloudRegion = effectiveDeployTarget.cloudRegion;
-  const effectiveCloudGcpProject =
-    effectiveDeployTarget.cloudGcpProject || "";
-  const cloudDeployTarget = resolveWorkflowDeployTarget({
-    workflowDeploy: {
-      ...(currentArtifact.deploy || {}),
-      target: "cloud",
-      provider: effectiveCloudProvider,
-      region: effectiveCloudRegion,
-      gcpProject:
-        effectiveCloudProvider === "gcp"
-          ? effectiveCloudGcpProject
-          : currentArtifact.deploy?.gcpProject,
-    },
-    cloudSettings,
-    projectDefaults: deploymentDefaults,
-  });
-  const localDeployTarget = resolveWorkflowDeployTarget({
-    workflowDeploy: {
-      ...(currentArtifact.deploy || {}),
-      target: "local",
-    },
-    cloudSettings,
-    projectDefaults: deploymentDefaults,
-  });
-  const cloudDeployArtifact = {
-    ...currentArtifact,
-    deploy: {
-      ...(currentArtifact.deploy || {}),
-      target: "cloud" as const,
-      provider: effectiveCloudProvider,
-      region: effectiveCloudRegion,
-      gcpProject:
-        effectiveCloudProvider === "gcp"
-          ? effectiveCloudGcpProject
-          : currentArtifact.deploy?.gcpProject,
-      auth: {
-        ...(currentArtifact.deploy?.auth || {}),
-        mode: "secret_manager" as const,
-      },
-    },
-  };
+  const configuredDeployTarget = useMemo(
+    () =>
+      resolveWorkflowDeployTarget({
+        workflowDeploy: currentArtifact.deploy,
+        cloudSettings,
+        projectDefaults: deploymentDefaults,
+      }),
+    [cloudSettings, currentArtifact.deploy, deploymentDefaults]
+  );
+  const deployTarget = configuredDeployTarget.target;
+  const configuredProvider = configuredDeployTarget.provider;
+  const configuredRegion = configuredDeployTarget.region;
+  const configuredGcpProject = configuredDeployTarget.gcpProject || "";
+  const configuredCloudProvider = configuredDeployTarget.cloudProvider;
+  const configuredCloudRegion = configuredDeployTarget.cloudRegion;
+  const configuredCloudGcpProject =
+    configuredDeployTarget.cloudGcpProject || "";
+  const effectiveDeployTarget = configuredDeployTarget;
+  const effectiveProvider = configuredProvider;
+  const effectiveRegion = configuredRegion;
+  const effectiveGcpProject = configuredGcpProject;
+  const effectiveCloudProvider = configuredCloudProvider;
+  const effectiveCloudRegion = configuredCloudRegion;
+  const effectiveCloudGcpProject = configuredCloudGcpProject;
+  const cloudDeployTarget = useMemo(
+    () =>
+      resolveWorkflowDeployTarget({
+        workflowDeploy: {
+          ...(currentArtifact.deploy || {}),
+          target: "cloud",
+          provider: configuredCloudProvider,
+          region: configuredCloudRegion,
+          gcpProject:
+            configuredCloudProvider === "gcp"
+              ? configuredCloudGcpProject
+              : currentArtifact.deploy?.gcpProject,
+        },
+        cloudSettings,
+        projectDefaults: deploymentDefaults,
+      }),
+    [
+      cloudSettings,
+      currentArtifact.deploy,
+      deploymentDefaults,
+      configuredCloudGcpProject,
+      configuredCloudProvider,
+      configuredCloudRegion,
+    ]
+  );
+  const localDeployTarget = useMemo(
+    () =>
+      resolveWorkflowDeployTarget({
+        workflowDeploy: {
+          ...(currentArtifact.deploy || {}),
+          target: "local",
+        },
+        cloudSettings,
+        projectDefaults: deploymentDefaults,
+      }),
+    [cloudSettings, currentArtifact.deploy, deploymentDefaults]
+  );
   const localDeployArtifact = {
     ...currentArtifact,
     deploy: {
@@ -2182,7 +2235,50 @@ export function WorkflowStudio() {
       target: "local" as const,
     },
   };
+  const deployPlanArtifact = useMemo<WorkflowStudioArtifact>(
+    () => ({
+      slug: currentArtifact.slug,
+      title: currentArtifact.title,
+      summary: currentArtifact.summary,
+      description: currentArtifact.description,
+      mermaid: currentArtifact.mermaid,
+      code: currentArtifact.code,
+      samplePayload: currentArtifact.samplePayload,
+      requiredAccesses: currentArtifact.requiredAccesses,
+      writeCheckpoints: currentArtifact.writeCheckpoints,
+      chatSummary: currentArtifact.chatSummary,
+      messages: [],
+      transcriptCompaction: currentArtifact.transcriptCompaction,
+      deploy: currentArtifact.deploy,
+      triggerConfig: currentArtifact.triggerConfig,
+      bindings: currentArtifact.bindings,
+      aiConfigs: currentArtifact.aiConfigs,
+      groundedApiContext: currentArtifact.groundedApiContext,
+    }),
+    [
+      currentArtifact.aiConfigs,
+      currentArtifact.bindings,
+      currentArtifact.chatSummary,
+      currentArtifact.code,
+      currentArtifact.deploy,
+      currentArtifact.description,
+      currentArtifact.groundedApiContext,
+      currentArtifact.mermaid,
+      currentArtifact.requiredAccesses,
+      currentArtifact.samplePayload,
+      currentArtifact.slug,
+      currentArtifact.summary,
+      currentArtifact.title,
+      currentArtifact.transcriptCompaction,
+      currentArtifact.triggerConfig,
+      currentArtifact.writeCheckpoints,
+    ]
+  );
   const deploymentRun = currentArtifact.deploymentRun || null;
+  const deploymentRunTarget = useMemo(
+    () => deriveWorkflowDeploymentRunTarget(deploymentRun),
+    [deploymentRun]
+  );
   const deployStatus = deploymentRun?.status || "idle";
   const deployErrorMessage = deploymentRun?.error || "";
   const deployOutput = deploymentRun?.output || "";
@@ -2191,21 +2287,36 @@ export function WorkflowStudio() {
   const hasLiveDeploymentRecord = liveDeploymentOverview !== null;
   const deploymentPlan = buildWorkflowPlanFromArtifact(
     currentArtifact,
-    effectiveDeployTarget
+    configuredDeployTarget
   );
   const localDeploymentPlan = buildWorkflowPlanFromArtifact(
     localDeployArtifact,
     localDeployTarget
   );
-  const deploymentSecretSyncSummary = buildWorkflowSecretSyncSummary([
-    deploymentPlan,
-  ]);
+  const displayDeploymentPlan = resolvedDeploymentPlan || deploymentPlan;
+  const deploymentSecretSyncSummary = resolvedDeploymentPlan
+    ? buildWorkflowSecretSyncSummary([resolvedDeploymentPlan])
+    : null;
   const selectedWorkflowId =
     listing?.workflows.find((workflow) => workflow.slug === selectedSlug)?.workflowId ||
     deploymentPlan.workflowId ||
     currentArtifact.slug;
+  const configuredTargetMatchesLastRun = deploymentRunTarget
+    ? workflowDeploymentTargetsMatch(configuredDeployTarget, deploymentRunTarget)
+    : false;
+  const deployResultTarget = deploymentRunTarget || {
+    provider: configuredProvider,
+    region: configuredRegion,
+    gcpProject: configuredProvider === "gcp" ? configuredGcpProject : undefined,
+  };
+  const configuredTargetLabel = formatWorkflowDeploymentDisplayTarget(
+    configuredDeployTarget
+  );
+  const deploymentRunTargetLabel = deploymentRunTarget
+    ? formatWorkflowDeploymentDisplayTarget(deploymentRunTarget)
+    : null;
   const liveGcpComputeType: GcpComputeType | null =
-    effectiveProvider === "gcp"
+    configuredProvider === "gcp"
       ? liveDeploymentOverview?.platform?.computeType === "job"
         ? "job"
         : liveDeploymentOverview?.platform?.computeType === "service"
@@ -2214,12 +2325,16 @@ export function WorkflowStudio() {
             ? "job"
             : "service"
       : null;
-  const deployInfra = getDeploymentInfra(effectiveDeployTarget.provider, {
-    gcpComputeType: liveGcpComputeType,
+  const deployInfra = getDeploymentInfra(deployResultTarget.provider, {
+    gcpComputeType:
+      deployResultTarget.provider === "gcp" && configuredTargetMatchesLastRun
+        ? liveGcpComputeType
+        : null,
     includeScheduler: Boolean(
       deployResult?.schedulerJobId ||
-        liveDeploymentOverview?.platform?.schedulerJobId ||
-        liveDeploymentOverview?.schedulerId
+        (configuredTargetMatchesLastRun &&
+          (liveDeploymentOverview?.platform?.schedulerJobId ||
+            liveDeploymentOverview?.schedulerId))
     ),
   });
   const cloudMissingGcpProject =
@@ -2406,7 +2521,12 @@ export function WorkflowStudio() {
         resetLiveDeploymentState();
         return;
       }
-      const targetForOverview = options.deploymentTarget || effectiveDeployTarget;
+      const targetForOverview = options.deploymentTarget || {
+        provider: effectiveProvider,
+        region: effectiveRegion,
+        gcpProject:
+          effectiveProvider === "gcp" ? effectiveGcpProject : undefined,
+      };
       const overviewProvider = targetForOverview.provider;
       const overviewRegion = targetForOverview.region;
       const overviewGcpProject =
@@ -2429,8 +2549,8 @@ export function WorkflowStudio() {
           return Array.isArray(deployments) ? deployments : [];
         };
 
-        let matches = forceReconcile ? [] : await fetchDeployments();
-        if (forceReconcile || matches.length === 0) {
+        let matches = await fetchDeployments();
+        if (forceReconcile) {
           await api.reconcileWorkflowDeployments({
             provider: overviewProvider,
             region: overviewRegion,
@@ -2467,7 +2587,6 @@ export function WorkflowStudio() {
       }
     },
     [
-      effectiveDeployTarget,
       effectiveGcpProject,
       effectiveProvider,
       effectiveRegion,
@@ -2806,6 +2925,65 @@ export function WorkflowStudio() {
     void loadLiveDeploymentOverview();
   }, [loadLiveDeploymentOverview]);
 
+  useEffect(() => {
+    if (!artifact) {
+      setResolvedDeploymentPlan(null);
+      setResolvedDeploymentPlanError("");
+      setResolvedDeploymentPlanLoading(false);
+      return;
+    }
+
+    if (activeTab !== "deploy") {
+      return;
+    }
+
+    let cancelled = false;
+    setResolvedDeploymentPlan(null);
+    setResolvedDeploymentPlanError("");
+    setResolvedDeploymentPlanLoading(true);
+
+    void api
+      .getWorkflowDeploymentPlan({
+        artifact: deployPlanArtifact,
+        provider: configuredProvider,
+        region: configuredRegion,
+        gcpProject:
+          configuredProvider === "gcp" ? configuredGcpProject || undefined : undefined,
+      })
+      .then((plan) => {
+        if (cancelled) {
+          return;
+        }
+        setResolvedDeploymentPlan(plan);
+      })
+      .catch((planError) => {
+        if (cancelled) {
+          return;
+        }
+        setResolvedDeploymentPlanError(
+          planError instanceof Error
+            ? planError.message
+            : "Failed to resolve the deployment plan."
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setResolvedDeploymentPlanLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTab,
+    artifact,
+    configuredGcpProject,
+    configuredProvider,
+    configuredRegion,
+    deployPlanArtifact,
+  ]);
+
   function startNewWorkflow() {
     const draft = emptyArtifact(deploymentDefaults);
     manualPreviewRef.current = null;
@@ -3006,7 +3184,9 @@ export function WorkflowStudio() {
 
   const handleTranscriptChange = useCallback(
     (nextMessages: WorkflowStudioMessage[]) => {
-      setMessages(nextMessages);
+      setMessages((current) =>
+        areWorkflowMessagesEqual(current, nextMessages) ? current : nextMessages
+      );
     },
     []
   );
@@ -3051,12 +3231,24 @@ export function WorkflowStudio() {
           if (manualValidationRef.current) {
             merged = { ...merged, validation: manualValidationRef.current };
           }
-          return withDeploymentPlan(merged, deploymentDefaults);
+          const nextResolvedArtifact = withDeploymentPlan(
+            merged,
+            deploymentDefaults
+          );
+          return areWorkflowArtifactsEqual(current, nextResolvedArtifact)
+            ? current
+            : nextResolvedArtifact;
         });
-        setSelectedSlug(nextArtifact.slug);
+        setSelectedSlug((current) =>
+          current === nextArtifact.slug ? current : nextArtifact.slug
+        );
       }
 
-      setBlockedAccesses(nextBlockedAccesses);
+      setBlockedAccesses((current) =>
+        areWorkflowAccessRequirementsEqual(current, nextBlockedAccesses)
+          ? current
+          : nextBlockedAccesses
+      );
     },
     [deploymentDefaults]
   );
@@ -3251,8 +3443,6 @@ export function WorkflowStudio() {
     if (!artifact) {
       return;
     }
-    const deployArtifact =
-      targetMode === "local" ? localDeployArtifact : cloudDeployArtifact;
     const requestedDeployTarget =
       targetMode === "local" ? localDeployTarget : cloudDeployTarget;
 
@@ -3272,18 +3462,12 @@ export function WorkflowStudio() {
     }
 
     setDeploying(true);
+    setDeployingTargetMode(targetMode);
     setActiveTab("deploy");
     setError(null);
-    setArtifact({
-      ...deployArtifact,
-      deploymentPlan: buildWorkflowPlanFromArtifact(
-        deployArtifact,
-        requestedDeployTarget
-      ),
-    });
 
     try {
-      const saved = await persistWorkflow(deployArtifact);
+      const saved = await persistWorkflow(artifact);
       const response = (await api.deploy({
         provider: requestedDeployTarget.provider,
         region: requestedDeployTarget.region,
@@ -3346,16 +3530,24 @@ export function WorkflowStudio() {
         return;
       }
 
-      void loadLiveDeploymentOverview({
-        forceReconcile: true,
-        deploymentTarget: requestedDeployTarget,
-      });
+      if (
+        workflowDeploymentTargetsMatch(
+          configuredDeployTarget,
+          requestedDeployTarget
+        )
+      ) {
+        void loadLiveDeploymentOverview({
+          forceReconcile: true,
+          deploymentTarget: requestedDeployTarget,
+        });
+      }
     } catch (deployError) {
       setError(
         deployError instanceof Error ? deployError.message : "Deployment failed."
       );
     } finally {
       setDeploying(false);
+      setDeployingTargetMode(null);
     }
   }
 
@@ -3414,7 +3606,7 @@ export function WorkflowStudio() {
       return deployedValue.trim();
     }
 
-    if (liveDeploymentOverview) {
+    if (liveDeploymentOverview && configuredTargetMatchesLastRun) {
       if (key === "apiEndpoint") {
         return (
           liveDeploymentOverview.platform?.endpointUrl ||
@@ -4164,10 +4356,14 @@ export function WorkflowStudio() {
                             same shared deploy flow used by the Deploy page.
                           </p>
                         </div>
-                        <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300">
-                          {effectiveDeployTarget.provider.toUpperCase()}{" "}
-                          {effectiveDeployTarget.region}
-                        </span>
+                        <div className="text-right">
+                          <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                            Configured target
+                          </p>
+                          <span className="mt-1 inline-flex rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] text-zinc-300">
+                            {configuredTargetLabel}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="mt-4 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
@@ -4176,16 +4372,20 @@ export function WorkflowStudio() {
                           {selectedSlug || currentArtifact.slug}
                         </p>
                         <p>
-                          <span className="text-zinc-500">Provider:</span>{" "}
+                          <span className="text-zinc-500">
+                            Configured provider:
+                          </span>{" "}
                           {effectiveDeployTarget.provider.toUpperCase()}
                         </p>
                         <p>
-                          <span className="text-zinc-500">Region:</span>{" "}
+                          <span className="text-zinc-500">Configured region:</span>{" "}
                           {effectiveDeployTarget.region}
                         </p>
                         {effectiveDeployTarget.provider === "gcp" ? (
                           <p>
-                            <span className="text-zinc-500">GCP Project:</span>{" "}
+                            <span className="text-zinc-500">
+                              Configured GCP project:
+                            </span>{" "}
                             {effectiveDeployTarget.gcpProject || "Missing"}
                           </p>
                         ) : null}
@@ -4197,12 +4397,12 @@ export function WorkflowStudio() {
                           disabled={localDeployDisabled}
                           className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-100 transition-colors hover:bg-zinc-900 disabled:opacity-50"
                         >
-                          {deploying && effectiveDeployTarget.target === "local" ? (
+                          {deploying && deployingTargetMode === "local" ? (
                             <Loader2 size={12} className="animate-spin" />
                           ) : (
                             <Rocket size={12} />
                           )}
-                          {deploying && effectiveDeployTarget.target === "local"
+                          {deploying && deployingTargetMode === "local"
                             ? saving
                               ? "Saving..."
                               : "Deploying..."
@@ -4213,12 +4413,12 @@ export function WorkflowStudio() {
                           disabled={cloudDeployDisabled}
                           className="flex items-center gap-2 rounded-lg border border-emerald-700 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
                         >
-                          {deploying && effectiveDeployTarget.target === "cloud" ? (
+                          {deploying && deployingTargetMode === "cloud" ? (
                             <Loader2 size={12} className="animate-spin" />
                           ) : (
                             <Rocket size={12} />
                           )}
-                          {deploying && effectiveDeployTarget.target === "cloud"
+                          {deploying && deployingTargetMode === "cloud"
                             ? saving
                               ? "Saving..."
                               : "Deploying..."
@@ -4258,9 +4458,19 @@ export function WorkflowStudio() {
                         <DeploymentSecretSyncCard
                           summary={deploymentSecretSyncSummary}
                           title="Secrets Included In This Deploy"
-                          description="These connection secret references are shipped with this workflow deployment."
+                          description="These connection secret references are included for the configured workflow deployment."
                           className="mt-4"
                         />
+                      ) : resolvedDeploymentPlanLoading ? (
+                        <p className="mt-4 text-xs text-zinc-500">
+                          Resolving connection bindings and included secrets for
+                          the configured deploy target...
+                        </p>
+                      ) : resolvedDeploymentPlanError ? (
+                        <div className="mt-4 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                          Failed to resolve the configured deploy plan. Secret
+                          sync details may be temporarily unavailable.
+                        </div>
                       ) : null}
 
                       {deployStatus === "success" ? (
@@ -4272,6 +4482,11 @@ export function WorkflowStudio() {
                           {deploymentRun?.deployedAt ? (
                             <p className="mt-2 text-xs text-zinc-400">
                               Last run: {formatDate(deploymentRun.deployedAt)}
+                            </p>
+                          ) : null}
+                          {deploymentRunTargetLabel ? (
+                            <p className="mt-1 text-xs text-emerald-200/80">
+                              Last run target: {deploymentRunTargetLabel}
                             </p>
                           ) : null}
                           <div className="mt-3 space-y-2 text-xs text-zinc-400">
@@ -4324,7 +4539,12 @@ export function WorkflowStudio() {
                               </button>
                             ) : null}
                             <button
-                              onClick={() => void loadLiveDeploymentOverview()}
+                              onClick={() =>
+                                void loadLiveDeploymentOverview({
+                                  forceReconcile:
+                                    !liveDeploymentOverview && !liveDeploymentError,
+                                })
+                              }
                               disabled={liveDeploymentLoading}
                               className="rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-900 disabled:opacity-50"
                             >
@@ -4516,6 +4736,11 @@ export function WorkflowStudio() {
                           {deploymentRun?.deployedAt ? (
                             <p className="mt-2 text-xs text-rose-200/80">
                               Last attempt: {formatDate(deploymentRun.deployedAt)}
+                            </p>
+                          ) : null}
+                          {deploymentRunTargetLabel ? (
+                            <p className="mt-1 text-xs text-rose-200/80">
+                              Last attempt target: {deploymentRunTargetLabel}
                             </p>
                           ) : null}
                         </div>
@@ -5201,26 +5426,26 @@ export function WorkflowStudio() {
 
                     <CollapsibleSection
                       title="Computed Deployment Plan"
-                      description={`Trigger ${deploymentPlan.trigger.type} will run as ${deploymentPlan.executionKind} on ${deploymentPlan.provider.toUpperCase()}.`}
+                      description={`Trigger ${displayDeploymentPlan.trigger.type} will run as ${displayDeploymentPlan.executionKind} on ${displayDeploymentPlan.provider.toUpperCase()}.`}
                     >
                       <div className="grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
                         <p>
                           <span className="text-zinc-500">Summary:</span>{" "}
-                          {deploymentPlan.trigger.endpoint ||
-                            deploymentPlan.trigger.cron ||
-                            deploymentPlan.trigger.eventName ||
-                            deploymentPlan.trigger.description}
+                          {displayDeploymentPlan.trigger.endpoint ||
+                            displayDeploymentPlan.trigger.cron ||
+                            displayDeploymentPlan.trigger.eventName ||
+                            displayDeploymentPlan.trigger.description}
                         </p>
                         <p>
                           <span className="text-zinc-500">Auth mode:</span>{" "}
-                          {deploymentPlan.authMode}
+                          {displayDeploymentPlan.authMode}
                         </p>
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {deploymentPlan.resources.map((resource) => (
+                        {displayDeploymentPlan.resources.map((resource) => (
                           <span
-                            key={`${deploymentPlan.workflowId}-${resource.name}`}
+                            key={`${displayDeploymentPlan.workflowId}-${resource.name}`}
                             className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300"
                           >
                             {resource.kind}
@@ -5232,15 +5457,27 @@ export function WorkflowStudio() {
                         <DeploymentSecretSyncCard
                           summary={deploymentSecretSyncSummary}
                           title="Secret Sync"
-                          description="These connection secret references are included when this workflow deploys."
+                          description="These connection secret references are included when deploying to the configured target."
                           className="mt-3"
                         />
+                      ) : resolvedDeploymentPlanLoading ? (
+                        <p className="mt-3 text-xs text-zinc-500">
+                          Resolving the configured deployment plan...
+                        </p>
+                      ) : resolvedDeploymentPlanError ? (
+                        <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
+                          Failed to resolve the configured deployment plan.
+                          Showing the local computed plan while secret sync
+                          details are unavailable.
+                        </div>
                       ) : null}
 
-                      {deploymentPlan.warnings.length > 0 ? (
+                      {displayDeploymentPlan.warnings.length > 0 ? (
                         <div className="mt-3 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-100">
-                          {deploymentPlan.warnings.map((warning, index) => (
-                            <p key={`${deploymentPlan.workflowId}-warning-${index}`}>
+                          {displayDeploymentPlan.warnings.map((warning, index) => (
+                            <p
+                              key={`${displayDeploymentPlan.workflowId}-warning-${index}`}
+                            >
                               {warning}
                             </p>
                           ))}

@@ -1,0 +1,717 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - link "GTMship dashboard home" [ref=e5] [cursor=pointer]:
+        - /url: /workflows
+        - img "GTMship logo" [ref=e7]
+        - generic [ref=e10]: Online
+      - navigation [ref=e11]:
+        - generic [ref=e12]:
+          - link "Connections" [ref=e13] [cursor=pointer]:
+            - /url: /connections
+            - img [ref=e15]
+            - generic [ref=e18]: Connections
+          - link "Workflows" [ref=e19] [cursor=pointer]:
+            - /url: /workflows
+            - img [ref=e20]
+            - generic [ref=e24]: Workflows
+          - link "Deploy" [ref=e25] [cursor=pointer]:
+            - /url: /deploy
+            - img [ref=e26]
+            - generic [ref=e31]: Deploy
+          - link "Local Deployments" [ref=e32] [cursor=pointer]:
+            - /url: /deploy/local
+            - img [ref=e33]
+            - generic [ref=e36]: Local Deployments
+          - link "Logs" [ref=e37] [cursor=pointer]:
+            - /url: /deploy/logs
+            - img [ref=e38]
+            - generic [ref=e41]: Logs
+          - link "Settings" [ref=e42] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e43]
+            - generic [ref=e46]: Settings
+    - main [ref=e47]:
+      - generic [ref=e49]:
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - img [ref=e57]
+              - text: Integrations and auth flows
+            - heading "Connections" [level=1] [ref=e60]
+            - paragraph [ref=e61]: Connect GTMShip to the services your team already uses, keep credentials healthy, and manage provider-level configuration without leaving this workspace.
+          - generic [ref=e62]:
+            - generic [ref=e63]:
+              - generic [ref=e64]:
+                - img [ref=e65]
+                - text: Catalog
+              - paragraph [ref=e70]: 36 providers ready
+              - paragraph [ref=e71]: Search the integration catalog and start with a known auth flow whenever it exists.
+            - generic [ref=e72]:
+              - generic [ref=e73]:
+                - img [ref=e74]
+                - text: Connected
+              - paragraph [ref=e77]: Syncing connections
+              - paragraph [ref=e78]: 8 currently active across your connected providers.
+            - generic [ref=e79]:
+              - generic [ref=e80]:
+                - img [ref=e81]
+                - text: Attention
+              - paragraph [ref=e83]: 4 need review
+              - paragraph [ref=e84]: Refresh or reconnect expiring credentials before they interrupt deployments.
+        - generic [ref=e85]:
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - generic [ref=e88]:
+                - img [ref=e89]
+                - text: Connection workspace
+              - heading "Find the right integration" [level=2] [ref=e92]
+              - paragraph [ref=e93]: Browse the live catalog, finish saved custom setups that still need auth, and kick off a new custom integration when the built-in list is not enough.
+            - generic [ref=e95]:
+              - generic [ref=e96]:
+                - button "Catalog 36" [ref=e97] [cursor=pointer]:
+                  - img [ref=e98]
+                  - text: Catalog
+                  - generic [ref=e103]: "36"
+                - button "My connections 8" [ref=e104] [cursor=pointer]:
+                  - img [ref=e105]
+                  - text: My connections
+                  - generic [ref=e106]: "8"
+              - generic [ref=e107]:
+                - paragraph [ref=e108]: Search first, then connect or finish any saved custom setups.
+                - button "Refresh data" [ref=e109] [cursor=pointer]:
+                  - img [ref=e110]
+                  - text: Refresh data
+          - generic [ref=e116]:
+            - generic [ref=e117]:
+              - generic [ref=e118]:
+                - generic [ref=e119]:
+                  - paragraph [ref=e120]: Saved custom integrations
+                  - heading "Finish custom setups that still need a connection" [level=3] [ref=e121]
+                  - paragraph [ref=e122]: Saved custom providers stay here until setup is complete. Once a custom integration connects successfully, you can manage reconnects and provider edits from My connections.
+                - button "New custom integration" [ref=e123] [cursor=pointer]:
+                  - img [ref=e124]
+                  - text: New custom integration
+              - generic [ref=e126]:
+                - heading "No custom setups waiting on auth" [level=4] [ref=e127]
+                - paragraph [ref=e128]: Connected custom integrations now live under My connections. Use the agent to start another provider whenever you need a fresh setup.
+            - generic [ref=e129]:
+              - generic [ref=e130]:
+                - generic [ref=e131]:
+                  - generic [ref=e132]:
+                    - paragraph [ref=e133]: Integration catalog
+                    - heading "Search the providers GTMShip already knows about" [level=3] [ref=e134]
+                    - paragraph [ref=e135]: Filter by category, search for a product or auth pattern, and use the agent when you need a custom setup outside the built-in catalog.
+                  - generic [ref=e136]:
+                    - generic [ref=e137]:
+                      - paragraph [ref=e138]: Showing
+                      - paragraph [ref=e139]: 36 providers
+                      - paragraph [ref=e140]: 4 already connected in this view.
+                    - button "Custom integration" [ref=e141] [cursor=pointer]:
+                      - img [ref=e142]
+                      - text: Custom integration
+                - generic [ref=e144]:
+                  - img [ref=e145]
+                  - textbox "Search integrations, auth types, or provider names..." [ref=e148]
+                - generic [ref=e149]:
+                  - button "All" [ref=e150] [cursor=pointer]
+                  - button "AI" [ref=e151] [cursor=pointer]
+                  - button "Analytics" [ref=e152] [cursor=pointer]
+                  - button "CRM" [ref=e153] [cursor=pointer]
+                  - button "Communication" [ref=e154] [cursor=pointer]
+                  - button "Developer Tools" [ref=e155] [cursor=pointer]
+                  - button "E-commerce" [ref=e156] [cursor=pointer]
+                  - button "Marketing" [ref=e157] [cursor=pointer]
+                  - button "Other" [ref=e158] [cursor=pointer]
+                  - button "Productivity" [ref=e159] [cursor=pointer]
+                  - button "Support" [ref=e160] [cursor=pointer]
+              - generic [ref=e161]:
+                - generic [ref=e162]:
+                  - generic [ref=e163]:
+                    - generic [ref=e164]:
+                      - img "OpenAI" [ref=e165]
+                      - generic [ref=e166]:
+                        - generic [ref=e167]:
+                          - heading "OpenAI" [level=4] [ref=e168]
+                          - generic [ref=e169]: Connected
+                        - paragraph [ref=e170]: Use OpenAI models in GTM workflows for summarization, classification, enrichment, and other AI-driven steps.
+                    - link "Open OpenAI docs" [ref=e171] [cursor=pointer]:
+                      - /url: https://platform.openai.com/docs/overview
+                      - img [ref=e172]
+                  - generic [ref=e176]:
+                    - generic [ref=e177]: api_key
+                    - generic [ref=e178]: AI
+                  - generic [ref=e179]:
+                    - paragraph [ref=e180]: Reconnect to rotate credentials or re-run the setup flow for this integration.
+                    - button "Reconnect" [ref=e181] [cursor=pointer]
+                - generic [ref=e182]:
+                  - generic [ref=e183]:
+                    - generic [ref=e184]:
+                      - img "Anthropic" [ref=e185]
+                      - generic [ref=e186]:
+                        - heading "Anthropic" [level=4] [ref=e188]
+                        - paragraph [ref=e189]: Use Anthropic Claude models in GTM workflows for analysis, generation, and structured decision support.
+                    - link "Open Anthropic docs" [ref=e190] [cursor=pointer]:
+                      - /url: https://docs.anthropic.com/en/api/overview
+                      - img [ref=e191]
+                  - generic [ref=e195]:
+                    - generic [ref=e196]: api_key
+                    - generic [ref=e197]: AI
+                  - generic [ref=e198]:
+                    - paragraph [ref=e199]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e200] [cursor=pointer]
+                - generic [ref=e201]:
+                  - generic [ref=e202]:
+                    - generic [ref=e203]:
+                      - img "Clari" [ref=e204]
+                      - generic [ref=e205]:
+                        - heading "Clari" [level=4] [ref=e207]
+                        - paragraph [ref=e208]: Connect to Clari for revenue operations data, forecasting insights, and pipeline analytics in your GTM workflows.
+                    - link "Open Clari docs" [ref=e209] [cursor=pointer]:
+                      - /url: https://developer.clari.com/
+                      - img [ref=e210]
+                  - generic [ref=e214]:
+                    - generic [ref=e215]: api_key
+                    - generic [ref=e216]: CRM
+                  - generic [ref=e217]:
+                    - paragraph [ref=e218]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e219] [cursor=pointer]
+                - generic [ref=e220]:
+                  - generic [ref=e221]:
+                    - generic [ref=e222]:
+                      - img "HeyReach" [ref=e223]
+                      - generic [ref=e224]:
+                        - heading "HeyReach" [level=4] [ref=e226]
+                        - paragraph [ref=e227]: Automate LinkedIn outreach campaigns, manage prospect lists, and track engagement with HeyReach in your GTM workflows.
+                    - link "Open HeyReach docs" [ref=e228] [cursor=pointer]:
+                      - /url: https://api.heyreach.io/swagger/index.html
+                      - img [ref=e229]
+                  - generic [ref=e233]:
+                    - generic [ref=e234]: api_key
+                    - generic [ref=e235]: Marketing
+                  - generic [ref=e236]:
+                    - paragraph [ref=e237]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e238] [cursor=pointer]
+                - generic [ref=e239]:
+                  - generic [ref=e240]:
+                    - generic [ref=e241]:
+                      - img "Clay" [ref=e242]
+                      - generic [ref=e243]:
+                        - heading "Clay" [level=4] [ref=e245]
+                        - paragraph [ref=e246]: Enrich leads and companies with Clay's data enrichment and waterfall enrichment engine for your GTM workflows.
+                    - link "Open Clay docs" [ref=e247] [cursor=pointer]:
+                      - /url: https://docs.clay.com/api-reference
+                      - img [ref=e248]
+                  - generic [ref=e252]:
+                    - generic [ref=e253]: api_key
+                    - generic [ref=e254]: CRM
+                  - generic [ref=e255]:
+                    - paragraph [ref=e256]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e257] [cursor=pointer]
+                - generic [ref=e258]:
+                  - generic [ref=e259]:
+                    - generic [ref=e260]:
+                      - img "ZoomInfo" [ref=e261]
+                      - generic [ref=e262]:
+                        - heading "ZoomInfo" [level=4] [ref=e264]
+                        - paragraph [ref=e265]: Access B2B contact and company intelligence from ZoomInfo for lead enrichment and prospecting in GTM workflows.
+                    - link "Open ZoomInfo docs" [ref=e266] [cursor=pointer]:
+                      - /url: https://api-docs.zoominfo.com/
+                      - img [ref=e267]
+                  - generic [ref=e271]:
+                    - generic [ref=e272]: api_key
+                    - generic [ref=e273]: CRM
+                  - generic [ref=e274]:
+                    - paragraph [ref=e275]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e276] [cursor=pointer]
+                - generic [ref=e277]:
+                  - generic [ref=e278]:
+                    - generic [ref=e279]:
+                      - img "Google Ads" [ref=e280]
+                      - generic [ref=e281]:
+                        - heading "Google Ads" [level=4] [ref=e283]
+                        - paragraph [ref=e284]: Manage Google Ads campaigns, retrieve performance metrics, and sync conversion data in your GTM workflows.
+                    - link "Open Google Ads docs" [ref=e285] [cursor=pointer]:
+                      - /url: https://developers.google.com/google-ads/api/docs/start
+                      - img [ref=e286]
+                  - generic [ref=e290]:
+                    - generic [ref=e291]: oauth2
+                    - generic [ref=e292]: Marketing
+                    - generic [ref=e293]: Shared OAuth
+                  - generic [ref=e294]:
+                    - paragraph [ref=e295]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e296] [cursor=pointer]
+                - generic [ref=e297]:
+                  - generic [ref=e298]:
+                    - generic [ref=e299]:
+                      - img "SNOV.io" [ref=e300]
+                      - generic [ref=e301]:
+                        - heading "SNOV.io" [level=4] [ref=e303]
+                        - paragraph [ref=e304]: Find and verify email addresses, automate outreach drip campaigns, and manage leads with SNOV.io in your GTM workflows.
+                    - link "Open SNOV.io docs" [ref=e305] [cursor=pointer]:
+                      - /url: https://snov.io/api
+                      - img [ref=e306]
+                  - generic [ref=e310]:
+                    - generic [ref=e311]: api_key
+                    - generic [ref=e312]: Marketing
+                  - generic [ref=e313]:
+                    - paragraph [ref=e314]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e315] [cursor=pointer]
+                - generic [ref=e316]:
+                  - generic [ref=e317]:
+                    - generic [ref=e318]:
+                      - img "Firmable" [ref=e319]
+                      - generic [ref=e320]:
+                        - heading "Firmable" [level=4] [ref=e322]
+                        - paragraph [ref=e323]: Access Australian B2B company and contact data from Firmable for local market enrichment in your GTM workflows.
+                    - link "Open Firmable docs" [ref=e324] [cursor=pointer]:
+                      - /url: https://docs.firmable.com/api-reference/overview
+                      - img [ref=e325]
+                  - generic [ref=e329]:
+                    - generic [ref=e330]: api_key
+                    - generic [ref=e331]: CRM
+                  - generic [ref=e332]:
+                    - paragraph [ref=e333]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e334] [cursor=pointer]
+                - generic [ref=e335]:
+                  - generic [ref=e336]:
+                    - generic [ref=e337]:
+                      - img "HubSpot" [ref=e338]
+                      - generic [ref=e339]:
+                        - heading "HubSpot" [level=4] [ref=e341]
+                        - paragraph [ref=e342]: Powerful CRM that offers tools for sales, customer service, and marketing automation.
+                    - link "Open HubSpot docs" [ref=e343] [cursor=pointer]:
+                      - /url: https://developers.hubspot.com/docs/api/overview
+                      - img [ref=e344]
+                  - generic [ref=e348]:
+                    - generic [ref=e349]: oauth2
+                    - generic [ref=e350]: CRM
+                  - generic [ref=e351]:
+                    - paragraph [ref=e352]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e353] [cursor=pointer]
+                - generic [ref=e354]:
+                  - generic [ref=e355]:
+                    - generic [ref=e356]:
+                      - img "Salesforce" [ref=e357]
+                      - generic [ref=e358]:
+                        - heading "Salesforce" [level=4] [ref=e360]
+                        - paragraph [ref=e361]: CRM software solutions and enterprise cloud computing
+                    - link "Open Salesforce docs" [ref=e362] [cursor=pointer]:
+                      - /url: https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest
+                      - img [ref=e363]
+                  - generic [ref=e367]:
+                    - generic [ref=e368]: oauth2
+                    - generic [ref=e369]: CRM
+                  - generic [ref=e370]:
+                    - paragraph [ref=e371]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e372] [cursor=pointer]
+                - generic [ref=e373]:
+                  - generic [ref=e374]:
+                    - generic [ref=e375]:
+                      - img "Slack" [ref=e376]
+                      - generic [ref=e377]:
+                        - heading "Slack" [level=4] [ref=e379]
+                        - paragraph [ref=e380]: Channel-based messaging platform
+                    - link "Open Slack docs" [ref=e381] [cursor=pointer]:
+                      - /url: https://api.slack.com/methods
+                      - img [ref=e382]
+                  - generic [ref=e386]:
+                    - generic [ref=e387]: oauth2
+                    - generic [ref=e388]: Communication
+                  - generic [ref=e389]:
+                    - paragraph [ref=e390]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e391] [cursor=pointer]
+                - generic [ref=e392]:
+                  - generic [ref=e393]:
+                    - generic [ref=e394]:
+                      - img "Gmail" [ref=e395]
+                      - generic [ref=e396]:
+                        - generic [ref=e397]:
+                          - heading "Gmail" [level=4] [ref=e398]
+                          - generic [ref=e399]: Connected
+                        - paragraph [ref=e400]: Email service by Google
+                    - link "Open Gmail docs" [ref=e401] [cursor=pointer]:
+                      - /url: https://developers.google.com/gmail/api
+                      - img [ref=e402]
+                  - generic [ref=e406]:
+                    - generic [ref=e407]: oauth2
+                    - generic [ref=e408]: Communication
+                    - generic [ref=e409]: Shared OAuth
+                  - generic [ref=e410]:
+                    - paragraph [ref=e411]: Reconnect to rotate credentials or re-run the setup flow for this integration.
+                    - button "Reconnect" [ref=e412] [cursor=pointer]
+                - generic [ref=e413]:
+                  - generic [ref=e414]:
+                    - generic [ref=e415]:
+                      - img "Google Sheets" [ref=e416]
+                      - generic [ref=e417]:
+                        - generic [ref=e418]:
+                          - heading "Google Sheets" [level=4] [ref=e419]
+                          - generic [ref=e420]: Connected
+                        - paragraph [ref=e421]: Create, edit, and collaborate on spreadsheets online
+                    - link "Open Google Sheets docs" [ref=e422] [cursor=pointer]:
+                      - /url: https://developers.google.com/sheets/api
+                      - img [ref=e423]
+                  - generic [ref=e427]:
+                    - generic [ref=e428]: oauth2
+                    - generic [ref=e429]: Productivity
+                    - generic [ref=e430]: Shared OAuth
+                  - generic [ref=e431]:
+                    - paragraph [ref=e432]: Reconnect to rotate credentials or re-run the setup flow for this integration.
+                    - button "Reconnect" [ref=e433] [cursor=pointer]
+                - generic [ref=e434]:
+                  - generic [ref=e435]:
+                    - generic [ref=e436]:
+                      - img "Stripe" [ref=e437]
+                      - generic [ref=e438]:
+                        - heading "Stripe" [level=4] [ref=e440]
+                        - paragraph [ref=e441]: Online payment processing for internet businesses
+                    - link "Open Stripe docs" [ref=e442] [cursor=pointer]:
+                      - /url: https://stripe.com/docs/api
+                      - img [ref=e443]
+                  - generic [ref=e447]:
+                    - generic [ref=e448]: api_key
+                    - generic [ref=e449]: E-commerce
+                  - generic [ref=e450]:
+                    - paragraph [ref=e451]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e452] [cursor=pointer]
+                - generic [ref=e453]:
+                  - generic [ref=e454]:
+                    - generic [ref=e455]:
+                      - img "GitHub" [ref=e456]
+                      - generic [ref=e457]:
+                        - generic [ref=e458]:
+                          - heading "GitHub" [level=4] [ref=e459]
+                          - generic [ref=e460]: Connected
+                        - paragraph [ref=e461]: Developer platform that allows developers to create, store, manage and share their code
+                    - link "Open GitHub docs" [ref=e462] [cursor=pointer]:
+                      - /url: https://docs.github.com/en/rest
+                      - img [ref=e463]
+                  - generic [ref=e467]:
+                    - generic [ref=e468]: oauth2
+                    - generic [ref=e469]: Developer Tools
+                  - generic [ref=e470]:
+                    - paragraph [ref=e471]: Reconnect to rotate credentials or re-run the setup flow for this integration.
+                    - button "Reconnect" [ref=e472] [cursor=pointer]
+                - generic [ref=e473]:
+                  - generic [ref=e474]:
+                    - generic [ref=e475]:
+                      - img "Notion" [ref=e476]
+                      - generic [ref=e477]:
+                        - heading "Notion" [level=4] [ref=e479]
+                        - paragraph [ref=e480]: The all-in-one workspace
+                    - link "Open Notion docs" [ref=e481] [cursor=pointer]:
+                      - /url: https://developers.notion.com
+                      - img [ref=e482]
+                  - generic [ref=e486]:
+                    - generic [ref=e487]: oauth2
+                    - generic [ref=e488]: Productivity
+                  - generic [ref=e489]:
+                    - paragraph [ref=e490]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e491] [cursor=pointer]
+                - generic [ref=e492]:
+                  - generic [ref=e493]:
+                    - generic [ref=e494]:
+                      - img "Airtable" [ref=e495]
+                      - generic [ref=e496]:
+                        - heading "Airtable" [level=4] [ref=e498]
+                        - paragraph [ref=e499]: Low‒code platform to build apps.
+                    - link "Open Airtable docs" [ref=e500] [cursor=pointer]:
+                      - /url: https://airtable.com/developers/web/api
+                      - img [ref=e501]
+                  - generic [ref=e505]:
+                    - generic [ref=e506]: api_key
+                    - generic [ref=e507]: Productivity
+                  - generic [ref=e508]:
+                    - paragraph [ref=e509]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e510] [cursor=pointer]
+                - generic [ref=e511]:
+                  - generic [ref=e512]:
+                    - generic [ref=e513]:
+                      - img "Intercom" [ref=e514]
+                      - generic [ref=e515]:
+                        - heading "Intercom" [level=4] [ref=e517]
+                        - paragraph [ref=e518]: Customer messaging platform for sales, marketing, and support
+                    - link "Open Intercom docs" [ref=e519] [cursor=pointer]:
+                      - /url: https://developers.intercom.com/docs
+                      - img [ref=e520]
+                  - generic [ref=e524]:
+                    - generic [ref=e525]: oauth2
+                    - generic [ref=e526]: Support
+                  - generic [ref=e527]:
+                    - paragraph [ref=e528]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e529] [cursor=pointer]
+                - generic [ref=e530]:
+                  - generic [ref=e531]:
+                    - generic [ref=e532]:
+                      - img "Mailchimp" [ref=e533]
+                      - generic [ref=e534]:
+                        - heading "Mailchimp" [level=4] [ref=e536]
+                        - paragraph [ref=e537]: All-in-One integrated marketing platform for managing audiences, sending campaigns, tracking engagement, and automating lifecycle communications.
+                    - link "Open Mailchimp docs" [ref=e538] [cursor=pointer]:
+                      - /url: https://mailchimp.com/developer/marketing/api/
+                      - img [ref=e539]
+                  - generic [ref=e543]:
+                    - generic [ref=e544]: oauth2
+                    - generic [ref=e545]: Marketing
+                  - generic [ref=e546]:
+                    - paragraph [ref=e547]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e548] [cursor=pointer]
+                - generic [ref=e549]:
+                  - generic [ref=e550]:
+                    - generic [ref=e551]:
+                      - img "SendGrid" [ref=e552]
+                      - generic [ref=e553]:
+                        - heading "SendGrid" [level=4] [ref=e555]
+                        - paragraph [ref=e556]: Email delivery service for sending transactional and marketing emails
+                    - link "Open SendGrid docs" [ref=e557] [cursor=pointer]:
+                      - /url: https://docs.sendgrid.com/api-reference
+                      - img [ref=e558]
+                  - generic [ref=e562]:
+                    - generic [ref=e563]: api_key
+                    - generic [ref=e564]: Communication
+                  - generic [ref=e565]:
+                    - paragraph [ref=e566]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e567] [cursor=pointer]
+                - generic [ref=e568]:
+                  - generic [ref=e569]:
+                    - generic [ref=e570]:
+                      - img "Twilio" [ref=e571]
+                      - generic [ref=e572]:
+                        - heading "Twilio" [level=4] [ref=e574]
+                        - paragraph [ref=e575]: Cloud communications platform for building SMS, Voice & Messaging applications
+                    - link "Open Twilio docs" [ref=e576] [cursor=pointer]:
+                      - /url: https://www.twilio.com/docs/usage/api
+                      - img [ref=e577]
+                  - generic [ref=e581]:
+                    - generic [ref=e582]: api_key
+                    - generic [ref=e583]: Communication
+                  - generic [ref=e584]:
+                    - paragraph [ref=e585]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e586] [cursor=pointer]
+                - generic [ref=e587]:
+                  - generic [ref=e588]:
+                    - generic [ref=e589]:
+                      - img "Discord" [ref=e590]
+                      - generic [ref=e591]:
+                        - heading "Discord" [level=4] [ref=e593]
+                        - paragraph [ref=e594]: Instant messaging and VoIP social platform
+                    - link "Open Discord docs" [ref=e595] [cursor=pointer]:
+                      - /url: https://discord.com/developers/docs
+                      - img [ref=e596]
+                  - generic [ref=e600]:
+                    - generic [ref=e601]: api_key
+                    - generic [ref=e602]: Communication
+                  - generic [ref=e603]:
+                    - paragraph [ref=e604]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e605] [cursor=pointer]
+                - generic [ref=e606]:
+                  - generic [ref=e607]:
+                    - generic [ref=e608]:
+                      - img "Linear" [ref=e609]
+                      - generic [ref=e610]:
+                        - heading "Linear" [level=4] [ref=e612]
+                        - paragraph [ref=e613]: Issue tracking for modern software teams
+                    - link "Open Linear docs" [ref=e614] [cursor=pointer]:
+                      - /url: https://developers.linear.app/docs
+                      - img [ref=e615]
+                  - generic [ref=e619]:
+                    - generic [ref=e620]: api_key
+                    - generic [ref=e621]: Productivity
+                  - generic [ref=e622]:
+                    - paragraph [ref=e623]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e624] [cursor=pointer]
+                - generic [ref=e625]:
+                  - generic [ref=e626]:
+                    - generic [ref=e627]:
+                      - img "Jira Cloud" [ref=e628]
+                      - generic [ref=e629]:
+                        - heading "Jira Cloud" [level=4] [ref=e631]
+                        - paragraph [ref=e632]: Issue tracking and project management
+                    - link "Open Jira Cloud docs" [ref=e633] [cursor=pointer]:
+                      - /url: https://developer.atlassian.com/cloud/jira/platform/rest/v3/
+                      - img [ref=e634]
+                  - generic [ref=e638]:
+                    - generic [ref=e639]: api_key
+                    - generic [ref=e640]: Productivity
+                  - generic [ref=e641]:
+                    - paragraph [ref=e642]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e643] [cursor=pointer]
+                - generic [ref=e644]:
+                  - generic [ref=e645]:
+                    - generic [ref=e646]:
+                      - img "Shopify" [ref=e647]
+                      - generic [ref=e648]:
+                        - heading "Shopify" [level=4] [ref=e650]
+                        - paragraph [ref=e651]: Ecommerce platform for online stores
+                    - link "Open Shopify docs" [ref=e652] [cursor=pointer]:
+                      - /url: https://shopify.dev/docs/api
+                      - img [ref=e653]
+                  - generic [ref=e657]:
+                    - generic [ref=e658]: api_key
+                    - generic [ref=e659]: E-commerce
+                  - generic [ref=e660]:
+                    - paragraph [ref=e661]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e662] [cursor=pointer]
+                - generic [ref=e663]:
+                  - generic [ref=e664]:
+                    - generic [ref=e665]:
+                      - img "Zoom" [ref=e666]
+                      - generic [ref=e667]:
+                        - heading "Zoom" [level=4] [ref=e669]
+                        - paragraph [ref=e670]: Video conferencing, web conferencing, webinars, screen sharing
+                    - link "Open Zoom docs" [ref=e671] [cursor=pointer]:
+                      - /url: https://developers.zoom.us/docs/api/
+                      - img [ref=e672]
+                  - generic [ref=e676]:
+                    - generic [ref=e677]: oauth2
+                    - generic [ref=e678]: Communication
+                  - generic [ref=e679]:
+                    - paragraph [ref=e680]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e681] [cursor=pointer]
+                - generic [ref=e682]:
+                  - generic [ref=e683]:
+                    - generic [ref=e684]:
+                      - img "Microsoft Teams" [ref=e685]
+                      - generic [ref=e686]:
+                        - heading "Microsoft Teams" [level=4] [ref=e688]
+                        - paragraph
+                    - link "Open Microsoft Teams docs" [ref=e689] [cursor=pointer]:
+                      - /url: https://learn.microsoft.com/en-us/graph/api/resources/teams-api-overview
+                      - img [ref=e690]
+                  - generic [ref=e694]:
+                    - generic [ref=e695]: oauth2
+                    - generic [ref=e696]: Analytics
+                  - generic [ref=e697]:
+                    - paragraph [ref=e698]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e699] [cursor=pointer]
+                - generic [ref=e700]:
+                  - generic [ref=e701]:
+                    - generic [ref=e702]:
+                      - img "Apollo" [ref=e703]
+                      - generic [ref=e704]:
+                        - heading "Apollo" [level=4] [ref=e706]
+                        - paragraph [ref=e707]: AI sales platform for prospecting, lead gen, and deal automation. Close more deals, faster, with smart data.
+                    - link "Open Apollo docs" [ref=e708] [cursor=pointer]:
+                      - /url: https://apolloio.github.io/apollo-api-docs/
+                      - img [ref=e709]
+                  - generic [ref=e713]:
+                    - generic [ref=e714]: api_key
+                    - generic [ref=e715]: Other
+                  - generic [ref=e716]:
+                    - paragraph [ref=e717]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e718] [cursor=pointer]
+                - generic [ref=e719]:
+                  - generic [ref=e720]:
+                    - generic [ref=e721]:
+                      - img "Hunter" [ref=e722]
+                      - generic [ref=e723]:
+                        - heading "Hunter" [level=4] [ref=e725]
+                        - paragraph [ref=e726]: Find, verify and manage professional email addresses at scale. Automate email discovery, validation, lead tracking, and campaign outreach with Hunter.io.
+                    - link "Open Hunter docs" [ref=e727] [cursor=pointer]:
+                      - /url: https://hunter.io/api-documentation
+                      - img [ref=e728]
+                  - generic [ref=e732]:
+                    - generic [ref=e733]: api_key
+                    - generic [ref=e734]: CRM
+                  - generic [ref=e735]:
+                    - paragraph [ref=e736]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e737] [cursor=pointer]
+                - generic [ref=e738]:
+                  - generic [ref=e739]:
+                    - generic [ref=e740]:
+                      - img "Instantly.ai" [ref=e741]
+                      - generic [ref=e742]:
+                        - heading "Instantly.ai" [level=4] [ref=e744]
+                        - paragraph [ref=e745]: Powerful cold email outreach and lead engagement platform.
+                    - link "Open Instantly.ai docs" [ref=e746] [cursor=pointer]:
+                      - /url: https://developer.instantly.ai/
+                      - img [ref=e747]
+                  - generic [ref=e751]:
+                    - generic [ref=e752]: api_key
+                    - generic [ref=e753]: Marketing
+                  - generic [ref=e754]:
+                    - paragraph [ref=e755]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e756] [cursor=pointer]
+                - generic [ref=e757]:
+                  - generic [ref=e758]:
+                    - generic [ref=e759]:
+                      - img "Google Calendar" [ref=e760]
+                      - generic [ref=e761]:
+                        - heading "Google Calendar" [level=4] [ref=e763]
+                        - paragraph [ref=e764]: Get organized and stay on schedule
+                    - link "Open Google Calendar docs" [ref=e765] [cursor=pointer]:
+                      - /url: https://developers.google.com/calendar/api
+                      - img [ref=e766]
+                  - generic [ref=e770]:
+                    - generic [ref=e771]: oauth2
+                    - generic [ref=e772]: Productivity
+                    - generic [ref=e773]: Shared OAuth
+                  - generic [ref=e774]:
+                    - paragraph [ref=e775]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e776] [cursor=pointer]
+                - generic [ref=e777]:
+                  - generic [ref=e778]:
+                    - generic [ref=e779]:
+                      - img "Zendesk" [ref=e780]
+                      - generic [ref=e781]:
+                        - heading "Zendesk" [level=4] [ref=e783]
+                        - paragraph [ref=e784]: Customer service software and support ticket system
+                    - link "Open Zendesk docs" [ref=e785] [cursor=pointer]:
+                      - /url: https://developer.zendesk.com/api-reference/
+                      - img [ref=e786]
+                  - generic [ref=e790]:
+                    - generic [ref=e791]: api_key
+                    - generic [ref=e792]: Support
+                  - generic [ref=e793]:
+                    - paragraph [ref=e794]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e795] [cursor=pointer]
+                - generic [ref=e796]:
+                  - generic [ref=e797]:
+                    - generic [ref=e798]:
+                      - img "LinkedIn" [ref=e799]
+                      - generic [ref=e800]:
+                        - heading "LinkedIn" [level=4] [ref=e802]
+                        - paragraph [ref=e803]: Connect and network with professionals
+                    - link "Open LinkedIn docs" [ref=e804] [cursor=pointer]:
+                      - /url: https://learn.microsoft.com/en-us/linkedin/marketing/
+                      - img [ref=e805]
+                  - generic [ref=e809]:
+                    - generic [ref=e810]: oauth2
+                    - generic [ref=e811]: Marketing
+                  - generic [ref=e812]:
+                    - paragraph [ref=e813]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e814] [cursor=pointer]
+                - generic [ref=e815]:
+                  - generic [ref=e816]:
+                    - generic [ref=e817]:
+                      - img "SmartLead" [ref=e818]
+                      - generic [ref=e819]:
+                        - heading "SmartLead" [level=4] [ref=e821]
+                        - paragraph [ref=e822]: Powerful cold email outreach platform with multi-account rotation, email warmup, unified inbox, and advanced analytics.
+                    - link "Open SmartLead docs" [ref=e823] [cursor=pointer]:
+                      - /url: https://api.smartlead.ai/reference
+                      - img [ref=e824]
+                  - generic [ref=e828]:
+                    - generic [ref=e829]: api_key
+                    - generic [ref=e830]: Marketing
+                  - generic [ref=e831]:
+                    - paragraph [ref=e832]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e833] [cursor=pointer]
+                - generic [ref=e834]:
+                  - generic [ref=e835]:
+                    - generic [ref=e836]:
+                      - img "NeverBounce" [ref=e837]
+                      - generic [ref=e838]:
+                        - heading "NeverBounce" [level=4] [ref=e840]
+                        - paragraph [ref=e841]: NeverBounce is an email verification service that improves deliverability and helps businesses adhere to strict deliverability guidelines.
+                    - link "Open NeverBounce docs" [ref=e842] [cursor=pointer]:
+                      - /url: https://developers.neverbounce.com/reference
+                      - img [ref=e843]
+                  - generic [ref=e847]:
+                    - generic [ref=e848]: api_key
+                    - generic [ref=e849]: Communication
+                  - generic [ref=e850]:
+                    - paragraph [ref=e851]: Start the guided auth flow and save the credentials GTMShip needs.
+                    - button "Connect" [ref=e852] [cursor=pointer]
+  - alert [ref=e853]

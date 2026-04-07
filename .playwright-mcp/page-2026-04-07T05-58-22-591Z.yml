@@ -1,0 +1,88 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - link "GTMship dashboard home" [ref=e5] [cursor=pointer]:
+        - /url: /workflows
+        - img "GTMship logo" [ref=e7]
+        - generic [ref=e10]: Online
+      - navigation [ref=e11]:
+        - generic [ref=e12]:
+          - link "Connections" [ref=e13] [cursor=pointer]:
+            - /url: /connections
+            - img [ref=e15]
+            - generic [ref=e18]: Connections
+          - link "Workflows" [ref=e19] [cursor=pointer]:
+            - /url: /workflows
+            - img [ref=e20]
+            - generic [ref=e24]: Workflows
+          - link "Deploy" [ref=e25] [cursor=pointer]:
+            - /url: /deploy
+            - img [ref=e26]
+            - generic [ref=e31]: Deploy
+          - link "Local Deployments" [ref=e32] [cursor=pointer]:
+            - /url: /deploy/local
+            - img [ref=e33]
+            - generic [ref=e36]: Local Deployments
+          - link "Logs" [ref=e37] [cursor=pointer]:
+            - /url: /deploy/logs
+            - img [ref=e38]
+            - generic [ref=e41]: Logs
+          - link "Settings" [ref=e42] [cursor=pointer]:
+            - /url: /settings
+            - img [ref=e43]
+            - generic [ref=e46]: Settings
+    - main [ref=e47]:
+      - generic [ref=e49]:
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - img [ref=e57]
+              - text: Integrations and auth flows
+            - heading "Connections" [level=1] [ref=e60]
+            - paragraph [ref=e61]: Connect GTMShip to the services your team already uses, keep credentials healthy, and manage provider-level configuration without leaving this workspace.
+          - generic [ref=e62]:
+            - generic [ref=e63]:
+              - generic [ref=e64]:
+                - img [ref=e65]
+                - text: Catalog
+              - paragraph [ref=e70]: Loading integrations
+              - paragraph [ref=e71]: Search the integration catalog and start with a known auth flow whenever it exists.
+            - generic [ref=e72]:
+              - generic [ref=e73]:
+                - img [ref=e74]
+                - text: Connected
+              - paragraph [ref=e77]: Syncing connections
+              - paragraph [ref=e78]: 0 currently active across your connected providers.
+            - generic [ref=e79]:
+              - generic [ref=e80]:
+                - img [ref=e81]
+                - text: Attention
+              - paragraph [ref=e83]: Everything looks healthy
+              - paragraph [ref=e84]: Stable connections and completed custom setups stay manageable from the same page.
+        - generic [ref=e85]:
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - generic [ref=e88]:
+                - img [ref=e89]
+                - text: Connection workspace
+              - heading "Find the right integration" [level=2] [ref=e92]
+              - paragraph [ref=e93]: Browse the live catalog, finish saved custom setups that still need auth, and kick off a new custom integration when the built-in list is not enough.
+            - generic [ref=e95]:
+              - generic [ref=e96]:
+                - button "Catalog 0" [ref=e97] [cursor=pointer]:
+                  - img [ref=e98]
+                  - text: Catalog
+                  - generic [ref=e103]: "0"
+                - button "My connections 0" [ref=e104] [cursor=pointer]:
+                  - img [ref=e105]
+                  - text: My connections
+                  - generic [ref=e106]: "0"
+              - generic [ref=e107]:
+                - paragraph [ref=e108]: Search first, then connect or finish any saved custom setups.
+                - button "Refresh data" [ref=e109] [cursor=pointer]:
+                  - img [ref=e110]
+                  - text: Refresh data
+          - generic [ref=e117]:
+            - img [ref=e118]
+            - text: Loading integrations...
+  - alert [ref=e120]

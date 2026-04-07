@@ -548,7 +548,10 @@ export async function POST(req: Request) {
     );
   }
 
-  const authUrl = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
+  const authUrl =
+    process.env.AUTH_SERVICE_URL ||
+    process.env.NEXT_PUBLIC_AUTH_URL ||
+    "http://localhost:4000";
   if (provider !== "local") {
     try {
       const credRes = await fetch(`${authUrl}/cloud-auth/credentials/${provider}`);

@@ -11,7 +11,6 @@ import {
 import { CatalogGrid } from "@/components/catalog-grid";
 import { ConnectModal } from "@/components/connect-modal";
 import { ProviderDrawer } from "@/components/provider-drawer";
-import { SetupPrompt } from "@/components/setup-prompt";
 import {
   AlertTriangle,
   CheckCircle,
@@ -31,7 +30,7 @@ import {
 
 interface Connection {
   id: string;
-  label: string | null;
+  label: string;
   status: string;
   provider: {
     name: string;
@@ -51,12 +50,6 @@ interface Connection {
   createdAt: string;
   updatedAt?: string;
   accountEmail?: string | null;
-}
-
-interface ConnectRequest {
-  provider: ConnectableProvider;
-  targetConnectionId?: string;
-  targetConnectionLabel?: string | null;
 }
 
 function getTokenStatus(conn: Connection): "ok" | "expiring" | "expired" | "no-token" {
@@ -146,10 +139,6 @@ function SavedCustomProvidersSection({
   deletingSlug: string | null;
   onCustomIntegration: () => void;
 }) {
-  if (providers.length === 0) {
-    return null;
-  }
-
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-5">
       <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
@@ -177,120 +166,133 @@ function SavedCustomProvidersSection({
         </button>
       </div>
 
-      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {providers.map((provider) => {
-          const hasExistingConnection = existingConnectionSlugs.has(provider.slug);
+      {providers.length === 0 ? (
+        <div className="mt-5 rounded-[24px] border border-dashed border-zinc-800 bg-zinc-950/70 px-6 py-10 text-center">
+          <h4 className="text-lg font-semibold text-white">
+            No custom setups waiting on auth
+          </h4>
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-zinc-500">
+            Connected custom integrations now live under My connections. Use
+            the agent to start another provider whenever you need a fresh
+            setup.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {providers.map((provider) => {
+            const hasExistingConnection = existingConnectionSlugs.has(provider.slug);
 
-          return (
-            <div
-              key={provider.slug}
-              className="flex h-full flex-col rounded-[24px] border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  {provider.logoUrl ? (
-                    <img
-                      src={provider.logoUrl}
-                      alt={provider.name}
-                      className="h-11 w-11 rounded-xl border border-zinc-800 bg-zinc-900 p-1"
-                    />
-                  ) : (
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-xs font-medium uppercase text-zinc-400">
-                      {provider.slug.slice(0, 2)}
-                    </div>
-                  )}
+            return (
+              <div
+                key={provider.slug}
+                className="flex h-full flex-col rounded-[24px] border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    {provider.logoUrl ? (
+                      <img
+                        src={provider.logoUrl}
+                        alt={provider.name}
+                        className="h-11 w-11 rounded-xl border border-zinc-800 bg-zinc-900 p-1"
+                      />
+                    ) : (
+                      <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-xs font-medium uppercase text-zinc-400">
+                        {provider.slug.slice(0, 2)}
+                      </div>
+                    )}
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-lg font-semibold text-white">
-                        {provider.name}
-                      </h4>
-                      <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
-                        Custom
-                      </span>
-                      {hasExistingConnection ? (
-                        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
-                          Reconnect needed
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="text-lg font-semibold text-white">
+                          {provider.name}
+                        </h4>
+                        <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[11px] font-medium text-zinc-300">
+                          Custom
                         </span>
-                      ) : null}
-                    </div>
+                        {hasExistingConnection ? (
+                          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
+                            Reconnect needed
+                          </span>
+                        ) : null}
+                      </div>
 
-                    <p className="mt-3 min-h-[5.25rem] text-sm leading-7 text-zinc-500 line-clamp-4">
-                      {provider.description || "Saved custom provider configuration."}
-                    </p>
+                      <p className="mt-3 min-h-[5.25rem] text-sm leading-7 text-zinc-500 line-clamp-4">
+                        {provider.description || "Saved custom provider configuration."}
+                      </p>
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-300">
-                        {provider.authType}
-                      </span>
-                      {provider.category ? (
-                        <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
-                          {provider.category}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-300">
+                          {provider.authType}
                         </span>
-                      ) : null}
-                      {provider.hasCredentials ? (
-                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-300">
-                          Credentials saved
-                        </span>
-                      ) : null}
+                        {provider.category ? (
+                          <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-zinc-500">
+                            {provider.category}
+                          </span>
+                        ) : null}
+                        {provider.hasCredentials ? (
+                          <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.16em] text-emerald-300">
+                            Credentials saved
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
+
+                  {provider.docsUrl ? (
+                    <a
+                      href={provider.docsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 rounded-xl border border-zinc-800 p-2 text-zinc-500 transition-colors hover:border-zinc-700 hover:text-white"
+                      aria-label={`Open ${provider.name} docs`}
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  ) : <div className="w-9 shrink-0" />}
                 </div>
 
-                {provider.docsUrl ? (
-                  <a
-                    href={provider.docsUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="shrink-0 rounded-xl border border-zinc-800 p-2 text-zinc-500 transition-colors hover:border-zinc-700 hover:text-white"
-                    aria-label={`Open ${provider.name} docs`}
-                  >
-                    <ExternalLink size={14} />
-                  </a>
-                ) : <div className="w-9 shrink-0" />}
+                <div className="mt-6 border-t border-zinc-800/80 pt-4">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => onConnect(provider)}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 transition-colors hover:border-zinc-600 hover:text-white"
+                    >
+                      <Link2 size={14} />
+                      {hasExistingConnection ? "Reconnect" : "Connect"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onEdit(provider.slug)}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
+                    >
+                      <Settings2 size={14} />
+                      Edit provider
+                    </button>
+                  </div>
+
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => onDelete(provider)}
+                      disabled={deletingSlug === provider.slug}
+                      className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingSlug === provider.slug ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
+                      Delete integration
+                    </button>
+                  </div>
+                </div>
               </div>
-
-              <div className="mt-6 border-t border-zinc-800/80 pt-4">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => onConnect(provider)}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200 transition-colors hover:border-zinc-600 hover:text-white"
-                  >
-                    <Link2 size={14} />
-                    {hasExistingConnection ? "Reconnect" : "Connect"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => onEdit(provider.slug)}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
-                  >
-                    <Settings2 size={14} />
-                    Edit provider
-                  </button>
-                </div>
-
-                <div className="mt-3 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => onDelete(provider)}
-                    disabled={deletingSlug === provider.slug}
-                    className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {deletingSlug === provider.slug ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Trash2 size={14} />
-                    )}
-                    Delete integration
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -353,40 +355,9 @@ export default function ConnectionsPage() {
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
   const [deletingProviderSlug, setDeletingProviderSlug] = useState<string | null>(null);
-  const [connectingRequest, setConnectingRequest] =
-    useState<ConnectRequest | null>(null);
+  const [connectingProvider, setConnectingProvider] =
+    useState<ConnectableProvider | null>(null);
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
-
-  const openConnectModal = (
-    provider: ConnectableProvider,
-    options?: { connectionId?: string }
-  ) => {
-    const explicitConnection = options?.connectionId
-      ? connections.find((connection) => connection.id === options.connectionId) || null
-      : null;
-    const activeProviderConnections = connections.filter(
-      (connection) =>
-        connection.provider.slug === provider.slug && connection.status === "active",
-    );
-
-    if (!explicitConnection && activeProviderConnections.length > 1) {
-      setTab("connections");
-      window.alert(
-        `Multiple active ${provider.name} connections exist. Reconnect from the specific connection card in My connections so GTMShip updates the original row.`,
-      );
-      return;
-    }
-
-    const targetConnection =
-      explicitConnection ||
-      (activeProviderConnections.length === 1 ? activeProviderConnections[0] : null);
-
-    setConnectingRequest({
-      provider,
-      targetConnectionId: targetConnection?.id,
-      targetConnectionLabel: targetConnection?.label ?? null,
-    });
-  };
 
   const connectedSlugs = useMemo(
     () => new Set(connections.map((connection) => connection.provider.slug)),
@@ -587,8 +558,8 @@ export default function ConnectionsPage() {
       if (editingSlug === provider.slug) {
         setEditingSlug(null);
       }
-      if (connectingRequest?.provider.slug === provider.slug) {
-        setConnectingRequest(null);
+      if (connectingProvider?.slug === provider.slug) {
+        setConnectingProvider(null);
       }
     } catch (error) {
       window.alert(
@@ -602,20 +573,8 @@ export default function ConnectionsPage() {
   };
 
   const handleOpenAgent = (provider?: ConnectableProvider) => {
-    const providerConnections = provider
-      ? connections.filter((connection) => connection.provider.slug === provider.slug)
-      : [];
     const initialMessage = provider
-      ? `I want to connect to ${provider.name}. Auth type: ${provider.authType}. Source: ${provider.source || "catalog"}. Docs: ${provider.docsUrl || "N/A"}${
-          providerConnections.length > 0
-            ? ` Existing connections: ${providerConnections
-                .map(
-                  (connection) =>
-                    `${connection.id}${connection.label ? ` (${connection.label})` : ""}`
-                )
-                .join(", ")}. If this is a reconnect, update the original connection instead of creating a duplicate.`
-            : ""
-        }`
+      ? `I want to connect to ${provider.name}. Auth type: ${provider.authType}. Source: ${provider.source || "catalog"}. Docs: ${provider.docsUrl || "N/A"}`
       : "I want to set up a custom integration.";
 
     window.dispatchEvent(
@@ -631,8 +590,6 @@ export default function ConnectionsPage() {
   return (
     <div className="mx-auto max-w-7xl p-8">
       <div className="space-y-6">
-        <SetupPrompt />
-
         <section className="relative overflow-hidden rounded-[28px] border border-zinc-800 bg-gradient-to-br from-zinc-900 via-zinc-950 to-zinc-950">
           <div className="absolute right-0 top-0 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
           <div className="absolute bottom-0 left-8 h-40 w-40 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -781,7 +738,7 @@ export default function ConnectionsPage() {
                   <SavedCustomProvidersSection
                     providers={pendingCustomProviders}
                     existingConnectionSlugs={connectedSlugs}
-                    onConnect={openConnectModal}
+                    onConnect={setConnectingProvider}
                     onEdit={setEditingSlug}
                     onDelete={handleDeleteProvider}
                     deletingSlug={deletingProviderSlug}
@@ -793,7 +750,7 @@ export default function ConnectionsPage() {
                     categories={categories}
                     connectedSlugs={connectedSlugs}
                     onConnect={(provider) =>
-                      openConnectModal(normalizeCatalogProvider(provider))
+                      setConnectingProvider(normalizeCatalogProvider(provider))
                     }
                     onCustomIntegration={() => handleOpenAgent()}
                   />
@@ -998,10 +955,9 @@ export default function ConnectionsPage() {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  openConnectModal(
+                                  setConnectingProvider(
                                     connectableEntry ||
                                       normalizeCatalogProvider(catalogEntry!),
-                                    { connectionId: connection.id },
                                   )
                                 }
                                 className="inline-flex items-center gap-2 rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
@@ -1069,22 +1025,20 @@ export default function ConnectionsPage() {
           </div>
         </section>
 
-        {connectingRequest ? (
+        {connectingProvider ? (
           <ConnectModal
-            provider={connectingRequest.provider}
+            provider={connectingProvider}
             catalog={connectableProviders}
             connectedSlugs={connectedSlugs}
-            targetConnectionId={connectingRequest.targetConnectionId}
-            targetConnectionLabel={connectingRequest.targetConnectionLabel}
-            onClose={() => setConnectingRequest(null)}
+            onClose={() => setConnectingProvider(null)}
             onConnected={() => {
-              setConnectingRequest(null);
+              setConnectingProvider(null);
               void loadConnections();
               void loadCustomProviders();
               setTab("connections");
             }}
             onUseAgent={(provider) => {
-              setConnectingRequest(null);
+              setConnectingProvider(null);
               handleOpenAgent(provider);
             }}
           />
@@ -1096,7 +1050,7 @@ export default function ConnectionsPage() {
             onClose={() => setEditingSlug(null)}
             onConnect={(provider) => {
               setEditingSlug(null);
-              openConnectModal(provider);
+              setConnectingProvider(provider);
             }}
             onDelete={handleDeleteProvider}
             onUpdated={() => {

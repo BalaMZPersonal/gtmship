@@ -66,9 +66,10 @@ function run(command, args) {
   });
 }
 
-function copyIntoStage(relativePath) {
+function copyIntoStage(relativePath, options = {}) {
   const source = path.join(repoRoot, relativePath);
   const destination = path.join(stagingDir, relativePath);
+  const { dereference = false, filter } = options;
 
   if (!existsSync(source)) {
     throw new Error(`Missing required release input: ${relativePath}`);
@@ -77,7 +78,8 @@ function copyIntoStage(relativePath) {
   mkdirSync(path.dirname(destination), { recursive: true });
   cpSync(source, destination, {
     recursive: true,
-    dereference: false,
+    dereference,
+    filter,
     preserveTimestamps: true,
   });
 }
@@ -136,9 +138,8 @@ rmSync(stagingDir, { recursive: true, force: true });
 mkdirSync(distRoot, { recursive: true });
 
 run("pnpm", ["build"]);
-run("pnpm", ["--filter", "@gtmship/dashboard", "build"]);
 
-[
+const releaseInputs = [
   "node_modules",
   "package.json",
   "pnpm-workspace.yaml",
@@ -156,7 +157,23 @@ run("pnpm", ["--filter", "@gtmship/dashboard", "build"]);
   "packages/sdk/package.json",
   "packages/sdk/dist",
   "packages/sdk/Dockerfile.cloudrun",
-].forEach(copyIntoStage);
+];
+
+const runtimeNodeModuleInputs = [
+  "packages/cli/node_modules",
+  "packages/auth-service/node_modules",
+  "packages/deploy-engine/node_modules",
+  "packages/sdk/node_modules",
+];
+
+releaseInputs.forEach((relativePath) => copyIntoStage(relativePath));
+runtimeNodeModuleInputs.forEach((relativePath) =>
+  copyIntoStage(relativePath, {
+    dereference: true,
+    filter: (source) =>
+      path.basename(source) !== ".bin" && !source.includes(`${path.sep}.bin${path.sep}`),
+  })
+);
 
 writeLauncher();
 

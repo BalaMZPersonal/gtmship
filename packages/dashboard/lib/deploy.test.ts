@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildLocalDeploymentDashboardHref,
   buildWorkflowSecretSyncSummary,
   buildDeploymentLogsHref,
   dedupeWorkflowDeploymentsById,
+  deriveWorkflowDeploymentRunTarget,
   extractDashboardErrorMessage,
+  formatWorkflowDeploymentDisplayTarget,
   getScopedWorkflowDeployments,
   getWorkflowDeploymentRefs,
   resolvePreferredCloudProvider,
   resolveWorkflowDeployTarget,
   resolveSelectedExecutionName,
   resolveSelectedWorkflowDeploymentId,
+  workflowDeploymentTargetsMatch,
   type WorkflowDeploymentOverview,
   type WorkflowExecutionHistoryEntry,
 } from "@/lib/deploy";
@@ -211,6 +215,21 @@ describe("deploy helpers", () => {
     expect(scoped.map((deployment) => deployment.id)).toEqual(["dep-local-1"]);
   });
 
+  it("builds local dashboard links with workflow, slug, deployment, and execution context", () => {
+    expect(
+      buildLocalDeploymentDashboardHref({
+        workflowId: "workflow-local",
+        workflowSlug: "workflow-local-slug",
+        deploymentId: "dep-local-1",
+        executionName: "local_run_1",
+      })
+    ).toBe(
+      "/deploy/local?workflow=workflow-local&workflowSlug=workflow-local-slug&deploymentId=dep-local-1&executionName=local_run_1"
+    );
+
+    expect(buildLocalDeploymentDashboardHref()).toBe("/deploy/local");
+  });
+
   it("keeps aws deployments selectable by provider and region without using gcp fields", () => {
     const scoped = getScopedWorkflowDeployments(
       [
@@ -354,6 +373,57 @@ describe("deploy helpers", () => {
       cloudRegion: "us-west-1",
       cloudGcpProject: "demo-project",
     });
+  });
+
+  it("derives deployment run targets with provider defaults", () => {
+    expect(
+      deriveWorkflowDeploymentRunTarget({
+        provider: "local",
+      })
+    ).toEqual({
+      provider: "local",
+      region: "local",
+      gcpProject: undefined,
+    });
+  });
+
+  it("formats deployment targets with gcp project context", () => {
+    expect(
+      formatWorkflowDeploymentDisplayTarget({
+        provider: "gcp",
+        region: "us-central1",
+        gcpProject: "factors-development",
+      })
+    ).toBe("GCP us-central1 · factors-development");
+  });
+
+  it("matches configured and run targets by provider, region, and gcp project", () => {
+    expect(
+      workflowDeploymentTargetsMatch(
+        {
+          provider: "local",
+          region: "local",
+        },
+        deriveWorkflowDeploymentRunTarget({
+          provider: "local",
+        })
+      )
+    ).toBe(true);
+
+    expect(
+      workflowDeploymentTargetsMatch(
+        {
+          provider: "gcp",
+          region: "us-central1",
+          gcpProject: "factors-development",
+        },
+        deriveWorkflowDeploymentRunTarget({
+          provider: "gcp",
+          region: "us-central1",
+          gcpProject: "other-project",
+        })
+      )
+    ).toBe(false);
   });
 
   it("returns no secret sync summary for proxy auth plans", () => {

@@ -114,6 +114,8 @@ The auth-service dev server now applies pending Prisma migrations automatically 
 pnpm --filter @gtmship/auth-service db:deploy
 ```
 
+If you use Codex in this repo, there is now a project-scoped [`.codex/config.toml`](./.codex/config.toml) that enables the Playwright MCP server for trusted projects. It runs `@playwright/mcp` in headless mode by default so browser automation works in terminals, devcontainers, and other non-GUI environments. Remove `--headless` if you want to watch the browser locally.
+
 Use `gtmship dev` only from the GTMShip monorepo checkout. It is the contributor/dev-environment launcher, not the packaged end-user runtime command.
 
 ### Publish the Homebrew release

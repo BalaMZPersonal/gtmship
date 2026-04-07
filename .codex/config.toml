@@ -1,0 +1,17 @@
+# Project-scoped Codex configuration for GTMShip contributors.
+# Codex loads this file only when the repository is trusted.
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--headless"]
+startup_timeout_sec = 30.0
+tool_timeout_sec = 120.0
+
+[mcp_servers.playwright.tools.browser_navigate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_run_code]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_close]
+approval_mode = "approve"

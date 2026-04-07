@@ -8,6 +8,7 @@ import {
   Link2,
   Workflow,
   Rocket,
+  Server,
   ScrollText,
   Settings,
 } from "lucide-react";
@@ -30,6 +31,12 @@ const nav = [
     label: "Deploy",
     icon: Rocket,
     match: (pathname: string) => pathname === "/deploy",
+  },
+  {
+    href: "/deploy/local",
+    label: "Local Deployments",
+    icon: Server,
+    match: (pathname: string) => pathname.startsWith("/deploy/local"),
   },
   {
     href: "/deploy/logs",

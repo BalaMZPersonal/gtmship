@@ -2,11 +2,12 @@ import type {
   WorkflowDeployTargetMode,
   WorkflowDeploymentPlan,
   WorkflowDeployAuthMode,
+  WorkflowDeploymentRun,
 } from "@/lib/workflow-studio/types";
 
 export type CloudProvider = "aws" | "gcp" | "local";
 export type RemoteCloudProvider = Exclude<CloudProvider, "local">;
-const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000";
+const AUTH_PROXY_BASE = "/api/auth-service";
 
 export const AWS_DEFAULT_REGION = "us-east-1";
 export const GCP_DEFAULT_REGION = "us-central1";
@@ -194,6 +195,11 @@ export interface WorkflowDeploymentTargeting {
   region?: string | null;
   gcpProject?: string | null;
 }
+
+export type WorkflowDeploymentDisplayTarget = Pick<
+  WorkflowDeployTarget,
+  "provider" | "region" | "gcpProject"
+>;
 
 export interface WorkflowSecretSyncEntry {
   key: string;
@@ -485,6 +491,67 @@ export function getWorkflowDeploymentRefs(
   );
 }
 
+export function deriveWorkflowDeploymentRunTarget(
+  run?: Pick<WorkflowDeploymentRun, "provider" | "region" | "gcpProject"> | null
+): WorkflowDeploymentDisplayTarget | null {
+  const provider = resolveCloudProvider(run?.provider);
+  if (!provider) {
+    return null;
+  }
+
+  return {
+    provider,
+    region: normalizeDeploymentRef(run?.region) || defaultRegion(provider),
+    gcpProject:
+      provider === "gcp"
+        ? normalizeDeploymentRef(run?.gcpProject) || undefined
+        : undefined,
+  };
+}
+
+export function formatWorkflowDeploymentDisplayTarget(
+  target?: Partial<WorkflowDeploymentDisplayTarget> | null
+): string {
+  const provider = resolveCloudProvider(target?.provider);
+  if (!provider) {
+    return "Unknown";
+  }
+
+  const region = normalizeDeploymentRef(target?.region) || defaultRegion(provider);
+  const project = normalizeDeploymentRef(target?.gcpProject);
+  const base = `${provider.toUpperCase()} ${region}`;
+
+  return provider === "gcp" && project ? `${base} · ${project}` : base;
+}
+
+export function workflowDeploymentTargetsMatch(
+  left?: Partial<WorkflowDeploymentDisplayTarget> | null,
+  right?: Partial<WorkflowDeploymentDisplayTarget> | null
+): boolean {
+  const leftProvider = resolveCloudProvider(left?.provider);
+  const rightProvider = resolveCloudProvider(right?.provider);
+
+  if (!leftProvider || !rightProvider || leftProvider !== rightProvider) {
+    return false;
+  }
+
+  const leftRegion = normalizeDeploymentRef(left?.region) || defaultRegion(leftProvider);
+  const rightRegion =
+    normalizeDeploymentRef(right?.region) || defaultRegion(rightProvider);
+  if (leftRegion !== rightRegion) {
+    return false;
+  }
+
+  if (leftProvider !== "gcp") {
+    return true;
+  }
+
+  return (
+    normalizeDeploymentRef(left?.gcpProject) ===
+    normalizeDeploymentRef(right?.gcpProject)
+  );
+}
+
 export function dedupeWorkflowDeploymentsById(
   deployments: WorkflowDeploymentOverview[]
 ): WorkflowDeploymentOverview[] {
@@ -586,6 +653,125 @@ export function buildDeploymentLogsHref(input: {
   }
 
   return `/deploy/logs?${params.toString()}`;
+}
+
+export function buildLocalDeploymentDashboardHref(input: {
+  workflowId?: string | null;
+  workflowSlug?: string | null;
+  deploymentId?: string | null;
+  executionName?: string | null;
+} = {}): string {
+  const params = new URLSearchParams();
+  const workflowRefs = getWorkflowDeploymentRefs(input);
+  const normalizedSlug = normalizeDeploymentRef(input.workflowSlug);
+  const normalizedDeploymentId = normalizeDeploymentRef(input.deploymentId);
+
+  if (workflowRefs[0]) {
+    params.set("workflow", workflowRefs[0]);
+  }
+  if (normalizedSlug && normalizedSlug !== workflowRefs[0]) {
+    params.set("workflowSlug", normalizedSlug);
+  }
+  if (normalizedDeploymentId) {
+    params.set("deploymentId", normalizedDeploymentId);
+  }
+  if (input.executionName) {
+    params.set("executionName", input.executionName);
+  }
+
+  const suffix = params.toString();
+  return `/deploy/local${suffix ? `?${suffix}` : ""}`;
+}
+
+export function deploymentStatusTone(status?: string | null): string {
+  const normalized = (status || "").toLowerCase();
+  if (
+    normalized === "success" ||
+    normalized === "succeeded" ||
+    normalized === "completed"
+  ) {
+    return "border-emerald-900/40 bg-emerald-950/20 text-emerald-200";
+  }
+  if (normalized === "running" || normalized === "in_progress") {
+    return "border-blue-900/40 bg-blue-950/20 text-blue-200";
+  }
+  if (
+    normalized === "failed" ||
+    normalized === "error" ||
+    normalized === "cancelled"
+  ) {
+    return "border-rose-900/40 bg-rose-950/20 text-rose-200";
+  }
+  return "border-zinc-800 bg-zinc-900 text-zinc-300";
+}
+
+export function formatDeploymentDateTime(value?: string | null): string {
+  if (!value) {
+    return "N/A";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+export function formatProviderComputeLabel(
+  provider: CloudProvider,
+  computeType?: string | null
+): string {
+  if (provider === "local") {
+    return "Local Workflow Job";
+  }
+
+  if (provider === "aws") {
+    return "Lambda Function";
+  }
+
+  return computeType === "job" ? "Cloud Run Job" : "Cloud Run Service";
+}
+
+export function formatDeploymentTriggerSummary(input: {
+  triggerType?: string | null;
+  triggerConfig?: Record<string, unknown> | null;
+}): string {
+  if (input.triggerType === "manual") {
+    return "Manual";
+  }
+
+  if (input.triggerType === "schedule") {
+    const triggerConfig =
+      input.triggerConfig && typeof input.triggerConfig === "object"
+        ? (input.triggerConfig as Record<string, unknown>)
+        : {};
+    const cron =
+      typeof triggerConfig.cron === "string"
+        ? triggerConfig.cron
+        : typeof triggerConfig.schedule === "string"
+          ? triggerConfig.schedule
+          : "";
+    const timezone =
+      typeof triggerConfig.timezone === "string" ? triggerConfig.timezone : "";
+    return cron ? `${cron}${timezone ? ` (${timezone})` : ""}` : "Scheduled";
+  }
+
+  if (input.triggerType === "webhook") {
+    return "Webhook";
+  }
+
+  if (input.triggerType === "event") {
+    const triggerConfig =
+      input.triggerConfig && typeof input.triggerConfig === "object"
+        ? (input.triggerConfig as Record<string, unknown>)
+        : {};
+    return typeof triggerConfig.eventName === "string"
+      ? `Event: ${triggerConfig.eventName}`
+      : "Event";
+  }
+
+  return "Unknown";
 }
 
 export function resolveCloudProvider(value?: string | null): CloudProvider | null {
@@ -729,7 +915,7 @@ export function deriveDeploySettings(
 
 export async function loadCloudDeploySettings(): Promise<DeploySettings> {
   try {
-    const response = await fetch(`${AUTH_URL}/settings`, {
+    const response = await fetch(`${AUTH_PROXY_BASE}/settings`, {
       cache: "no-store",
     });
     if (!response.ok) {

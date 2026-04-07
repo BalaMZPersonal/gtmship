@@ -193,6 +193,22 @@ function findExecutable(name: string, extraDirs: string[] = []): string | null {
   return null;
 }
 
+function withRuntimeNodeEnv(
+  env: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const nodeBin = process.execPath;
+  const pathEntries = [
+    path.dirname(nodeBin),
+    ...(env.PATH || process.env.PATH || "").split(path.delimiter),
+  ].filter(Boolean);
+
+  return {
+    ...env,
+    GTMSHIP_NODE_BIN: env.GTMSHIP_NODE_BIN || nodeBin,
+    PATH: Array.from(new Set(pathEntries)).join(path.delimiter),
+  };
+}
+
 function resolvePostgresTools(): PostgresTools {
   const hintedDir = process.env.GTMSHIP_POSTGRES_BIN?.trim();
   const brewDirs = [
@@ -277,7 +293,7 @@ function spawnDetachedProcess(input: {
 
   const child = spawn(input.command, input.args, {
     cwd: input.cwd,
-    env: input.env,
+    env: withRuntimeNodeEnv(input.env),
     detached: true,
     stdio: ["ignore", stdout, stderr],
   });
@@ -304,7 +320,7 @@ async function runCommand(
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: input.cwd,
-      env: input.env,
+      env: withRuntimeNodeEnv(input.env),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -339,7 +355,7 @@ function createSharedRuntimeEnv(
   config: RuntimeConfig
 ): NodeJS.ProcessEnv {
   return {
-    ...process.env,
+    ...withRuntimeNodeEnv(),
     DATABASE_URL: layout.databaseUrl,
     REDIS_URL: "redis://127.0.0.1:6380",
     ENCRYPTION_KEY: config.encryptionKey,
@@ -462,7 +478,7 @@ async function runPrismaMigrations(layout: RuntimeLayout): Promise<void> {
     {
       cwd: layout.authServiceDir,
       env: {
-        ...process.env,
+        ...withRuntimeNodeEnv(),
         DATABASE_URL: layout.databaseUrl,
       },
     }

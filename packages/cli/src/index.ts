@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { devCommand } from "./commands/dev.js";
@@ -25,12 +26,14 @@ import {
   localRunCommand,
 } from "./commands/local.js";
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
 const program = new Command();
 
 program
   .name("gtmship")
   .description("Build GTM workflows with AI. Ship to your cloud.")
-  .version("0.1.0");
+  .version(version);
 
 program
   .command("init")

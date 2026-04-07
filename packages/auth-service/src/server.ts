@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { config } from "dotenv";
+import { createRequire } from "node:module";
 import { providerRoutes } from "./routes/providers.js";
 import { connectionRoutes } from "./routes/connections.js";
 import { authRoutes } from "./routes/auth.js";
@@ -23,6 +24,8 @@ import { publicInquiryRoutes } from "./routes/public-inquiries.js";
 
 config();
 
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
 const app: import("express").Express = express();
 const PORT = process.env.PORT || 4000;
 const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "10mb";
@@ -48,7 +51,7 @@ app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Health check
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "gtmship-auth", version: "0.1.0" });
+  res.json({ status: "ok", service: "gtmship-auth", version });
 });
 
 // Routes

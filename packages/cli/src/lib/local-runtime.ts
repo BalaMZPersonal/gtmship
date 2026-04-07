@@ -156,6 +156,79 @@ async function stopStaleManagedProcess(
   return true;
 }
 
+async function findListeningPid(port: number): Promise<number | null> {
+  const lsof = findExecutable("lsof");
+  if (!lsof) {
+    return null;
+  }
+
+  const result = await runCommand(
+    lsof,
+    ["-t", "-nP", `-iTCP:${port}`, "-sTCP:LISTEN"],
+    {
+      allowedExitCodes: [0, 1],
+    }
+  );
+
+  if (result.code !== 0) {
+    return null;
+  }
+
+  const firstLine = result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) {
+    return null;
+  }
+
+  const pid = Number.parseInt(firstLine, 10);
+  return Number.isFinite(pid) ? pid : null;
+}
+
+async function resolveConflictingServiceCommand(port: number): Promise<string | null> {
+  const pid = await findListeningPid(port);
+  if (!pid) {
+    return null;
+  }
+
+  return readProcessCommand(pid);
+}
+
+export async function assertNoConflictingHealthyService(input: {
+  port: number;
+  url: string;
+  healthPath: string;
+  matcher: (body: string) => boolean;
+  expectedEntrypoint: string;
+  pidPath: string;
+  serviceLabel: string;
+}): Promise<"running" | "external" | null> {
+  const healthy = await waitForHttp(
+    `${input.url}${input.healthPath}`,
+    input.matcher,
+    1_000
+  );
+  if (!healthy) {
+    return null;
+  }
+
+  const managedPid = readPidFile(input.pidPath);
+  if (managedPid && isProcessRunning(managedPid)) {
+    return "running";
+  }
+
+  const command = await resolveConflictingServiceCommand(input.port);
+  if (command && command.includes(input.expectedEntrypoint)) {
+    return "external";
+  }
+
+  const detail = command ? `\nConflicting process: ${command}` : "";
+  throw new Error(
+    `${input.serviceLabel} is already responding on ${input.url}, but it is not the current GTMShip runtime.${detail}\nStop the conflicting service before running GTMShip so it uses the expected local database and runtime.`
+  );
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -254,6 +327,18 @@ function withPostgresLocaleEnv(
     LC_ALL: locale,
     LC_CTYPE: locale,
   };
+}
+
+async function postgresPortReady(tools: PostgresTools): Promise<boolean> {
+  const ready = await runCommand(
+    tools.pgIsReady,
+    ["-h", "127.0.0.1", "-p", `${DEFAULT_DATABASE_PORT}`],
+    {
+      env: withPostgresLocaleEnv(),
+      allowedExitCodes: [0, 1, 2],
+    }
+  );
+  return ready.code === 0;
 }
 
 function resolvePostgresTools(): PostgresTools {
@@ -456,8 +541,14 @@ async function ensurePostgresCluster(
     ["-D", layout.postgresDataDir, "status"],
     { env: postgresEnv }
   );
-  if (status.code === 0) {
+  if (status.code === 0 && (await postgresPortReady(tools))) {
     return;
+  }
+
+  if (status.code === 0) {
+    throw new Error(
+      `PostgreSQL reports itself as running for ${layout.postgresDataDir}, but ${layout.databaseUrl} is not reachable. Stop the stale cluster or the conflicting listener on port ${DEFAULT_DATABASE_PORT} before running GTMShip.`
+    );
   }
 
   if (await portInUse(DEFAULT_DATABASE_PORT)) {
@@ -590,13 +681,17 @@ async function ensureAuthService(
 ): Promise<"running" | "external"> {
   await stopStaleManagedProcess(pidFile(layout, "auth"), layout.authServiceEntry);
 
-  const authHealthy = await waitForHttp(
-    `${layout.authUrl}/health`,
-    (body) => body.includes("\"service\":\"gtmship-auth\""),
-    1_000
-  );
-  if (authHealthy) {
-    return readPidFile(pidFile(layout, "auth")) ? "running" : "external";
+  const existing = await assertNoConflictingHealthyService({
+    port: DEFAULT_AUTH_PORT,
+    url: layout.authUrl,
+    healthPath: "/health",
+    matcher: (body) => body.includes("\"service\":\"gtmship-auth\""),
+    expectedEntrypoint: layout.authServiceEntry,
+    pidPath: pidFile(layout, "auth"),
+    serviceLabel: "A GTMShip auth service",
+  });
+  if (existing) {
+    return existing;
   }
 
   if (await portInUse(DEFAULT_AUTH_PORT)) {
@@ -643,13 +738,17 @@ async function ensureDashboard(
     layout.dashboardServerEntry
   );
 
-  const dashboardHealthy = await waitForHttp(
-    `${layout.dashboardUrl}/api/health`,
-    (body) => body.includes("\"service\":\"gtmship-dashboard\""),
-    1_000
-  );
-  if (dashboardHealthy) {
-    return readPidFile(pidFile(layout, "dashboard")) ? "running" : "external";
+  const existing = await assertNoConflictingHealthyService({
+    port: DEFAULT_DASHBOARD_PORT,
+    url: layout.dashboardUrl,
+    healthPath: "/api/health",
+    matcher: (body) => body.includes("\"service\":\"gtmship-dashboard\""),
+    expectedEntrypoint: layout.dashboardServerEntry,
+    pidPath: pidFile(layout, "dashboard"),
+    serviceLabel: "A GTMShip dashboard",
+  });
+  if (existing) {
+    return existing;
   }
 
   if (await portInUse(DEFAULT_DASHBOARD_PORT)) {
@@ -906,7 +1005,11 @@ async function postgresStatus(
     ["-D", layout.postgresDataDir, "status"],
     { env: withPostgresLocaleEnv() }
   );
-  return result.code === 0 ? "running" : "stopped";
+  if (result.code !== 0) {
+    return "stopped";
+  }
+
+  return (await postgresPortReady(tools)) ? "running" : "stopped";
 }
 
 async function authStatus(layout: RuntimeLayout): Promise<{

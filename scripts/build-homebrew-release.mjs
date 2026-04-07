@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,13 +66,14 @@ const releaseName = `gtmship-${platform}-${arch}`;
 const stagingDir = path.join(distRoot, releaseName);
 const tarballPath = path.join(distRoot, `${releaseName}.tar.gz`);
 
-function run(command, args) {
+function run(command, args, options = {}) {
   execFileSync(command, args, {
-    cwd: repoRoot,
+    cwd: options.cwd || repoRoot,
     stdio: "inherit",
     env: {
       ...process.env,
       FORCE_COLOR: "1",
+      ...options.env,
     },
   });
 }
@@ -82,6 +94,82 @@ function copyIntoStage(relativePath, options = {}) {
     filter,
     preserveTimestamps: true,
   });
+}
+
+function deployWorkspacePackage(packageName, targetRelativePath) {
+  const targetDir = path.join(stagingDir, targetRelativePath);
+  rmSync(targetDir, { recursive: true, force: true });
+  mkdirSync(path.dirname(targetDir), { recursive: true });
+  run("pnpm", ["--filter", packageName, "deploy", "--prod", targetDir]);
+  rewritePackageSelfReference(targetDir, packageName);
+  return targetDir;
+}
+
+function rewritePackageSelfReference(packageDir, packageName) {
+  const linkPath = path.join(
+    packageDir,
+    "node_modules",
+    ".pnpm",
+    "node_modules",
+    ...packageName.split("/")
+  );
+
+  if (!existsSync(linkPath) || !lstatSync(linkPath).isSymbolicLink()) {
+    return;
+  }
+
+  const linkTarget = readlinkSync(linkPath);
+  const resolvedTarget = path.resolve(path.dirname(linkPath), linkTarget);
+  if (resolvedTarget === packageDir) {
+    return;
+  }
+
+  unlinkSync(linkPath);
+  symlinkSync(path.relative(path.dirname(linkPath), packageDir), linkPath, "dir");
+}
+
+function generatePrismaClient(authServiceDir) {
+  const prismaBinary = path.join(authServiceDir, "node_modules", ".bin", "prisma");
+  if (!existsSync(prismaBinary)) {
+    throw new Error(`Missing Prisma CLI in staged auth-service bundle: ${prismaBinary}`);
+  }
+
+  run(prismaBinary, ["generate", "--schema", "src/prisma/schema.prisma"], {
+    cwd: authServiceDir,
+  });
+}
+
+function rewriteAbsoluteStageSymlinks(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) {
+      const linkTarget = readlinkSync(fullPath);
+      if (!path.isAbsolute(linkTarget)) {
+        continue;
+      }
+
+      if (!linkTarget.startsWith(repoRoot)) {
+        throw new Error(`Absolute symlink points outside the repository: ${fullPath} -> ${linkTarget}`);
+      }
+
+      const stagedTarget = path.join(stagingDir, path.relative(repoRoot, linkTarget));
+      if (!existsSync(stagedTarget)) {
+        throw new Error(`Missing staged target for absolute symlink: ${fullPath} -> ${linkTarget}`);
+      }
+
+      unlinkSync(fullPath);
+      symlinkSync(
+        path.relative(path.dirname(fullPath), stagedTarget),
+        fullPath,
+        lstatSync(stagedTarget).isDirectory() ? "dir" : "file"
+      );
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      rewriteAbsoluteStageSymlinks(fullPath);
+    }
+  }
 }
 
 function writeLauncher() {
@@ -139,41 +227,16 @@ mkdirSync(distRoot, { recursive: true });
 
 run("pnpm", ["build"]);
 
-const releaseInputs = [
-  "node_modules",
-  "package.json",
-  "pnpm-workspace.yaml",
-  "packages/cli/package.json",
-  "packages/cli/dist",
-  "packages/auth-service/package.json",
-  "packages/auth-service/dist",
-  "packages/auth-service/src/prisma",
-  "packages/dashboard/package.json",
-  "packages/dashboard/.next/standalone",
-  "packages/dashboard/.next/static",
-  "packages/dashboard/next.config.js",
-  "packages/deploy-engine/package.json",
-  "packages/deploy-engine/dist",
-  "packages/sdk/package.json",
-  "packages/sdk/dist",
-  "packages/sdk/Dockerfile.cloudrun",
-];
-
-const runtimeNodeModuleInputs = [
-  "packages/cli/node_modules",
-  "packages/auth-service/node_modules",
-  "packages/deploy-engine/node_modules",
-  "packages/sdk/node_modules",
-];
-
-releaseInputs.forEach((relativePath) => copyIntoStage(relativePath));
-runtimeNodeModuleInputs.forEach((relativePath) =>
-  copyIntoStage(relativePath, {
-    dereference: true,
-    filter: (source) =>
-      path.basename(source) !== ".bin" && !source.includes(`${path.sep}.bin${path.sep}`),
-  })
+deployWorkspacePackage("@gtmship/cli", path.join("packages", "cli"));
+const authServiceDir = deployWorkspacePackage(
+  "@gtmship/auth-service",
+  path.join("packages", "auth-service")
 );
+generatePrismaClient(authServiceDir);
+
+copyIntoStage("packages/dashboard/.next/standalone");
+copyIntoStage("packages/dashboard/.next/static");
+rewriteAbsoluteStageSymlinks(stagingDir);
 
 writeLauncher();
 

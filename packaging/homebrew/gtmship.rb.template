@@ -48,11 +48,18 @@ class Gtmship < Formula
   def caveats
     <<~EOS
       Start GTMShip with:
-        gtmship open
+        Desktop: gtmship open
+        Headless Linux / VMs: gtmship start
+        Check status: gtmship status
 
       GTMShip runs the same localhost URLs on macOS and Linux:
         Dashboard: http://localhost:3000
         Auth:      http://localhost:4000
     EOS
+  end
+
+  test do
+    output = shell_output("#{bin}/gtmship --help")
+    assert_match "Usage: gtmship", output
   end
 end

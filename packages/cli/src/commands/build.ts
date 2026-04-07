@@ -132,14 +132,15 @@ function resolveNodePaths(): string[] {
 
 function resolveRunnerEntrypoint(): string {
   // Resolve the runner source from the SDK package.
-  // Try the source .ts first (for monorepo dev), fall back to compiled .js.
+  // Prefer the compiled output for packaged installs, then fall back to source
+  // when contributors run directly from a workspace checkout.
   const sdkRoot = resolveSdkRoot();
-
-  const tsPath = join(sdkRoot, "src", "runner.ts");
-  if (existsSync(tsPath)) return tsPath;
 
   const jsPath = join(sdkRoot, "dist", "runner.js");
   if (existsSync(jsPath)) return jsPath;
+
+  const tsPath = join(sdkRoot, "src", "runner.ts");
+  if (existsSync(tsPath)) return tsPath;
 
   throw new Error(
     "Cannot find @gtmship/sdk runner entrypoint. Ensure the SDK is installed.",

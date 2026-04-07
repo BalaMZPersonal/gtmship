@@ -4,6 +4,11 @@
   "description": "GTMShip Auth Service — Self-hosted OAuth manager for GTM integrations",
   "license": "MIT",
   "type": "module",
+  "files": [
+    "dist",
+    "src/prisma",
+    "package.json"
+  ],
   "scripts": {
     "build": "prisma generate --schema src/prisma/schema.prisma && tsc",
     "dev": "prisma migrate deploy --schema src/prisma/schema.prisma && tsx watch src/server.ts",

@@ -505,10 +505,10 @@
 
     /* Sidebar */
     .dash-sidebar {
-      width: 160px;
+      width: 184px;
       background: var(--zinc-950);
-      border-right: 1px solid var(--zinc-800);
-      padding: 14px 0;
+      border-right: 1px solid rgba(63, 63, 70, 0.55);
+      padding: 18px 0 16px;
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
@@ -518,44 +518,84 @@
       padding: 0 14px 14px;
     }
 
-    .dash-sidebar-title {
-      font-family: var(--font-heading);
-      font-size: 0.85rem;
-      font-weight: 800;
-      color: var(--text-primary);
-    }
-
-    .dash-sidebar-title span { color: var(--accent-cyan); }
-
-    .dash-sidebar-sub {
-      font-size: 0.58rem;
-      color: var(--zinc-600);
-      margin-top: 1px;
-    }
-
-    .dash-nav {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: 0 8px;
-    }
-
-    .dash-nav-item {
+    .dash-brand-link {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 7px 10px;
-      border-radius: 8px;
-      font-size: 0.75rem;
-      font-weight: 500;
+      gap: 10px;
+    }
+
+    .dash-brand-logo {
+      width: 118px;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
+
+    .dash-brand-status {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .dash-brand-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--emerald-500);
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.55);
+    }
+
+    .dash-brand-status-label {
+      font-size: 0.62rem;
       color: var(--zinc-500);
     }
 
-    .dash-nav-item i { font-size: 14px; }
+    .dash-nav {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 10px 0;
+    }
+
+    .dash-nav-item {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px 8px 14px;
+      border-radius: 10px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--zinc-400);
+      background: transparent;
+    }
+
+    .dash-nav-item i {
+      font-size: 14px;
+      color: var(--zinc-500);
+    }
 
     .dash-nav-item.active {
-      background: var(--blue-600);
-      color: #fff;
+      background: rgba(39, 39, 42, 0.7);
+      color: #fafafa;
+    }
+
+    .dash-nav-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      border-radius: 999px;
+      background: var(--accent-cyan);
+    }
+
+    .dash-nav-item.active i {
+      color: var(--accent-cyan);
     }
 
     /* Main content */
@@ -569,31 +609,36 @@
     /* Top bar */
     .dash-topbar {
       display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 16px;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
       border-bottom: 1px solid var(--zinc-800);
-      background: var(--zinc-950);
+      background: rgba(9, 9, 11, 0.96);
     }
 
-    .dash-back {
-      width: 24px;
-      height: 24px;
-      border-radius: 6px;
-      border: 1px solid var(--zinc-800);
+    .dash-topbar-copy {
       display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--zinc-400);
-      font-size: 12px;
-      flex-shrink: 0;
+      flex-direction: column;
+      min-width: 0;
+      flex: 1;
     }
 
     .dash-wf-title {
       font-size: 0.82rem;
       font-weight: 600;
       color: var(--text-primary);
-      flex: 1;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dash-wf-summary {
+      margin-top: 4px;
+      font-size: 0.68rem;
+      color: var(--zinc-500);
+      line-height: 1.45;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -606,27 +651,31 @@
     }
 
     .dash-action-btn {
-      padding: 4px 10px;
+      padding: 6px 10px;
       border: 1px solid var(--zinc-700);
-      border-radius: 6px;
-      font-size: 0.65rem;
+      border-radius: 10px;
+      font-size: 0.64rem;
       font-weight: 500;
-      color: var(--zinc-400);
+      color: var(--zinc-300);
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      background: transparent;
+      gap: 5px;
+      background: rgba(24, 24, 27, 0.86);
+      line-height: 1;
+    }
+
+    .dash-action-btn i {
+      font-size: 11px;
+      color: var(--zinc-500);
     }
 
     .dash-action-btn.primary {
-      background: var(--emerald-500);
-      border-color: var(--emerald-500);
+      background: var(--blue-600);
+      border-color: var(--blue-600);
       color: #fff;
     }
 
-    .dash-action-btn.deploy {
-      background: var(--blue-600);
-      border-color: var(--blue-600);
+    .dash-action-btn.primary i {
       color: #fff;
     }
 
@@ -749,28 +798,28 @@
 
     .dash-right-tabs {
       display: flex;
-      gap: 0;
-      padding: 0 14px;
+      gap: 4px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--zinc-800);
       background: var(--zinc-950);
     }
 
     .dash-right-tab {
       padding: 8px 12px;
-      font-size: 0.7rem;
+      font-size: 0.68rem;
       font-weight: 500;
       color: var(--zinc-500);
-      border-bottom: 2px solid transparent;
+      border-radius: 10px;
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 6px;
     }
 
     .dash-right-tab i { font-size: 11px; }
 
     .dash-right-tab.active {
-      color: var(--text-primary);
-      border-bottom-color: var(--blue-500);
+      color: #60a5fa;
+      background: rgba(37, 99, 235, 0.12);
     }
 
     .dash-right-body {
@@ -2037,101 +2086,218 @@
     /* Full dashboard preview */
     .full-dash-preview {
       display: flex;
+      min-height: 360px;
     }
 
     .full-dash-sidebar {
-      width: 140px;
+      width: 184px;
       background: var(--zinc-950);
       border-right: 1px solid var(--zinc-800);
-      padding: 12px 0;
+      padding: 18px 0 16px;
       flex-shrink: 0;
     }
 
     .full-dash-brand {
-      padding: 0 12px 12px;
+      padding: 0 16px 16px;
     }
 
-    .full-dash-brand-text {
-      font-family: var(--font-heading);
-      font-size: 0.82rem;
-      font-weight: 800;
-      color: var(--text-primary);
+    .full-dash-brand-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
-    .full-dash-brand-text span { color: var(--accent-cyan); }
+    .full-dash-brand-logo {
+      width: 124px;
+      height: auto;
+      display: block;
+      object-fit: contain;
+    }
 
-    .full-dash-brand-sub {
-      font-size: 0.6rem;
+    .full-dash-status {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .full-dash-status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--emerald-500);
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.55);
+    }
+
+    .full-dash-status-label {
+      font-size: 0.62rem;
       color: var(--zinc-500);
     }
 
     .full-dash-nav {
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      padding: 0 6px;
+      gap: 4px;
+      padding: 12px 10px 0;
     }
 
     .full-dash-nav-item {
+      position: relative;
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 8px;
-      border-radius: 6px;
+      gap: 8px;
+      padding: 8px 10px 8px 14px;
+      border-radius: 10px;
       font-size: 0.72rem;
       font-weight: 500;
-      color: var(--zinc-500);
+      color: var(--zinc-400);
     }
 
     .full-dash-nav-item.active {
-      background: var(--zinc-800);
+      background: rgba(39, 39, 42, 0.7);
       color: #fff;
     }
 
-    .full-dash-nav-item i { font-size: 12px; }
+    .full-dash-nav-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      border-radius: 999px;
+      background: var(--accent-cyan);
+    }
+
+    .full-dash-nav-item i {
+      font-size: 13px;
+      color: var(--zinc-500);
+    }
+
+    .full-dash-nav-item.active i { color: var(--accent-cyan); }
 
     .full-dash-content {
       flex: 1;
-      padding: 14px;
-      min-height: 300px;
+      min-height: 360px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
     }
+
+    .full-dash-topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--zinc-800);
+      background: rgba(9, 9, 11, 0.96);
+    }
+
+    .full-dash-title-wrap {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .full-dash-title {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .full-dash-summary {
+      margin-top: 4px;
+      font-size: 0.72rem;
+      line-height: 1.45;
+      color: var(--zinc-500);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .full-dash-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .full-dash-action-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 11px;
+      border-radius: 10px;
+      border: 1px solid var(--zinc-700);
+      background: rgba(24, 24, 27, 0.86);
+      font-size: 0.68rem;
+      font-weight: 500;
+      color: var(--zinc-300);
+      line-height: 1;
+    }
+
+    .full-dash-action-btn i {
+      font-size: 12px;
+      color: var(--zinc-500);
+    }
+
+    .full-dash-action-btn.primary {
+      background: var(--blue-600);
+      border-color: var(--blue-600);
+      color: #fff;
+    }
+
+    .full-dash-action-btn.primary i { color: #fff; }
 
     .full-dash-tab-bar {
       display: flex;
-      gap: 0;
-      margin-bottom: 12px;
+      gap: 4px;
+      padding: 10px 16px;
       border-bottom: 1px solid var(--zinc-800);
     }
 
     .full-dash-tab {
-      padding: 6px 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 10px;
       font-size: 0.72rem;
       font-weight: 500;
       color: var(--zinc-500);
-      border-bottom: 2px solid transparent;
     }
 
+    .full-dash-tab i { font-size: 12px; }
+
     .full-dash-tab.active {
-      color: var(--text-primary);
-      border-bottom-color: var(--blue-500);
+      background: rgba(37, 99, 235, 0.12);
+      color: #60a5fa;
     }
 
     .full-dash-workspace {
       display: flex;
-      gap: 12px;
+      gap: 0;
+      flex: 1;
+      min-height: 0;
     }
 
     .full-dash-chat {
-      width: 45%;
+      width: 19rem;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
+      padding: 16px;
+      border-right: 1px solid var(--zinc-800);
     }
 
     .full-dash-chat-msg {
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-size: 0.68rem;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 0.7rem;
       line-height: 1.5;
     }
 
@@ -2150,16 +2316,18 @@
 
     .full-dash-code {
       flex: 1;
-      background: var(--zinc-900);
+      margin: 16px;
+      background: rgba(24, 24, 27, 0.88);
       border: 1px solid var(--zinc-800);
-      border-radius: 8px;
-      padding: 10px;
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
     }
 
     .full-dash-code pre {
       font-family: var(--font-mono);
-      font-size: 0.62rem;
-      line-height: 1.7;
+      font-size: 0.64rem;
+      line-height: 1.75;
       color: var(--zinc-400);
     }
 
@@ -3004,7 +3172,7 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
-      .full-dash-sidebar { width: 110px; }
+      .full-dash-sidebar { width: 148px; }
     }
 
     @media (max-width: 860px) {
@@ -3173,12 +3341,12 @@
         padding: 0;
       }
 
-      .dash-sidebar-title {
-        font-size: 0.92rem;
+      .dash-brand-logo {
+        width: 126px;
       }
 
-      .dash-sidebar-sub {
-        font-size: 0.64rem;
+      .dash-brand-status-label {
+        font-size: 0.66rem;
       }
 
       .dash-nav {
@@ -3199,6 +3367,10 @@
         border-color: rgba(37, 99, 235, 0.45);
       }
 
+      .dash-nav-item.active::before {
+        display: none;
+      }
+
       .dash-topbar {
         flex-wrap: wrap;
         align-items: flex-start;
@@ -3206,14 +3378,14 @@
         padding: 10px 12px;
       }
 
-      .dash-back {
-        display: none;
-      }
-
       .dash-wf-title {
         width: 100%;
         font-size: 0.78rem;
         line-height: 1.35;
+        white-space: normal;
+      }
+
+      .dash-wf-summary {
         white-space: normal;
       }
 
@@ -3336,9 +3508,27 @@
 
       .full-dash-preview { flex-direction: column; }
       .full-dash-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--zinc-800); }
+      .full-dash-brand {
+        padding: 0 0 12px;
+      }
+      .full-dash-brand-logo {
+        width: 132px;
+      }
       .full-dash-nav { flex-direction: row; flex-wrap: wrap; }
+      .full-dash-nav-item.active::before { display: none; }
+      .full-dash-topbar {
+        flex-wrap: wrap;
+        padding: 12px;
+      }
+      .full-dash-summary {
+        white-space: normal;
+      }
+      .full-dash-actions {
+        width: 100%;
+      }
       .full-dash-workspace { flex-direction: column; }
-      .full-dash-chat { width: 100%; }
+      .full-dash-chat { width: 100%; border-right: none; border-bottom: 1px solid var(--zinc-800); }
+      .full-dash-code { margin: 12px; }
     }
   </style>
 </head>
@@ -3376,15 +3566,21 @@
           <!-- Sidebar -->
           <div class="dash-sidebar">
             <div class="dash-sidebar-brand">
-              <div class="dash-sidebar-title"><i class="ph ph-sailboat" style="margin-right:4px;color:var(--accent-cyan);font-size:14px"></i>GTM<span>ship</span></div>
-              <div class="dash-sidebar-sub">Ship GTM workflows</div>
+              <div class="dash-brand-link">
+                <img class="dash-brand-logo" src="gtmshiplogo_2.png" alt="GTMship dashboard logo">
+                <span class="dash-brand-status">
+                  <span class="dash-brand-dot"></span>
+                  <span class="dash-brand-status-label">Online</span>
+                </span>
+              </div>
             </div>
             <div class="dash-nav">
               <div class="dash-nav-item"><i class="ph ph-link"></i> Connections</div>
               <div class="dash-nav-item active"><i class="ph ph-git-branch"></i> Workflows</div>
               <div class="dash-nav-item"><i class="ph ph-rocket"></i> Deploy</div>
+              <div class="dash-nav-item"><i class="ph ph-hard-drives"></i> Local Deployments</div>
               <div class="dash-nav-item"><i class="ph ph-scroll"></i> Logs</div>
-              <div class="dash-nav-item"><i class="ph ph-gear"></i> Settings</div>
+              <div class="dash-nav-item"><i class="ph ph-gear-six"></i> Settings</div>
             </div>
           </div>
 
@@ -3392,13 +3588,14 @@
           <div class="dash-main">
             <!-- Top bar -->
             <div class="dash-topbar">
-              <div class="dash-back"><i class="ph ph-arrow-left"></i></div>
-              <div class="dash-wf-title">Enrich Leads &rarr; Score &amp; Route to Slack</div>
+              <div class="dash-topbar-copy">
+                <div class="dash-wf-title">Lead routing with guarded Slack approval</div>
+                <div class="dash-wf-summary">Generated from chat, validated locally, and ready for preview before deployment.</div>
+              </div>
               <div class="dash-topbar-actions">
                 <div class="dash-action-btn"><i class="ph ph-check-circle"></i> Validate</div>
                 <div class="dash-action-btn"><i class="ph ph-play"></i> Preview</div>
                 <div class="dash-action-btn"><i class="ph ph-hammer"></i> Build</div>
-                <div class="dash-action-btn deploy"><i class="ph ph-cloud-arrow-up"></i> Deploy GCP</div>
                 <div class="dash-action-btn primary"><i class="ph ph-floppy-disk"></i> Save</div>
               </div>
             </div>
@@ -4032,24 +4229,43 @@
           <div class="full-dash-preview">
             <div class="full-dash-sidebar">
               <div class="full-dash-brand">
-                <div class="full-dash-brand-text"><i class="ph ph-sailboat" style="margin-right:4px;color:var(--accent-cyan)"></i>GTM<span>ship</span></div>
-                <div class="full-dash-brand-sub">Ship GTM workflows</div>
+                <div class="full-dash-brand-row">
+                  <img class="full-dash-brand-logo" src="gtmshiplogo_2.png" alt="GTMship dashboard logo">
+                  <span class="full-dash-status">
+                    <span class="full-dash-status-dot"></span>
+                    <span class="full-dash-status-label">Online</span>
+                  </span>
+                </div>
               </div>
               <div class="full-dash-nav">
                 <div class="full-dash-nav-item"><i class="ph ph-link"></i> Connections</div>
                 <div class="full-dash-nav-item active"><i class="ph ph-git-branch"></i> Workflows</div>
                 <div class="full-dash-nav-item"><i class="ph ph-rocket"></i> Deploy</div>
+                <div class="full-dash-nav-item"><i class="ph ph-hard-drives"></i> Local Deployments</div>
                 <div class="full-dash-nav-item"><i class="ph ph-scroll"></i> Logs</div>
-                <div class="full-dash-nav-item"><i class="ph ph-gear"></i> Settings</div>
+                <div class="full-dash-nav-item"><i class="ph ph-gear-six"></i> Settings</div>
               </div>
             </div>
             <div class="full-dash-content">
+              <div class="full-dash-topbar">
+                <div class="full-dash-title-wrap">
+                  <div class="full-dash-title">Route hot leads to Slack with score checkpoints</div>
+                  <div class="full-dash-summary">HubSpot and Slack are connected. The current artifact is saved locally and ready for build or deploy.</div>
+                </div>
+                <div class="full-dash-actions">
+                  <div class="full-dash-action-btn"><i class="ph ph-check-circle"></i> Validate</div>
+                  <div class="full-dash-action-btn"><i class="ph ph-play"></i> Preview</div>
+                  <div class="full-dash-action-btn"><i class="ph ph-hammer"></i> Build</div>
+                  <div class="full-dash-action-btn primary"><i class="ph ph-floppy-disk"></i> Save</div>
+                </div>
+              </div>
               <div class="full-dash-tab-bar">
-                <div class="full-dash-tab">Flow</div>
-                <div class="full-dash-tab active">Code</div>
-                <div class="full-dash-tab">Preview</div>
-                <div class="full-dash-tab">Build</div>
-                <div class="full-dash-tab">Deploy</div>
+                <div class="full-dash-tab"><i class="ph ph-flow-arrow"></i> Flow</div>
+                <div class="full-dash-tab active"><i class="ph ph-code"></i> Code</div>
+                <div class="full-dash-tab"><i class="ph ph-check-square"></i> Validation</div>
+                <div class="full-dash-tab"><i class="ph ph-play"></i> Preview</div>
+                <div class="full-dash-tab"><i class="ph ph-hammer"></i> Build</div>
+                <div class="full-dash-tab"><i class="ph ph-rocket"></i> Deploy</div>
               </div>
               <div class="full-dash-workspace">
                 <div class="full-dash-chat">

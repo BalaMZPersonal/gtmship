@@ -7,6 +7,10 @@
   "bin": {
     "gtmship": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

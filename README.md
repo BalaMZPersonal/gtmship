@@ -33,7 +33,7 @@ It combines:
 If you want the packaged app experience, install GTMShip from the Homebrew tap:
 
 ```bash
-brew install gtmship/tap/gtmship
+brew install BalaMZPersonal/tap/gtmship
 gtmship open
 ```
 
@@ -42,6 +42,13 @@ gtmship open
 - Dashboard: `http://localhost:3000`
 - Auth service: `http://localhost:4000`
 - Local Postgres backing store for the auth service
+
+On headless Linux or VM installs, start the runtime without opening a browser:
+
+```bash
+gtmship start
+gtmship status
+```
 
 Useful runtime commands:
 
@@ -125,6 +132,7 @@ GTMShip ships to end users as a prebuilt macOS or Linux runtime bundle. Homebrew
 The `Release Homebrew` GitHub Actions workflow now handles the release publish path for this repository. Once the repo is pushed to `github.com/BalaMZPersonal/gtmship` and the `HOMEBREW_TAP_TOKEN` repository secret is set, pushing a tag like `v0.1.0` will:
 
 - build the macOS and Linux release tarballs
+- smoke-test each release bundle on its matching runner
 - publish them to GitHub Releases
 - render `gtmship.rb`
 - update `github.com/BalaMZPersonal/homebrew-tap`
@@ -179,6 +187,13 @@ Once that tap update is pushed, users install GTMShip with:
 ```bash
 brew install BalaMZPersonal/tap/gtmship
 gtmship open
+```
+
+On headless Linux or VM installs, use:
+
+```bash
+gtmship start
+gtmship status
 ```
 
 On macOS, the first successful `gtmship open` installs a LaunchAgent so GTMShip can be started again at login. On Linux, GTMShip installs a `systemd --user` unit when `systemctl --user` is available. If no user service manager is available, the runtime still works normally; only login-time bootstrap is skipped.

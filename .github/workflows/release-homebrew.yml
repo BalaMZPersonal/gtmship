@@ -50,6 +50,9 @@ jobs:
       - name: Build release bundle
         run: pnpm build:release -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
 
+      - name: Verify release bundle
+        run: node scripts/verify-homebrew-release.mjs --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
       - name: Upload release bundle
         uses: actions/upload-artifact@v4
         with:
@@ -142,7 +145,19 @@ jobs:
 
           \`\`\`bash
           brew install ${OWNER}/tap/gtmship
+          \`\`\`
+
+          Start on a desktop machine with:
+
+          \`\`\`bash
           gtmship open
+          \`\`\`
+
+          Start on a headless Linux VM with:
+
+          \`\`\`bash
+          gtmship start
+          gtmship status
           \`\`\`
           EOF
 

@@ -16,6 +16,7 @@ In `github.com/BalaMZPersonal/gtmship`, pushing a `v*` tag is the intended publi
    ```
 
    The build script refuses cross-platform packaging because the bundled runtime dependencies must match the host OS and CPU architecture.
+   The GitHub Actions workflow also smoke-tests each built bundle before upload.
 
 2. Upload the generated tarballs from `dist/homebrew/` to GitHub Releases, or let the tag-triggered GitHub Actions workflow do it for you.
 3. Render a formula with every release URL and SHA256:
@@ -49,6 +50,13 @@ gtmship open
 ```
 
 `gtmship open` starts the local Postgres cluster, auth service, and dashboard, then opens the browser to `http://localhost:3000`.
+
+On headless Linux machines or VMs, use:
+
+```bash
+gtmship start
+gtmship status
+```
 
 - On macOS, `gtmship open` installs a LaunchAgent for login-time bootstrap.
 - On Linux, `gtmship open` installs a `systemd --user` unit when `systemctl --user` is available.

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { AgentTerminal } from "@/components/agent-terminal";
+import { UpdateBanner } from "@/components/update-banner";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [agentOpen, setAgentOpen] = useState(false);
@@ -30,7 +31,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex">
       <Sidebar />
-      <main className="h-screen min-w-0 flex-1 overflow-y-auto">{children}</main>
+      <div className="flex h-screen min-w-0 flex-1 flex-col">
+        <UpdateBanner />
+        <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+      </div>
       {agentOpen && (
         <AgentTerminal
           key={agentSessionKey}

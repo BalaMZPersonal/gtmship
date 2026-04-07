@@ -115,6 +115,21 @@ function defaultRegion(provider: WorkflowDeployProvider): string {
       : "us-east-1";
 }
 
+function normalizeTextValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeWebhookVisibility(
+  value: unknown
+): "public" | "private" {
+  return value === "private" ? "private" : "public";
+}
+
 function normalizeWebhookPath(path?: string): string {
   if (!path) {
     return "/";
@@ -372,8 +387,10 @@ function buildTriggerSummary(
 ): WorkflowDeploymentPlan["trigger"] {
   if (trigger.type === "webhook") {
     const configuredPath =
-      triggerConfig?.webhook?.path || trigger.path || "/";
-    const visibility = triggerConfig?.webhook?.visibility || "public";
+      normalizeTextValue(triggerConfig?.webhook?.path) || trigger.path || "/";
+    const visibility = normalizeWebhookVisibility(
+      triggerConfig?.webhook?.visibility
+    );
     return {
       type: "webhook",
       access: visibility,
@@ -383,8 +400,10 @@ function buildTriggerSummary(
   }
 
   if (trigger.type === "schedule") {
-    const cron = triggerConfig?.schedule?.cron || trigger.cron || "";
-    const timezone = triggerConfig?.schedule?.timezone || "UTC";
+    const cron =
+      normalizeTextValue(triggerConfig?.schedule?.cron) || trigger.cron || "";
+    const timezone =
+      normalizeTextValue(triggerConfig?.schedule?.timezone) || "UTC";
     return {
       type: "schedule",
       cron: cron || undefined,
@@ -396,10 +415,10 @@ function buildTriggerSummary(
   if (trigger.type === "event") {
     const eventName = trigger.event || "custom.event";
     const source =
-      triggerConfig?.event?.source ||
-      triggerConfig?.event?.eventBus ||
-      triggerConfig?.event?.queue ||
-      triggerConfig?.event?.topic;
+      normalizeTextValue(triggerConfig?.event?.source) ||
+      normalizeTextValue(triggerConfig?.event?.eventBus) ||
+      normalizeTextValue(triggerConfig?.event?.queue) ||
+      normalizeTextValue(triggerConfig?.event?.topic);
     return {
       type: "event",
       eventName,
@@ -429,7 +448,7 @@ function buildWarnings(input: {
 
   if (
     input.trigger.type === "schedule" &&
-    !input.triggerConfig?.schedule?.cron &&
+    !normalizeTextValue(input.triggerConfig?.schedule?.cron) &&
     !input.trigger.cron
   ) {
     warnings.push(
@@ -439,10 +458,10 @@ function buildWarnings(input: {
 
   if (
     input.trigger.type === "event" &&
-    !input.triggerConfig?.event?.source &&
-    !input.triggerConfig?.event?.eventBus &&
-    !input.triggerConfig?.event?.queue &&
-    !input.triggerConfig?.event?.topic
+    !normalizeTextValue(input.triggerConfig?.event?.source) &&
+    !normalizeTextValue(input.triggerConfig?.event?.eventBus) &&
+    !normalizeTextValue(input.triggerConfig?.event?.queue) &&
+    !normalizeTextValue(input.triggerConfig?.event?.topic)
   ) {
     warnings.push(
       "Event trigger is missing source configuration. Add workflow.triggerConfig.event details."

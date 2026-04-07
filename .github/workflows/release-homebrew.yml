@@ -127,6 +127,16 @@ jobs:
             --linux-x64-url "${RELEASE_URL}/gtmship-linux-x64.tar.gz" \
             --linux-x64-sha256 "$LINUX_X64_SHA"
 
+      - name: Render update manifest
+        run: |
+          VERSION="${TAG_NAME#v}"
+
+          pnpm render:homebrew-update-manifest \
+            --owner "$OWNER" \
+            --version "$VERSION" \
+            --tag "$TAG_NAME" \
+            --notes-url "https://github.com/${REPOSITORY}/releases/tag/${TAG_NAME}"
+
       - name: Update Homebrew tap repository
         run: |
           if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
@@ -163,11 +173,12 @@ jobs:
 
           mkdir -p tap-repo/Formula
           cp dist/homebrew/gtmship.rb tap-repo/Formula/gtmship.rb
+          cp dist/homebrew/gtmship-update.json tap-repo/gtmship-update.json
 
           cd tap-repo
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md Formula/gtmship.rb
+          git add README.md Formula/gtmship.rb gtmship-update.json
 
           if git diff --cached --quiet; then
             echo "No tap changes to commit."

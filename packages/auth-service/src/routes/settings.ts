@@ -8,6 +8,7 @@ import {
   syncAllActiveConnectionsToSecretManagers,
   validateSecretManagerReadiness,
 } from "../services/auth-strategy.js";
+import { normalizeGcpServiceAccountKey } from "../services/gcp-service-account.js";
 import { enforceAuthModeOnExistingDeployments } from "../services/workflow-deployment-auth.js";
 import { SETUP_STATE_SETTING_KEY } from "../services/setup.js";
 
@@ -103,18 +104,29 @@ settingsRoutes.get("/:key", async (req, res) => {
 
 // Set a setting
 settingsRoutes.put("/:key", async (req, res) => {
-  const { value } = req.body;
-  const encrypted = SENSITIVE_KEYS.includes(req.params.key)
-    ? encrypt(value)
-    : value;
+  try {
+    const { value } = req.body;
+    const normalizedValue =
+      req.params.key === "gcp_service_account_key"
+        ? normalizeGcpServiceAccountKey(String(value || ""))
+        : value;
+    const encrypted = SENSITIVE_KEYS.includes(req.params.key)
+      ? encrypt(normalizedValue)
+      : normalizedValue;
 
-  const setting = await prisma.setting.upsert({
-    where: { key: req.params.key },
-    update: { value: encrypted },
-    create: { key: req.params.key, value: encrypted },
-  });
+    const setting = await prisma.setting.upsert({
+      where: { key: req.params.key },
+      update: { value: encrypted },
+      create: { key: req.params.key, value: encrypted },
+    });
 
-  res.json({ key: setting.key, updated: true });
+    res.json({ key: setting.key, updated: true });
+  } catch (error) {
+    res.status(400).json({
+      error:
+        error instanceof Error ? error.message : "Unable to save setting.",
+    });
+  }
 });
 
 // Delete a setting

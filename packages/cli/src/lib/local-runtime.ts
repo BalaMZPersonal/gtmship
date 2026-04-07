@@ -1038,6 +1038,15 @@ export async function stopLocalRuntime(): Promise<RuntimeStatus> {
   return getLocalRuntimeStatus();
 }
 
+export async function restartLocalRuntime(input: {
+  openBrowser?: boolean;
+  installLaunchAgent?: boolean;
+  ensureDashboard?: boolean;
+} = {}): Promise<RuntimeStatus> {
+  await stopLocalRuntime();
+  return startLocalRuntime(input);
+}
+
 function describeState(
   label: string,
   state: "running" | "stopped" | "external",

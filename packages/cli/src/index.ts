@@ -18,6 +18,8 @@ import { registerMemoriesCommand } from "./commands/memories.js";
 import { registerOAuthProvidersCommand } from "./commands/oauth-providers.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { openCommand } from "./commands/open.js";
+import { registerUpdateCommand } from "./commands/update.js";
+import { restartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
 import { stopCommand } from "./commands/stop.js";
 import { statusCommand } from "./commands/status.js";
@@ -55,6 +57,11 @@ program
   .command("start")
   .description("Start the local GTMShip runtime")
   .action(startCommand);
+
+program
+  .command("restart")
+  .description("Restart the local GTMShip runtime")
+  .action(restartCommand);
 
 program
   .command("stop")
@@ -139,5 +146,6 @@ registerSettingsCommand(program);
 registerMemoriesCommand(program);
 registerOAuthProvidersCommand(program);
 registerSetupCommand(program);
+registerUpdateCommand(program);
 
 program.parse();

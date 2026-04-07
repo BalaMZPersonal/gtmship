@@ -32,6 +32,22 @@ export interface MemoryRecord {
   updatedAt: string;
 }
 
+export interface UpdateStatusResponse {
+  installMethod: "homebrew" | "unknown";
+  runningVersion: string;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  restartRequired: boolean;
+  severity: string;
+  message: string | null;
+  notesUrl: string | null;
+  recommendedCommand: string | null;
+  checkedAt: string;
+  stale: boolean;
+  snoozedUntil: string | null;
+}
+
 const AUTH_PROXY_BASE = "/api/auth-service";
 
 async function request(path: string, options?: RequestInit) {
@@ -194,6 +210,13 @@ export const api = {
     request(`/settings/${key}`, { method: "DELETE" }),
   getSetupStatus: () =>
     request("/setup") as Promise<SetupStatusResponse>,
+  getUpdateStatus: () =>
+    request("/updates/status") as Promise<UpdateStatusResponse>,
+  snoozeUpdateNotice: (version: string, until: string) =>
+    request("/updates/snooze", {
+      method: "POST",
+      body: JSON.stringify({ version, until }),
+    }) as Promise<UpdateStatusResponse>,
   updateSetupState: (input: {
     dismissed?: boolean;
     steps?: Partial<

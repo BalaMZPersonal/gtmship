@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 import { decrypt } from "./crypto.js";
+import { parseGcpServiceAccountKey } from "./gcp-service-account.js";
 
 const ENCRYPTED_SETTING_KEYS = new Set([
   "aws_secret_access_key",
@@ -371,12 +372,16 @@ async function loadGcpClient(
   const rawServiceAccount = await readSetting("gcp_service_account_key");
   let credentials: Record<string, unknown> | undefined;
   if (rawServiceAccount) {
-    const parsed = JSON.parse(rawServiceAccount) as Record<string, unknown>;
-    if (parsed.client_email && parsed.private_key) {
-      credentials = {
-        client_email: parsed.client_email,
-        private_key: parsed.private_key,
-      };
+    try {
+      const parsed = parseGcpServiceAccountKey(rawServiceAccount);
+      if (parsed.client_email && parsed.private_key) {
+        credentials = {
+          client_email: parsed.client_email,
+          private_key: parsed.private_key,
+        };
+      }
+    } catch {
+      credentials = undefined;
     }
   }
 
@@ -606,7 +611,7 @@ export async function loadConfiguredSecretBackendTargets(): Promise<
     let projectId = gcpProject;
     if (!projectId && rawGcpServiceAccount) {
       try {
-        const parsed = JSON.parse(rawGcpServiceAccount) as Record<string, unknown>;
+        const parsed = parseGcpServiceAccountKey(rawGcpServiceAccount);
         projectId = normalizeText(parsed.project_id) || null;
       } catch {
         projectId = null;

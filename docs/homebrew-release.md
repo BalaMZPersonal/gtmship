@@ -2,7 +2,7 @@
 
 GTMShip ships to end users as a prebuilt macOS or Linux runtime bundle. Homebrew installs that bundle; it does not build the monorepo on the user's machine.
 
-In `github.com/BalaMZPersonal/gtmship`, pushing a `v*` tag is the intended publish flow. The `Release Homebrew` GitHub Actions workflow builds the release bundles, uploads the GitHub Release assets, renders `gtmship.rb`, and updates `github.com/BalaMZPersonal/homebrew-tap` when the `HOMEBREW_TAP_TOKEN` repository secret is configured.
+In `github.com/BalaMZPersonal/gtmship`, pushing a `v*` tag is the intended publish flow. The `Release Homebrew` GitHub Actions workflow builds the release bundles, uploads the GitHub Release assets, renders `gtmship.rb`, renders `gtmship-update.json`, and updates `github.com/BalaMZPersonal/homebrew-tap` when the `HOMEBREW_TAP_TOKEN` repository secret is configured.
 
 ## Release Steps
 
@@ -34,13 +34,22 @@ In `github.com/BalaMZPersonal/gtmship`, pushing a `v*` tag is the intended publi
      --linux-x64-sha256 <linux-x64-sha256>
    ```
 
-4. Commit the rendered `gtmship.rb` into the tap repo at `Formula/gtmship.rb`.
+4. Render the public update manifest:
+
+   ```bash
+   pnpm render:homebrew-update-manifest \
+     --version 0.1.0 \
+     --tag v0.1.0
+   ```
+
+5. Commit both `gtmship.rb` and `gtmship-update.json` into the tap repo.
 
 ## Tap Layout
 
 - Main app repo: `github.com/BalaMZPersonal/gtmship`
 - Homebrew tap repo: `github.com/BalaMZPersonal/homebrew-tap`
 - Formula path in the tap repo: `Formula/gtmship.rb`
+- Update manifest path in the tap repo: `gtmship-update.json`
 
 ## User Install Flow
 
@@ -56,6 +65,19 @@ On headless Linux machines or VMs, use:
 ```bash
 gtmship start
 gtmship status
+```
+
+To check for or apply updates later:
+
+```bash
+gtmship update --check
+gtmship update
+```
+
+If the Homebrew package is newer than the running local runtime, use:
+
+```bash
+gtmship restart
 ```
 
 - On macOS, `gtmship open` installs a LaunchAgent for login-time bootstrap.

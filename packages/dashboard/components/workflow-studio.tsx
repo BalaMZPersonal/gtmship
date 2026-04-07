@@ -59,6 +59,7 @@ import {
   resolveWorkflowDeployTarget,
   workflowDeploymentTargetsMatch,
 } from "@/lib/deploy";
+import { firstDisplayValue } from "@/lib/display-value";
 import { DeploymentSecretSyncCard } from "@/components/deployment-secret-sync-card";
 import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { ToolRenderer } from "@/components/agent/tool-renderers";
@@ -639,6 +640,19 @@ function formatDateTime(value?: string | null): string {
   }
 
   return date.toLocaleString();
+}
+
+function summarizeDeploymentTrigger(
+  plan: Pick<WorkflowDeploymentPlan, "trigger">
+): string {
+  return (
+    firstDisplayValue(
+      plan.trigger.endpoint,
+      plan.trigger.cron,
+      plan.trigger.eventName,
+      plan.trigger.description
+    ) || "Trigger details unavailable"
+  );
 }
 
 function formatProviderComputeLabel(
@@ -5431,10 +5445,7 @@ export function WorkflowStudio() {
                       <div className="grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
                         <p>
                           <span className="text-zinc-500">Summary:</span>{" "}
-                          {displayDeploymentPlan.trigger.endpoint ||
-                            displayDeploymentPlan.trigger.cron ||
-                            displayDeploymentPlan.trigger.eventName ||
-                            displayDeploymentPlan.trigger.description}
+                          {summarizeDeploymentTrigger(displayDeploymentPlan)}
                         </p>
                         <p>
                           <span className="text-zinc-500">Auth mode:</span>{" "}

@@ -13,6 +13,7 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "render:homebrew-formula": "node scripts/render-homebrew-formula.mjs",
+    "render:homebrew-update-manifest": "node scripts/render-homebrew-update-manifest.mjs",
     "clean": "turbo clean",
     "typecheck": "turbo typecheck"
   },

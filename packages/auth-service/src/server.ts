@@ -15,6 +15,7 @@ import { oauthProviderRoutes } from "./routes/oauth-providers.js";
 import { memoriesRoutes } from "./routes/memories.js";
 import { setupRoutes } from "./routes/setup.js";
 import { aiRoutes } from "./routes/ai.js";
+import { updateRoutes } from "./routes/updates.js";
 import { startConnectionSecretSyncReconciler } from "./services/auth-strategy.js";
 import {
   getAllowedWebOrigins,
@@ -68,6 +69,7 @@ app.use("/oauth-providers", oauthProviderRoutes);
 app.use("/memories", memoriesRoutes);
 app.use("/setup", setupRoutes);
 app.use("/ai", aiRoutes);
+app.use("/updates", updateRoutes);
 app.use("/public", publicInquiryRoutes);
 app.use(
   (

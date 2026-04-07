@@ -22,6 +22,12 @@ gtmship help [command]
 ```bash
 gtmship init [name]
 gtmship dev
+gtmship open
+gtmship start
+gtmship update [--check] [--yes] [--json]
+gtmship restart
+gtmship status
+gtmship stop
 gtmship validate
 gtmship build [--workflow <id>] [--provider <provider>] [--push] [--project <name>] [--region <region>]
 gtmship deploy [--provider <provider>] [--region <region>] [--project <name>] [--workflow <id>]
@@ -31,6 +37,12 @@ gtmship triggers [--workflow <id>]
 
 - `gtmship init [name]`: Scaffold a new GTMShip project. Default name: `my-gtm-workflows`.
 - `gtmship dev`: Start the local GTMShip development environment. This is the main entry point for a local-only run while you author, connect, validate, and preview workflows before deployment.
+- `gtmship open`: Start the local GTMShip runtime and open the dashboard in a browser.
+- `gtmship start`: Start the local GTMShip runtime without opening a browser.
+- `gtmship update [--check] [--yes] [--json]`: Check for newer GTMShip releases and upgrade Homebrew installs. If the package is already upgraded but the local runtime is still on the older code, this command will offer to run `gtmship restart`.
+- `gtmship restart`: Restart the local GTMShip runtime without opening a browser.
+- `gtmship status`: Show the current local GTMShip runtime status.
+- `gtmship stop`: Stop the local GTMShip runtime.
 - `gtmship validate`: Validate workflows and connection configs.
 - `gtmship build`: Build workflow code for deployment.
   Notes:

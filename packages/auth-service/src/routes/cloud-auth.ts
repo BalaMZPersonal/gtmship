@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { prisma } from "../services/db.js";
 import { decrypt } from "../services/crypto.js";
+import {
+  parseAndValidateGcpServiceAccountKey,
+  parseGcpServiceAccountKey,
+} from "../services/gcp-service-account.js";
 import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 
 export const cloudAuthRoutes: Router = Router();
@@ -44,19 +48,8 @@ cloudAuthRoutes.post("/validate", async (req, res) => {
         return;
       }
 
-      const serviceAccountKey = JSON.parse(serviceAccountKeyRaw);
-
-      if (
-        !serviceAccountKey.client_email ||
-        !serviceAccountKey.private_key ||
-        !serviceAccountKey.project_id
-      ) {
-        res.json({
-          valid: false,
-          error: "Service account key missing required fields (client_email, private_key, project_id)",
-        });
-        return;
-      }
+      const serviceAccountKey =
+        parseAndValidateGcpServiceAccountKey(serviceAccountKeyRaw);
 
       // Make a real API call to verify the credentials work
       const authLib = await import("google-auth-library");
@@ -117,7 +110,7 @@ cloudAuthRoutes.get("/credentials/:provider", async (req, res) => {
 
       res.json({
         credentials: {
-          serviceAccountKey: JSON.parse(serviceAccountKeyRaw),
+          serviceAccountKey: parseGcpServiceAccountKey(serviceAccountKeyRaw),
           projectId: projectId || null,
           region: region || null,
         },

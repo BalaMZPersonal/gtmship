@@ -1,4 +1,5 @@
 import type { WorkflowSecretSyncSummary } from "@/lib/deploy";
+import { formatDisplayValue } from "@/lib/display-value";
 import { cn } from "@/lib/utils";
 
 interface DeploymentSecretSyncCardProps {
@@ -51,19 +52,19 @@ export function DeploymentSecretSyncCard({
       <div className="mt-3 grid gap-2 text-xs text-zinc-400 md:grid-cols-2">
         <p>
           <span className="text-zinc-500">Backend:</span>{" "}
-          {summary.backendKind || "Pending backend selection"}
+          {formatDisplayValue(summary.backendKind) || "Pending backend selection"}
         </p>
         <p>
           <span className="text-zinc-500">Target:</span>{" "}
-          {summary.backendTarget || "Pending backend target"}
+          {formatDisplayValue(summary.backendTarget) || "Pending backend target"}
         </p>
         <p>
           <span className="text-zinc-500">Secret prefix:</span>{" "}
-          {summary.secretPrefix || "gtmship-connections"}
+          {formatDisplayValue(summary.secretPrefix) || "gtmship-connections"}
         </p>
         <p>
           <span className="text-zinc-500">Runtime access:</span>{" "}
-          {summary.runtimeAccess || "direct"}
+          {formatDisplayValue(summary.runtimeAccess) || "direct"}
         </p>
       </div>
 

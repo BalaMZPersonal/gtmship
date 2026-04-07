@@ -10,6 +10,10 @@ import {
 import { prisma } from "./db.js";
 import { decrypt } from "./crypto.js";
 import {
+  parseGcpServiceAccountKey,
+  type GcpServiceAccountKey,
+} from "./gcp-service-account.js";
+import {
   normalizeSecretBackendKind,
   type SecretBackendKind,
 } from "./connection-secret-replicas.js";
@@ -34,12 +38,6 @@ const ENCRYPTED_SETTING_KEYS = new Set([
   "aws_secret_access_key",
   "gcp_service_account_key",
 ]);
-
-interface GcpServiceAccountKey {
-  client_email?: string;
-  private_key?: string;
-  project_id?: string;
-}
 
 interface GcpSettingsSnapshot {
   projectId: string | null;
@@ -527,8 +525,7 @@ async function loadGcpSettingsSnapshot(): Promise<GcpSettingsSnapshot> {
   let serviceAccountKey: GcpServiceAccountKey | null = null;
   if (serviceAccountRaw) {
     try {
-      const parsed = JSON.parse(serviceAccountRaw) as GcpServiceAccountKey;
-      serviceAccountKey = parsed;
+      serviceAccountKey = parseGcpServiceAccountKey(serviceAccountRaw);
     } catch {
       serviceAccountKey = null;
     }

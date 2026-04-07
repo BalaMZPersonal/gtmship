@@ -54,6 +54,9 @@ Useful runtime commands:
 
 ```bash
 gtmship start
+gtmship update --check
+gtmship update
+gtmship restart
 gtmship status
 gtmship stop
 ```
@@ -135,6 +138,7 @@ The `Release Homebrew` GitHub Actions workflow now handles the release publish p
 - smoke-test each release bundle on its matching runner
 - publish them to GitHub Releases
 - render `gtmship.rb`
+- render `gtmship-update.json`
 - update `github.com/BalaMZPersonal/homebrew-tap`
 
 You can still run the packaging steps manually when you want to test the release locally.
@@ -174,13 +178,25 @@ pnpm render:homebrew-formula \
 
 This writes `dist/homebrew/gtmship.rb`.
 
-4. Commit the rendered formula into the tap repo at `github.com/BalaMZPersonal/homebrew-tap`, under `Formula/gtmship.rb`, or let the release workflow update it automatically.
+4. Render the update manifest:
+
+```bash
+pnpm render:homebrew-update-manifest \
+  --version 0.1.0 \
+  --tag v0.1.0 \
+  --owner BalaMZPersonal
+```
+
+This writes `dist/homebrew/gtmship-update.json`.
+
+5. Commit the rendered formula and update manifest into the tap repo at `github.com/BalaMZPersonal/homebrew-tap`, or let the release workflow update them automatically.
 
 Tap layout:
 
 - Main app repo: `github.com/BalaMZPersonal/gtmship`
 - Homebrew tap repo: `github.com/BalaMZPersonal/homebrew-tap`
 - Formula path: `Formula/gtmship.rb`
+- Update manifest path: `gtmship-update.json`
 
 Once that tap update is pushed, users install GTMShip with:
 
@@ -199,6 +215,32 @@ gtmship status
 On macOS, the first successful `gtmship open` installs a LaunchAgent so GTMShip can be started again at login. On Linux, GTMShip installs a `systemd --user` unit when `systemctl --user` is available. If no user service manager is available, the runtime still works normally; only login-time bootstrap is skipped.
 
 More release detail lives in `docs/homebrew-release.md`.
+
+### Keeping GTMShip Updated
+
+Homebrew remains the supported packaged install path for GTMShip. The release workflow publishes a versioned runtime bundle, updates the tap formula, and writes a small `gtmship-update.json` manifest into the tap repo so the CLI and dashboard can detect new releases.
+
+If GTMShip detects a newer release, it will show:
+
+- a dashboard banner with the recommended command
+- a CLI reminder after `gtmship open`, `gtmship start`, `gtmship restart`, or `gtmship status`
+
+You can also check or upgrade directly:
+
+```bash
+gtmship update --check
+gtmship update
+```
+
+If the package is already upgraded on disk but the local runtime is still serving the previous version, GTMShip will tell you to run:
+
+```bash
+gtmship restart
+```
+
+`gtmship update` uses Homebrew for packaged installs. GTMShip does not silently self-upgrade in the background.
+
+See `docs/update-management.md` for the full release, notification, upgrade, and restart policy.
 
 ## Architecture
 
@@ -632,6 +674,7 @@ Every major dashboard feature is available through the CLI.
 ```bash
 gtmship open
 gtmship start
+gtmship restart
 gtmship status
 gtmship stop
 gtmship init my-workflows

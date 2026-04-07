@@ -114,4 +114,38 @@ describe("buildWorkflowDeploymentPlanForArtifact", () => {
         "projects/factors-development/secrets/gtmship-connections-google-sheets-conn-123-runtime",
     });
   });
+
+  it("treats unsupported schedule cron objects as missing cron config", () => {
+    const plan = buildWorkflowDeploymentPlanForArtifact({
+      artifact: createArtifact({
+        code: `
+          import { defineWorkflow } from "@gtmship/sdk";
+
+          export default defineWorkflow({
+            id: "workflow-alpha",
+            name: "Workflow Alpha",
+            trigger: { type: "schedule" } as any,
+            run: async () => ({ ok: true }),
+          });
+        `,
+        triggerConfig: {
+          schedule: {
+            cron: { every: "5 minutes" } as never,
+          },
+        },
+      }),
+      connections: [],
+      provider: "gcp",
+      region: "us-central1",
+      gcpProject: "factors-development",
+      authStrategy,
+    });
+
+    expect(plan.trigger.type).toBe("schedule");
+    expect(plan.trigger.cron).toBeUndefined();
+    expect(plan.trigger.description).toContain("cron expression");
+    expect(plan.warnings).toContain(
+      "Schedule triggers need a cron expression. The planner could not infer one."
+    );
+  });
 });

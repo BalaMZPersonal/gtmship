@@ -254,6 +254,19 @@ function unique(values: Array<string | undefined | null>): string[] {
   return Array.from(new Set(values.filter(Boolean) as string[]));
 }
 
+function normalizeTextValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeWebhookAccess(value: unknown): "public" | "private" {
+  return value === "private" ? "private" : "public";
+}
+
 export function extractTriggerFromSource(source: string): TriggerConfig {
   const webhookMatch = source.match(/triggers\.webhook\(\s*["'`]([^"'`]+)["'`]\s*\)/);
   if (webhookMatch) {
@@ -627,8 +640,11 @@ function buildTriggerSummary(
 
   switch (trigger.type) {
     case "webhook": {
-      const path = config?.webhook?.path || trigger.path || `/${input.workflowId}`;
-      const access = config?.webhook?.access || "public";
+      const path =
+        normalizeTextValue(config?.webhook?.path) ||
+        trigger.path ||
+        `/${input.workflowId}`;
+      const access = normalizeWebhookAccess(config?.webhook?.access);
       const triggerInfo = input.baseUrl
         ? buildTriggerInfo({ type: "webhook", path }, input.workflowId, input.baseUrl)
         : undefined;
@@ -644,8 +660,10 @@ function buildTriggerSummary(
       };
     }
     case "schedule": {
-      const cron = config?.schedule?.cron || trigger.cron;
-      const timezone = config?.schedule?.timezone || "UTC";
+      const cron =
+        normalizeTextValue(config?.schedule?.cron) || trigger.cron;
+      const timezone =
+        normalizeTextValue(config?.schedule?.timezone) || "UTC";
       const triggerInfo =
         cron && input.baseUrl
           ? buildTriggerInfo({ type: "schedule", cron }, input.workflowId, input.baseUrl)
@@ -662,12 +680,12 @@ function buildTriggerSummary(
       };
     }
     case "event": {
-      const eventName = config?.event?.event || trigger.event;
+      const eventName = normalizeTextValue(config?.event?.event) || trigger.event;
       const source =
-        config?.event?.source ||
-        config?.event?.topic ||
-        config?.event?.subscription ||
-        config?.event?.bus;
+        normalizeTextValue(config?.event?.source) ||
+        normalizeTextValue(config?.event?.topic) ||
+        normalizeTextValue(config?.event?.subscription) ||
+        normalizeTextValue(config?.event?.bus);
 
       return {
         type: "event",
@@ -1021,7 +1039,11 @@ export function planWorkflowDeployment(
     );
   }
 
-  if (input.trigger.type === "schedule" && !trigger.cron) {
+  if (
+    input.trigger.type === "schedule" &&
+    !normalizeTextValue(input.triggerConfig?.schedule?.cron) &&
+    !trigger.cron
+  ) {
     warnings.push(
       "Schedule triggers need a cron expression. The planner could not infer one."
     );

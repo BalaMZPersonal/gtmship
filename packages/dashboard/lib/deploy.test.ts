@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildLocalDeploymentDashboardHref,
   buildWorkflowSecretSyncSummary,
+  canManuallyTriggerLocalDeployment,
   buildDeploymentLogsHref,
   dedupeWorkflowDeploymentsById,
   deriveWorkflowDeploymentRunTarget,
@@ -213,6 +214,44 @@ describe("deploy helpers", () => {
     );
 
     expect(scoped.map((deployment) => deployment.id)).toEqual(["dep-local-1"]);
+  });
+
+  it("allows manual dashboard runs for local manual and scheduled deployments", () => {
+    expect(
+      canManuallyTriggerLocalDeployment(
+        createDeployment({
+          provider: "local",
+          triggerType: "manual",
+        })
+      )
+    ).toBe(true);
+
+    expect(
+      canManuallyTriggerLocalDeployment(
+        createDeployment({
+          provider: "local",
+          triggerType: "schedule",
+        })
+      )
+    ).toBe(true);
+
+    expect(
+      canManuallyTriggerLocalDeployment(
+        createDeployment({
+          provider: "local",
+          triggerType: "webhook",
+        })
+      )
+    ).toBe(false);
+
+    expect(
+      canManuallyTriggerLocalDeployment(
+        createDeployment({
+          provider: "gcp",
+          triggerType: "manual",
+        })
+      )
+    ).toBe(false);
   });
 
   it("builds local dashboard links with workflow, slug, deployment, and execution context", () => {

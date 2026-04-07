@@ -233,6 +233,17 @@ export function isDashboardLocalRunSuccess(
   return (value as DashboardLocalRunSuccess).success === true;
 }
 
+export function canManuallyTriggerLocalDeployment(input: {
+  provider?: string | null;
+  triggerType?: string | null;
+}): boolean {
+  if (input.provider !== "local") {
+    return false;
+  }
+
+  return input.triggerType === "manual" || input.triggerType === "schedule";
+}
+
 function normalizeTextValue(value?: string | null): string {
   return typeof value === "string" ? value.trim() : "";
 }

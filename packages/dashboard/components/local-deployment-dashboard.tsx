@@ -17,6 +17,7 @@ import {
 import { api } from "@/lib/api";
 import {
   buildDeploymentLogsHref,
+  canManuallyTriggerLocalDeployment,
   deploymentStatusTone,
   formatDeploymentDateTime,
   formatDeploymentTriggerSummary,
@@ -674,6 +675,8 @@ export function LocalDeploymentDashboard() {
                   const workflowSlug =
                     workflowSlugById.get(deployment.workflowId) || undefined;
                   const isSelected = selectedDeploymentId === deployment.id;
+                  const canRunManually =
+                    canManuallyTriggerLocalDeployment(deployment);
                   const logsHref = buildDeploymentLogsHref({
                     provider: "local",
                     deploymentId: deployment.id,
@@ -767,12 +770,12 @@ export function LocalDeploymentDashboard() {
                         </p>
                       </div>
 
-                      {deployment.triggerType === "manual" ? (
+                      {canRunManually ? (
                         <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
                           <div className="flex flex-col gap-3">
                             <div className="flex items-center justify-between gap-3">
                               <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                                Manual Run
+                                Run now
                               </p>
                               <Link
                                 href={logsHref}
@@ -817,6 +820,11 @@ export function LocalDeploymentDashboard() {
                               <span className="text-[11px] text-zinc-500">
                                 Leave the payload blank to run with an empty input.
                               </span>
+                              {deployment.triggerType === "schedule" ? (
+                                <span className="text-[11px] text-zinc-500">
+                                  This ad hoc run does not change the saved schedule.
+                                </span>
+                              ) : null}
                             </div>
 
                             {localRunState.status === "success" ? (
@@ -850,8 +858,8 @@ export function LocalDeploymentDashboard() {
                         </div>
                       ) : (
                         <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-400">
-                          Scheduled runs keep their trigger config from the local
-                          deployment. Inspect recent executions or open full logs
+                          This local deployment does not expose a dashboard run
+                          action yet. Inspect recent executions or open full logs
                           for the selected run.
                         </div>
                       )}

@@ -5,7 +5,8 @@
     return {
       homepage: basePath + 'index.html',
       docs: basePath + 'docs/index.html',
-      pricing: basePath + 'pricing/index.html'
+      pricing: basePath + 'pricing/index.html',
+      github: 'https://github.com/BalaMZPersonal/gtmship'
     };
   }
 
@@ -23,9 +24,9 @@
       +     '<li><a href="' + links.docs + '">Docs</a></li>'
       +   '</ul>'
       +   '<div class="nav-divider"></div>'
-      +   '<span class="nav-gh is-disabled">'
-      +     '<i class="ph ph-github-logo"></i> GitHub Coming Soon'
-      +   '</span>'
+      +   '<a href="' + links.github + '" class="nav-gh" target="_blank" rel="noreferrer">'
+      +     '<i class="ph ph-github-logo"></i> GitHub'
+      +   '</a>'
       +   '<a href="#dashboard" class="nav-cta">'
       +     '<i class="ph ph-anchor" style="font-size:13px"></i> Board the Ship'
       +   '</a>'
@@ -89,7 +90,7 @@
       +     '<div class="footer-col">'
       +       '<h4>Resources</h4>'
       +       '<ul>'
-      +         '<li><span class="coming-soon">GitHub coming soon</span></li>'
+      +         '<li><a href="' + links.github + '" target="_blank" rel="noreferrer">GitHub repository</a></li>'
       +         '<li><a href="' + links.docs + '">Documentation</a></li>'
       +         '<li><a href="' + links.docs + '#quickstart">Quick start</a></li>'
       +         '<li><a href="' + links.docs + '#how-it-works">How GTMship works</a></li>'

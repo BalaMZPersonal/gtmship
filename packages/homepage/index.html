@@ -3545,8 +3545,8 @@
           <img src="gtmship-logo.png" alt="GTMship">
         </div>
         <p class="label hero-label">Open Source Workflow Platform</p>
-        <h1>Ship <span class="hl-cyan">GTM workflows</span> and <span class="hl-purple">personal automations</span><br>with AI at the helm.</h1>
-        <p class="hero-sub">Describe what you want in plain English. GTMship builds, validates, and runs workflows locally on your machine, then deploys them to your own cloud when the workflow is ready for production.</p>
+        <h1>Connect <span class="hl-cyan">any integration</span>, build <span class="hl-purple">any workflow</span>,<br>and deploy with a click.</h1>
+        <p class="hero-sub">Describe the job in plain English and GTMship turns it into a working automation. Keep personal or occasional workflows on your own machine, or deploy into your cloud when the automation needs an always-on runtime.</p>
         <div class="hero-actions">
           <a href="#story" class="btn-primary">
             <i class="ph ph-anchor"></i> See the Voyage
@@ -3589,8 +3589,8 @@
             <!-- Top bar -->
             <div class="dash-topbar">
               <div class="dash-topbar-copy">
-                <div class="dash-wf-title">Lead routing with guarded Slack approval</div>
-                <div class="dash-wf-summary">Generated from chat, validated locally, and ready for preview before deployment.</div>
+                <div class="dash-wf-title">Any integration to local or cloud automation</div>
+                <div class="dash-wf-summary">Connect an API, generate the workflow, validate it, then choose local run or one-click deploy.</div>
               </div>
               <div class="dash-topbar-actions">
                 <div class="dash-action-btn"><i class="ph ph-check-circle"></i> Validate</div>
@@ -3610,11 +3610,11 @@
                       <span class="dash-ai-dot"></span>
                       <span class="dash-ai-name">Workflow Builder Agent</span>
                     </div>
-                    <div>Here's what the workflow does:</div>
+                    <div>Here is the path GTMship assembled:</div>
                     <ol>
-                      <li><strong>Fetches new contacts</strong> from HubSpot &mdash; <span class="step-ok">&#x2705; ran successfully</span></li>
-                      <li><strong>Enriches with Clearbit</strong> &mdash; company size, industry, revenue &mdash; <span class="step-ok">&#x2705; ran successfully</span></li>
-                      <li><strong>Sends to Slack</strong> #hot-leads &mdash; <span class="step-pause">&#x23F8; Paused &mdash; awaiting approval</span></li>
+                      <li><strong>Connects the right APIs</strong> &mdash; OAuth, API key, or docs-driven setup &mdash; <span class="step-ok">&#x2705; ready</span></li>
+                      <li><strong>Generates the workflow</strong> in TypeScript with validation and preview &mdash; <span class="step-ok">&#x2705; ready</span></li>
+                      <li><strong>Chooses the runtime</strong> &mdash; local for personal use or deploy for always-on work &mdash; <span class="step-pause">&#x23F8; awaiting your choice</span></li>
                     </ol>
                   </div>
                   <div class="dash-chat-msg dash-chat-msg-ai">
@@ -3622,7 +3622,7 @@
                       <span class="dash-ai-dot"></span>
                       <span class="dash-ai-name">Workflow Builder Agent</span>
                     </div>
-                    Head to the <strong>Preview</strong> tab to approve the write checkpoint before the Slack message sends.
+                    Keep it on this machine for a personal automation, or click deploy when the workflow needs to stay on in AWS or GCP.
                   </div>
                 </div>
                 <div class="dash-chat-input">
@@ -3645,22 +3645,22 @@
                   <div class="flow-diagram-label">Live Diagram</div>
                   <div class="flow-diagram-badge">Auto-rendered</div>
                   <div class="flow-diagram">
-                    <div class="flow-node-box trigger">Manual Trigger</div>
+                    <div class="flow-node-box trigger">Prompt / Trigger</div>
                     <div class="flow-connector"></div>
-                    <div class="flow-node-box">Fetch contacts from HubSpot</div>
+                    <div class="flow-node-box">Connect any API</div>
                     <div class="flow-connector"></div>
-                    <div class="flow-node-box">Enrich with Clearbit</div>
+                    <div class="flow-node-box">Generate workflow</div>
                     <div class="flow-connector"></div>
-                    <div class="flow-diamond"><span>Score > 80?</span></div>
+                    <div class="flow-diamond"><span>Always-on?</span></div>
                     <div class="flow-connector"></div>
                     <div class="flow-branch">
                       <div class="flow-branch-arm">
-                        <div class="flow-branch-label">Yes</div>
-                        <div class="flow-node-box" style="border-color:var(--emerald-500);background:rgba(16,185,129,0.06)">Post to Slack #hot-leads</div>
+                        <div class="flow-branch-label">No</div>
+                        <div class="flow-node-box" style="border-color:var(--emerald-500);background:rgba(16,185,129,0.06)">Run locally on your laptop</div>
                       </div>
                       <div class="flow-branch-arm">
-                        <div class="flow-branch-label">No</div>
-                        <div class="flow-node-box">Add to nurture sequence</div>
+                        <div class="flow-branch-label">Yes</div>
+                        <div class="flow-node-box">Deploy to AWS or GCP</div>
                       </div>
                     </div>
                   </div>
@@ -3745,16 +3745,16 @@
     <div class="wrap">
       <header class="reveal">
         <p class="label">The Voyage</p>
-        <h2 class="section-title">From the harbor to open water in six steps</h2>
-        <p class="section-sub">Follow a real lead enrichment workflow as one concrete voyage through the product. The same local-first path also works for personal automations and non-GTM jobs you want to keep on your own machine.</p>
+        <h2 class="section-title">From any integration to a local run or cloud deploy in six steps</h2>
+        <p class="section-sub">Connect the API, describe the workflow, let GTMship build and preview it, then keep it on your machine for personal or occasional use cases or deploy it when the automation needs to stay on.</p>
       </header>
 
       <!-- Scene 1: Connect -->
       <div class="scene" data-scene="connect">
         <div class="scene-text reveal">
           <div class="scene-num">01</div>
-          <h3 class="scene-title">Custom Connections Agent</h3>
-          <p class="scene-body">Browse 25+ pre-built connectors or let the Custom Connections Agent configure any tool with an API. Click Connect and your tools are ready. The dashboard watches token health and auto-refreshes credentials.</p>
+          <h3 class="scene-title">Connect any integration</h3>
+          <p class="scene-body">Browse built-in connectors or let the Custom Connections Agent configure any tool with an API. GTMship handles OAuth, API keys, and docs-driven setup so the workflow can use the systems you already rely on.</p>
           <p class="scene-note">Connect Google once and Gmail, Sheets, Docs, and Drive are all available through shared OAuth &mdash; useful for GTM systems, internal tools, and personal workflows alike.</p>
         </div>
         <div class="scene-visual reveal reveal-delay-2">
@@ -3821,8 +3821,8 @@
       <div class="scene" data-scene="chat">
         <div class="scene-text reveal">
           <div class="scene-num">02</div>
-          <h3 class="scene-title">Workflow Builder Agent</h3>
-          <p class="scene-body">Open Workflow Studio and tell the Workflow Builder Agent what you want to build. It checks your connected integrations, reads their API docs, and drafts the workflow with the right routing, scoring, and execution steps.</p>
+          <h3 class="scene-title">Describe any workflow</h3>
+          <p class="scene-body">Open Workflow Studio and tell the Workflow Builder Agent what you want to automate. It checks the integrations, reads their docs, and drafts the workflow with the right branching, inputs, outputs, and execution steps.</p>
         </div>
         <div class="scene-visual reveal reveal-delay-2">
           <div class="chat-demo">
@@ -3832,7 +3832,7 @@
             </div>
             <div class="chat-body" id="chat-body">
               <div class="chat-msg chat-msg-user" id="chat-user-msg">
-                <div class="chat-msg-text">When a new lead comes into HubSpot, enrich it with company data from Clearbit and route hot leads to Slack</div>
+                <div class="chat-msg-text">Watch a Stripe payment, update Notion, send a Telegram message, and keep it local unless I decide this needs to stay on</div>
               </div>
               <div class="chat-typing" id="chat-typing">
                 <div class="chat-typing-dot"></div>
@@ -3844,19 +3844,19 @@
                   <span class="chat-ai-icon"></span>
                   <span class="chat-ai-name">Workflow Builder Agent</span>
                 </div>
-                <div class="chat-msg-text" id="chat-ai-text-1">I'll create a lead enrichment workflow with scoring and Slack routing. Let me check your active connections and read the HubSpot API schema...</div>
+                <div class="chat-msg-text" id="chat-ai-text-1">I'll create the workflow, check the integrations you have connected, and map the API steps for Stripe, Notion, and Telegram...</div>
               </div>
               <div class="chat-msg chat-msg-ai" id="chat-ai-msg-2">
                 <div class="chat-msg-head">
                   <span class="chat-ai-icon"></span>
                   <span class="chat-ai-name">Workflow Builder Agent</span>
                 </div>
-                <div class="chat-msg-text" id="chat-ai-text-2">I recommend using <strong>Staged AI Processing</strong> with <strong>Write Checkpoints</strong>. Here's the workflow &mdash; check the Code tab to review.</div>
+                <div class="chat-msg-text" id="chat-ai-text-2">I recommend using <strong>Staged AI Processing</strong> with <strong>Write Checkpoints</strong>. You can run this locally for personal use now, then deploy later if it needs a permanent runtime.</div>
               </div>
             </div>
             <div class="chat-tools" id="chat-tools">
-              <div class="chat-tool-badge" style="transition-delay: 0s"><i class="ph ph-check-circle"></i> Checking connections</div>
-              <div class="chat-tool-badge" style="transition-delay: 0.15s"><i class="ph ph-book-open"></i> Reading HubSpot API</div>
+              <div class="chat-tool-badge" style="transition-delay: 0s"><i class="ph ph-check-circle"></i> Checking integrations</div>
+              <div class="chat-tool-badge" style="transition-delay: 0.15s"><i class="ph ph-book-open"></i> Reading API docs</div>
               <div class="chat-tool-badge" style="transition-delay: 0.3s"><i class="ph ph-code"></i> Generating workflow</div>
             </div>
             <div class="chat-input-demo">Describe your next workflow...</div>
@@ -3868,8 +3868,8 @@
       <div class="scene" data-scene="build">
         <div class="scene-text reveal">
           <div class="scene-num">03</div>
-          <h3 class="scene-title">Load the cargo</h3>
-          <p class="scene-body">The AI assembles your workflow in TypeScript &mdash; every integration call authenticated, every route type-safe. A flow diagram renders the shipping manifest so you see exactly what's on board and where it's headed.</p>
+          <h3 class="scene-title">Build the workflow</h3>
+          <p class="scene-body">The AI assembles your workflow in TypeScript with authenticated integration calls, typed steps, and explicit branching. You can inspect the code and the flow before deciding whether this stays local or ships to production.</p>
         </div>
         <div class="scene-visual reveal reveal-delay-2">
           <div class="build-demo">
@@ -3920,30 +3920,30 @@
                   <!-- Nodes -->
                   <g class="flow-node" style="transition-delay: 0.2s">
                     <rect x="55" y="10" width="110" height="28" rx="6" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
-                    <text x="110" y="28" text-anchor="middle" fill="#e5e5e5" font-size="9" font-family="Space Grotesk">Webhook /enrich</text>
+                  <text x="110" y="28" text-anchor="middle" fill="#e5e5e5" font-size="9" font-family="Space Grotesk">Prompt / trigger</text>
                   </g>
                   <g class="flow-node" style="transition-delay: 0.5s">
                     <rect x="40" y="72" width="140" height="36" rx="8" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
-                    <text x="110" y="86" text-anchor="middle" fill="#93c5fd" font-size="8" font-family="Space Mono">ctx.integration("hubspot")</text>
-                    <text x="110" y="99" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">Read contacts</text>
+                    <text x="110" y="86" text-anchor="middle" fill="#93c5fd" font-size="8" font-family="Space Mono">ctx.integration("any-api")</text>
+                    <text x="110" y="99" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">Load auth + docs</text>
                   </g>
                   <g class="flow-node" style="transition-delay: 0.8s">
                     <rect x="40" y="132" width="140" height="36" rx="8" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
-                    <text x="110" y="146" text-anchor="middle" fill="#93c5fd" font-size="8" font-family="Space Mono">ctx.integration("clearbit")</text>
-                    <text x="110" y="159" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">Enrich company</text>
+                    <text x="110" y="146" text-anchor="middle" fill="#93c5fd" font-size="8" font-family="Space Mono">defineWorkflow(...)</text>
+                    <text x="110" y="159" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">Generate typed steps</text>
                   </g>
                   <g class="flow-node" style="transition-delay: 1.1s">
                     <rect x="65" y="192" width="90" height="36" rx="8" fill="#18181b" stroke="#fcd34d40" stroke-width="1"/>
-                    <text x="110" y="207" text-anchor="middle" fill="#fde68a" font-size="8" font-family="Space Grotesk">Score Lead</text>
-                    <text x="110" y="219" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">employees > 50?</text>
+                    <text x="110" y="207" text-anchor="middle" fill="#fde68a" font-size="8" font-family="Space Grotesk">Choose runtime</text>
+                    <text x="110" y="219" text-anchor="middle" fill="#71717a" font-size="7" font-family="Space Grotesk">always on?</text>
                   </g>
                   <g class="flow-node" style="transition-delay: 1.5s">
                     <rect x="15" y="262" width="110" height="28" rx="6" fill="#18181b" stroke="#10b98140" stroke-width="1"/>
-                    <text x="70" y="280" text-anchor="middle" fill="#6ee7b7" font-size="8" font-family="Space Grotesk">Post to #hot-leads</text>
+                    <text x="70" y="280" text-anchor="middle" fill="#6ee7b7" font-size="8" font-family="Space Grotesk">Run locally</text>
                   </g>
                   <g class="flow-node" style="transition-delay: 1.5s">
                     <rect x="95" y="262" width="110" height="28" rx="6" fill="#18181b" stroke="#3f3f46" stroke-width="1"/>
-                    <text x="150" y="280" text-anchor="middle" fill="#a1a1aa" font-size="8" font-family="Space Grotesk">Update CRM</text>
+                    <text x="150" y="280" text-anchor="middle" fill="#a1a1aa" font-size="8" font-family="Space Grotesk">Deploy to cloud</text>
                   </g>
                 </svg>
               </div>
@@ -4000,8 +4000,8 @@
       <div class="scene" data-scene="deploy">
         <div class="scene-text reveal">
           <div class="scene-num">05</div>
-          <h3 class="scene-title">Launch the ship</h3>
-          <p class="scene-body">Choose your waters &mdash; AWS or GCP. GTMship provisions the infrastructure, loads your secrets into the ship's vault, and launches. Your code sails on your own cloud account. You keep the keys.</p>
+          <h3 class="scene-title">Deploy with a click</h3>
+          <p class="scene-body">If the automation needs to stay on, choose AWS or GCP and launch it with a click. GTMship provisions the runtime, loads your secrets, and deploys into your own cloud account. If it does not need that, keep it local and skip this step entirely.</p>
         </div>
         <div class="scene-visual reveal reveal-delay-2">
           <div class="deploy-demo" id="deploy-demo">
@@ -4398,7 +4398,7 @@
           <header class="reveal">
             <p class="label" style="color: var(--accent-cyan);">Choose Your Vessel</p>
             <h2 class="section-title">GTMship sits in a different lane than Zapier, Make, and n8n.</h2>
-            <p class="section-sub">Those products are strong automation platforms. GTMship is built for teams and solo operators who want AI to author the workflow, preview risky changes before they write, and either run locally or deploy the result into their own cloud account.</p>
+            <p class="section-sub">Those products are strong automation platforms. GTMship is built for teams and solo operators who want AI to author the workflow, preview risky changes before they write, and choose the runtime that fits the job: keep personal or occasional automations on a local machine, or deploy always-on work into their own cloud account.</p>
           </header>
         </div>
 
@@ -4428,7 +4428,7 @@
             <tbody>
               <tr>
                 <th scope="row" class="comparison-rowhead">What it is</th>
-                <td class="comparison-cell is-gtm"><strong>Plain-English to local or deployed workflow.</strong> GTMship builds validated workflow code, configures connections, and lets you run locally first or ship the result to your cloud.</td>
+                <td class="comparison-cell is-gtm"><strong>Plain-English to local or deployed workflow.</strong> GTMship builds validated workflow code, configures connections, and lets you keep personal or occasional automations on your machine before, or instead of, shipping the result to your cloud.</td>
                 <td class="comparison-cell">Managed app-to-app automation for quick business workflows.</td>
                 <td class="comparison-cell">Canvas-based automation builder for multi-step scenarios and branching logic.</td>
                 <td class="comparison-cell">Workflow automation and AI agent builder for technical teams.</td>
@@ -4442,7 +4442,7 @@
               </tr>
               <tr>
                 <th scope="row" class="comparison-rowhead">Where it runs</th>
-                <td class="comparison-cell is-gtm"><strong>Your machine first, then your AWS Lambda or GCP Cloud Run account.</strong> Secrets, logs, and deployment stay with your chosen footprint.</td>
+                <td class="comparison-cell is-gtm"><strong>Your machine for local or occasional runs, then your AWS Lambda or GCP Cloud Run account for always-on work.</strong> Secrets, logs, and deployment stay with your chosen footprint.</td>
                 <td class="comparison-cell">Zapier cloud.</td>
                 <td class="comparison-cell">Make cloud.</td>
                 <td class="comparison-cell">n8n Cloud or your own self-hosted runtime.</td>
@@ -4483,7 +4483,7 @@
           <div class="comparison-point reveal">
             <i class="ph ph-cloud-arrow-up"></i>
             <h3>Own the runtime</h3>
-            <p>GTMship lets you keep workflows on your machine or deploy into your cloud account, so infrastructure, secrets, and logs stay where you want them governed.</p>
+            <p>GTMship lets you keep personal or occasional automations on your machine, then deploy into your cloud account only when the workflow needs an always-on runtime.</p>
           </div>
           <div class="comparison-point reveal reveal-delay-1">
             <i class="ph ph-plugs-connected"></i>
@@ -4524,96 +4524,6 @@
     </div>
   </section>
 
-  <!-- PRICING -->
-  <section class="pricing" id="pricing">
-    <div class="wrap">
-      <div class="pricing-shell">
-        <div class="pricing-header">
-          <header class="reveal">
-            <p class="label" style="color: var(--accent-cyan);">Optional Commercial Help</p>
-            <h2 class="section-title">Open source stays the default. If you want us to host it or run it with you, here are the starting points.</h2>
-            <p class="section-sub">These are inquiry-only offers for teams that want a lighter lift than self-hosting. The open-source path remains the norm, and every paid option starts with a quick scope check before we commit.</p>
-          </header>
-          <div class="pricing-note reveal reveal-delay-1">
-            <strong>Economical by design</strong>
-            <p>Anchored in April 2026 using Google AI scraper against official infrastructure and automation pricing pages from Google Cloud, n8n, Zapier, Make, and Workato. The hosted tier stays intentionally lean because scale-to-zero infrastructure is inexpensive at small volumes and the service tier is productized instead of agency-priced.</p>
-          </div>
-        </div>
-
-        <div class="pricing-grid">
-          <div class="pricing-cards">
-            <article class="pricing-card is-open-source reveal">
-              <div class="pricing-card-head">
-                <div class="pricing-card-kicker">Default Path</div>
-                <h3 class="pricing-card-title">Open Source / Self-Host</h3>
-                <div class="pricing-card-price">Free<small>Run GTMship in your own stack, your own cloud, your own control plane.</small></div>
-              </div>
-              <p class="pricing-card-copy">Best for teams that want the full OSS path and are comfortable owning deployment, credentials, and runtime operations themselves.</p>
-              <ul class="pricing-card-list">
-                <li><i class="ph ph-check-circle"></i> MIT-licensed core product experience</li>
-                <li><i class="ph ph-check-circle"></i> Deploy to your own AWS Lambda or GCP Cloud Run footprint</li>
-                <li><i class="ph ph-check-circle"></i> Best fit when your team wants maximum control</li>
-              </ul>
-              <a class="pricing-card-action" href="docs/index.html"><i class="ph ph-book-open"></i> Read the Docs</a>
-            </article>
-
-            <article class="pricing-card is-highlighted reveal reveal-delay-1">
-              <div class="pricing-card-head">
-                <div class="pricing-card-kicker">Hosted Option</div>
-                <h3 class="pricing-card-title">Managed Hosting</h3>
-                <div class="pricing-card-price">Starting at $9/mo<small>Growth from $29/mo for multiple workflows, higher run volume, or more hands-on support.</small></div>
-              </div>
-              <p class="pricing-card-copy">For teams that want GTMship hosted for them instead of owning the infra from day one.</p>
-              <ul class="pricing-card-list">
-                <li><i class="ph ph-cloud-arrow-up"></i> We run and maintain the workflow runtime for you</li>
-                <li><i class="ph ph-chart-line-up"></i> Built for light-to-moderate workflow volume with room to grow</li>
-                <li><i class="ph ph-lifebuoy"></i> Includes a contact-first onboarding path instead of self-serve signup</li>
-              </ul>
-              <a class="pricing-card-action" href="pricing/index.html?interest=hosted#pricing-inquiry"><i class="ph ph-paper-plane-tilt"></i> Ask about hosted GTMship</a>
-            </article>
-
-            <article class="pricing-card is-services reveal reveal-delay-2">
-              <div class="pricing-card-head">
-                <div class="pricing-card-kicker">Done-For-You</div>
-                <h3 class="pricing-card-title">GTM Services</h3>
-                <div class="pricing-card-price">Starting at $49/workflow<small>Maintenance is $19/mo per workflow when you want us to keep it running and tuned.</small></div>
-              </div>
-              <p class="pricing-card-copy">For customers who want us to design, build, launch, and operate the workflow instead of just giving them the tooling.</p>
-              <ul class="pricing-card-list">
-                <li><i class="ph ph-wrench"></i> Scoped build-and-handover for one core GTM workflow</li>
-                <li><i class="ph ph-arrows-clockwise"></i> Optional monthly maintenance for monitoring and minor iterations</li>
-                <li><i class="ph ph-rocket-launch"></i> Best fit for lean teams that need execution, not just software</li>
-              </ul>
-              <a class="pricing-card-action" href="pricing/index.html?interest=services#pricing-inquiry"><i class="ph ph-chat-circle-dots"></i> Talk to us about services</a>
-            </article>
-          </div>
-
-          <aside class="pricing-form-panel reveal reveal-delay-2">
-            <h3>Prefer the full pricing page?</h3>
-            <p>The dedicated pricing page now hosts the inquiry form and the hosted-versus-services breakdown for teams exploring a commercial option.</p>
-            <div style="display: grid; gap: 12px; margin-top: 22px;">
-              <a class="pricing-card-action" href="pricing/index.html"><i class="ph ph-currency-circle-dollar"></i> Open pricing page</a>
-              <a class="pricing-card-action" href="pricing/index.html?interest=hosted#pricing-inquiry"><i class="ph ph-cloud-arrow-up"></i> Start a hosting inquiry</a>
-              <a class="pricing-card-action" href="pricing/index.html?interest=services#pricing-inquiry"><i class="ph ph-wrench"></i> Start a services inquiry</a>
-            </div>
-            <p class="pricing-form-meta" style="margin-top: 18px;">The dedicated page is the primary place for commercial inquiries. The open-source self-hosted path remains the default.</p>
-          </aside>
-        </div>
-
-        <p class="pricing-disclaimer reveal reveal-delay-3">Hosted pricing is designed to stay economical while the open-source path remains the primary story. GTM services are productized packages, not unlimited agency retainers.</p>
-
-        <div class="pricing-sources reveal reveal-delay-4">
-          <p class="pricing-sources-label">Official sources used for pricing research</p>
-          <a class="source-chip" href="https://cloud.google.com/run/pricing"><i class="ph ph-arrow-square-out"></i> Cloud Run pricing</a>
-          <a class="source-chip" href="https://zapier.com/pricing"><i class="ph ph-arrow-square-out"></i> Zapier pricing</a>
-          <a class="source-chip" href="https://www.make.com/en/pricing"><i class="ph ph-arrow-square-out"></i> Make pricing</a>
-          <a class="source-chip" href="https://n8n.io/pricing/"><i class="ph ph-arrow-square-out"></i> n8n pricing</a>
-          <a class="source-chip" href="https://www.workato.com/pricing"><i class="ph ph-arrow-square-out"></i> Workato pricing</a>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- OPEN SOURCE CTA -->
   <section class="oss-cta">
     <div class="wrap">
@@ -4622,7 +4532,7 @@
         <p>GTMship is a community-built vessel. The public GitHub repo is live, and the product docs are ready when you want to explore the code or contribute.</p>
         <div class="cta-actions">
           <a href="https://github.com/BalaMZPersonal/gtmship" class="btn-outline">
-            <i class="ph ph-star"></i> github.com/BalaMZPersonal/gtmship
+            <i class="ph ph-github-logo"></i> GitHub
           </a>
           <a href="docs/index.html" class="btn-text">
             Read the Docs <i class="ph ph-arrow-right"></i>

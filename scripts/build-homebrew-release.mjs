@@ -275,6 +275,23 @@ ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 export GTMSHIP_INSTALL_ROOT="$ROOT_DIR"
 export GTMSHIP_POSTGRES_BIN="\${GTMSHIP_POSTGRES_BIN:-}"
 
+# Ensure Homebrew-installed binaries (docker, gcloud, etc.) and common
+# macOS tool locations are on PATH so child processes (e.g. docker build)
+# can find them even when launched from a minimal shell environment.
+for _p in "\${HOMEBREW_PREFIX:-/opt/homebrew}/bin" \
+          /opt/homebrew/bin \
+          /usr/local/bin \
+          /home/linuxbrew/.linuxbrew/bin \
+          /Applications/Docker.app/Contents/Resources/bin \
+          "\${HOME}/google-cloud-sdk/bin" \
+          /usr/local/google-cloud-sdk/bin; do
+  case ":\${PATH}:" in
+    *:"$_p":*) ;;
+    *) [ -d "$_p" ] && PATH="$_p:\${PATH}" ;;
+  esac
+done
+export PATH
+
 if [ -z "\${GTMSHIP_POSTGRES_BIN}" ]; then
   if [ -n "\${HOMEBREW_PREFIX:-}" ] && [ -x "\${HOMEBREW_PREFIX}/opt/postgresql@16/bin/pg_ctl" ]; then
     export GTMSHIP_POSTGRES_BIN="\${HOMEBREW_PREFIX}/opt/postgresql@16/bin"

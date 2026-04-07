@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   buildEnrichedEnv,
+  resolveGcpCredentialFile,
+  resolveRequiredGcpServices,
   resolveToolPathCandidates,
 } from "../dist/commands/build.js";
 
@@ -31,4 +33,46 @@ test("buildEnrichedEnv appends missing tool paths without duplicating PATH entri
   assert.equal(pathEntries.filter((entry) => entry === "/custom/homebrew/bin").length, 1);
   assert.ok(pathEntries.includes("/custom/homebrew/share/google-cloud-sdk/bin"));
   assert.ok(pathEntries.includes("/usr/local/google-cloud-sdk/bin"));
+});
+
+test("buildEnrichedEnv mirrors GOOGLE_APPLICATION_CREDENTIALS into gcloud override env", () => {
+  const env = buildEnrichedEnv({
+    GOOGLE_APPLICATION_CREDENTIALS: "/tmp/gtmship-service-account.json",
+    PATH: "/usr/bin",
+  });
+
+  assert.equal(
+    env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE,
+    "/tmp/gtmship-service-account.json",
+  );
+  assert.equal(env.CLOUDSDK_CORE_DISABLE_PROMPTS, "1");
+});
+
+test("resolveGcpCredentialFile prefers explicit gcloud override", () => {
+  const credentialFile = resolveGcpCredentialFile({
+    CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: "/tmp/override.json",
+    GOOGLE_APPLICATION_CREDENTIALS: "/tmp/adc.json",
+  });
+
+  assert.equal(credentialFile, "/tmp/override.json");
+});
+
+test("resolveRequiredGcpServices includes base and optional APIs", () => {
+  const services = resolveRequiredGcpServices([
+    { cloudScheduler: true, secretManager: true },
+    { database: true, storage: true },
+  ]);
+
+  assert.deepEqual(services, [
+    "artifactregistry.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "cloudscheduler.googleapis.com",
+    "compute.googleapis.com",
+    "iam.googleapis.com",
+    "run.googleapis.com",
+    "secretmanager.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "sqladmin.googleapis.com",
+    "storage.googleapis.com",
+  ]);
 });

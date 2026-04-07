@@ -42,6 +42,13 @@ interface BrewInstallOptions {
   cask?: boolean;
 }
 
+export interface GcpServicePreflightNeeds {
+  cloudScheduler?: boolean;
+  secretManager?: boolean;
+  database?: boolean;
+  storage?: boolean;
+}
+
 const CLOUD_RUN_IMAGE_PLATFORM = "linux/amd64";
 
 // ---------------------------------------------------------------------------
@@ -102,9 +109,18 @@ export function buildEnrichedEnv(
   const existingDirs = new Set(currentPath.split(":"));
   const additions = extra.filter((p) => !existingDirs.has(p));
   const pathParts = currentPath ? [currentPath, ...additions] : additions;
+  const gcloudCredentialFile =
+    baseEnv.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE ||
+    baseEnv.GOOGLE_APPLICATION_CREDENTIALS;
 
   return {
     ...baseEnv,
+    ...(gcloudCredentialFile && !baseEnv.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
+      ? { CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: gcloudCredentialFile }
+      : {}),
+    ...(baseEnv.CLOUDSDK_CORE_DISABLE_PROMPTS
+      ? {}
+      : { CLOUDSDK_CORE_DISABLE_PROMPTS: "1" }),
     PATH: pathParts.join(":"),
   };
 }
@@ -194,7 +210,28 @@ function brewInstall(packages: string[], options: BrewInstallOptions = {}): void
   });
 }
 
-function ensureGcloudAvailable(): void {
+export function resolveGcpCredentialFile(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const candidate =
+    env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE ||
+    env.GOOGLE_APPLICATION_CREDENTIALS;
+  return candidate?.trim() ? candidate : undefined;
+}
+
+function formatCommandError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  const firstLine = error.message
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine || error.message;
+}
+
+export function ensureGcloudAvailable(): void {
   if (isGcloudInstalled()) {
     return;
   }
@@ -225,6 +262,208 @@ function ensureGcloudAvailable(): void {
     "  GTMShip searches common Homebrew and Cloud SDK paths automatically, including\n" +
     "  /opt/homebrew/bin and /opt/homebrew/share/google-cloud-sdk/bin.",
   );
+}
+
+export function ensureGcloudAuthenticated(): void {
+  ensureGcloudAvailable();
+
+  const credentialFile = resolveGcpCredentialFile();
+  if (credentialFile) {
+    if (!existsSync(credentialFile)) {
+      throw new Error(
+        "GTMShip found a configured GCP credential file, but it does not exist.\n" +
+        `  Credential file: ${credentialFile}`,
+      );
+    }
+
+    try {
+      execWithPath("gcloud auth print-access-token --quiet", {
+        stdio: "pipe",
+        timeout: GCLOUD_TIMEOUT_MS,
+      });
+      return;
+    } catch (error) {
+      throw new Error(
+        "GTMShip found a configured GCP credential file, but `gcloud` could not use it.\n" +
+        `  Credential file: ${credentialFile}\n` +
+        `  ${formatCommandError(error)}`,
+      );
+    }
+  }
+
+  let activeAccount = "";
+  try {
+    activeAccount = String(
+      execWithPath('gcloud auth list --filter=status:ACTIVE --format="value(account)"', {
+        stdio: "pipe",
+        encoding: "utf-8",
+        timeout: GCLOUD_TIMEOUT_MS,
+      }),
+    ).trim();
+  } catch {
+    activeAccount = "";
+  }
+
+  if (!activeAccount) {
+    throw new Error(
+      "Google Cloud CLI (`gcloud`) is installed but no active account is selected.\n" +
+      "  Run: gcloud auth login\n" +
+      "  Or save a GCP service account JSON key in GTMShip Settings so deploys can use it automatically.",
+    );
+  }
+
+  try {
+    execWithPath("gcloud auth print-access-token --quiet", {
+      stdio: "pipe",
+      timeout: GCLOUD_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw new Error(
+      "Google Cloud CLI has an active account, but GTMShip could not obtain an access token.\n" +
+      "  Run: gcloud auth login\n" +
+      `  ${formatCommandError(error)}`,
+    );
+  }
+}
+
+export function ensureGcpApplicationDefaultCredentials(): void {
+  const credentialFile = resolveGcpCredentialFile();
+  if (credentialFile) {
+    if (!existsSync(credentialFile)) {
+      throw new Error(
+        "GTMShip found a configured GCP credential file for deploys, but it does not exist.\n" +
+        `  Credential file: ${credentialFile}`,
+      );
+    }
+    return;
+  }
+
+  ensureGcloudAvailable();
+
+  try {
+    execWithPath("gcloud auth application-default print-access-token --quiet", {
+      stdio: "pipe",
+      timeout: GCLOUD_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw new Error(
+      "Application Default Credentials are required for the GCP infrastructure deploy step.\n" +
+      "  Run: gcloud auth application-default login\n" +
+      "  Or save a GCP service account JSON key in GTMShip Settings so deploys can provide credentials automatically.\n" +
+      `  ${formatCommandError(error)}`,
+    );
+  }
+}
+
+export function resolveRequiredGcpServices(
+  requirements: GcpServicePreflightNeeds[],
+): string[] {
+  const services = new Set<string>([
+    "artifactregistry.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "iam.googleapis.com",
+    "run.googleapis.com",
+  ]);
+
+  for (const requirement of requirements) {
+    if (requirement.cloudScheduler) {
+      services.add("cloudscheduler.googleapis.com");
+    }
+    if (requirement.secretManager) {
+      services.add("secretmanager.googleapis.com");
+    }
+    if (requirement.database) {
+      services.add("compute.googleapis.com");
+      services.add("servicenetworking.googleapis.com");
+      services.add("sqladmin.googleapis.com");
+    }
+    if (requirement.storage) {
+      services.add("storage.googleapis.com");
+    }
+  }
+
+  return Array.from(services).sort();
+}
+
+export function ensureGcpServicesEnabled(
+  gcpProject: string,
+  services: string[],
+): void {
+  ensureGcloudAuthenticated();
+
+  const requiredServices = Array.from(new Set(services.filter(Boolean))).sort();
+  if (requiredServices.length === 0) {
+    return;
+  }
+
+  let enabledServicesOutput = "";
+  try {
+    enabledServicesOutput = String(
+      execWithPath(
+        `gcloud services list --enabled --project=${gcpProject} --format="value(config.name)"`,
+        {
+          stdio: "pipe",
+          encoding: "utf-8",
+          timeout: GCLOUD_TIMEOUT_MS,
+        },
+      ),
+    );
+  } catch (error) {
+    throw new Error(
+      `Failed to inspect enabled Google Cloud APIs for project ${gcpProject}.\n` +
+      `  ${formatCommandError(error)}`,
+    );
+  }
+
+  const enabledServices = new Set(
+    enabledServicesOutput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  const missingServices = requiredServices.filter((service) => !enabledServices.has(service));
+
+  if (missingServices.length === 0) {
+    return;
+  }
+
+  console.log(
+    chalk.gray(`  Enabling required GCP APIs: ${missingServices.join(", ")}`),
+  );
+
+  try {
+    execWithPath(
+      `gcloud services enable ${missingServices.join(" ")} --project=${gcpProject} --quiet`,
+      {
+        stdio: "inherit",
+        timeout: 180_000,
+      },
+    );
+  } catch (error) {
+    throw new Error(
+      `Failed to enable required Google Cloud APIs for project ${gcpProject}.\n` +
+      `  Missing APIs: ${missingServices.join(", ")}\n` +
+      `  Run: gcloud services enable ${missingServices.join(" ")} --project=${gcpProject}\n` +
+      `  ${formatCommandError(error)}`,
+    );
+  }
+}
+
+function ensureArtifactRegistryDockerAuth(registry: string): void {
+  ensureGcloudAuthenticated();
+
+  try {
+    execWithPath(`gcloud auth configure-docker ${registry} --quiet`, {
+      stdio: "pipe",
+      timeout: 120_000,
+    });
+  } catch (error) {
+    throw new Error(
+      `Failed to configure Docker authentication for Artifact Registry (${registry}).\n` +
+      `  Run: gcloud auth configure-docker ${registry}\n` +
+      `  ${formatCommandError(error)}`,
+    );
+  }
 }
 
 /**
@@ -569,7 +808,7 @@ function ensureArtifactRegistryRepo(
   gcpProject: string,
   region: string,
 ): void {
-  ensureGcloudAvailable();
+  ensureGcpServicesEnabled(gcpProject, ["artifactregistry.googleapis.com"]);
 
   const repoName = "gtmship-workflows";
   // Check if repo already exists (fast path)
@@ -601,6 +840,7 @@ async function pushToArtifactRegistry(
 
   // Ensure the Artifact Registry repo exists before pushing
   ensureArtifactRegistryRepo(gcpProject, region);
+  ensureArtifactRegistryDockerAuth(registry);
 
   const remoteTag = `${registry}/${gcpProject}/${repoName}/${workflowId}:${versionTag}`;
 

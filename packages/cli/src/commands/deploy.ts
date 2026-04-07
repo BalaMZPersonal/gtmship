@@ -8,7 +8,14 @@ import {
   readProjectConfig,
   type WorkflowPlanRecord,
 } from "../lib/workflow-plans.js";
-import { buildWorkflows, type BuildArtifact } from "./build.js";
+import {
+  buildWorkflows,
+  ensureGcpApplicationDefaultCredentials,
+  ensureGcpServicesEnabled,
+  resolveRequiredGcpServices,
+  type BuildArtifact,
+  type GcpServicePreflightNeeds,
+} from "./build.js";
 import { deployLocalWorkflow } from "../lib/local-deployments.js";
 
 /** Default timeout for HTTP requests to auth service / control plane. */
@@ -92,7 +99,16 @@ async function resolveCredentials(
       if (provider === "gcp" && credentials.serviceAccountKey) {
         const tmpPath = join(tmpdir(), `gtmship-gcp-${Date.now()}.json`);
         writeFileSync(tmpPath, JSON.stringify(credentials.serviceAccountKey));
+        if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+          process.env._GTMSHIP_PREV_GOOGLE_APPLICATION_CREDENTIALS =
+            process.env.GOOGLE_APPLICATION_CREDENTIALS;
+        }
+        if (process.env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) {
+          process.env._GTMSHIP_PREV_CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE =
+            process.env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE;
+        }
         process.env.GOOGLE_APPLICATION_CREDENTIALS = tmpPath;
+        process.env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE = tmpPath;
         process.env._GTMSHIP_GCP_TEMP_KEY = tmpPath;
         return;
       }
@@ -112,7 +128,7 @@ async function resolveCredentials(
   if (provider === "gcp" && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     console.log(
       chalk.yellow(
-        "  No GCP credentials in auth service. Using environment/gcloud default credentials.",
+        "  No GCP credentials in auth service. Using local environment, gcloud, and ADC credentials.",
       ),
     );
   }
@@ -128,6 +144,33 @@ function cleanupCredentials(): void {
     }
     delete process.env._GTMSHIP_GCP_TEMP_KEY;
   }
+
+  if (process.env._GTMSHIP_PREV_GOOGLE_APPLICATION_CREDENTIALS) {
+    process.env.GOOGLE_APPLICATION_CREDENTIALS =
+      process.env._GTMSHIP_PREV_GOOGLE_APPLICATION_CREDENTIALS;
+    delete process.env._GTMSHIP_PREV_GOOGLE_APPLICATION_CREDENTIALS;
+  } else {
+    delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  }
+
+  if (process.env._GTMSHIP_PREV_CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) {
+    process.env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE =
+      process.env._GTMSHIP_PREV_CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE;
+    delete process.env._GTMSHIP_PREV_CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE;
+  } else {
+    delete process.env.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE;
+  }
+}
+
+export function resolveWorkflowPlanGcpServiceNeeds(
+  workflowPlans: WorkflowPlanRecord[],
+): GcpServicePreflightNeeds[] {
+  return workflowPlans.map(({ plan }) => ({
+    cloudScheduler: plan.trigger.type === "schedule",
+    secretManager: plan.authMode === "secret_manager",
+    database: plan.resources.some((resource) => resource.kind === "Cloud SQL"),
+    storage: plan.resources.some((resource) => resource.kind === "Cloud Storage"),
+  }));
 }
 
 function sanitizeSegment(value: string): string {
@@ -767,6 +810,39 @@ export async function deployCommand(options: DeployOptions) {
   // Build workflow code
   // -------------------------------------------------------------------------
 
+  if (provider !== "local") {
+    const credSpinner = ora("Resolving cloud credentials...").start();
+    await resolveCredentials(provider, authUrl);
+    credSpinner.succeed("Cloud credentials resolved");
+  }
+
+  if (provider === "gcp" && gcpProject) {
+    const gcpPreflightSpinner = ora(
+      "Preflighting GCP auth, APIs, and deploy prerequisites...",
+    ).start();
+
+    try {
+      const requiredServices = resolveRequiredGcpServices(
+        resolveWorkflowPlanGcpServiceNeeds(workflowPlans),
+      );
+      ensureGcpServicesEnabled(gcpProject, requiredServices);
+      ensureGcpApplicationDefaultCredentials();
+      gcpPreflightSpinner.succeed(
+        `GCP preflight passed (${requiredServices.length} API${requiredServices.length === 1 ? "" : "s"})`,
+      );
+    } catch (err) {
+      gcpPreflightSpinner.fail("GCP preflight failed");
+      console.log(
+        chalk.red(
+          `  ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+      process.exit(1);
+    }
+  }
+
+  console.log("");
+
   let buildArtifacts: BuildArtifact[];
   const buildSpinner = ora("Building workflow code...").start();
   try {
@@ -796,12 +872,6 @@ export async function deployCommand(options: DeployOptions) {
     !process.env.PULUMI_CONFIG_PASSPHRASE_FILE
   ) {
     process.env.PULUMI_CONFIG_PASSPHRASE = "";
-  }
-
-  if (provider !== "local") {
-    const credSpinner = ora("Resolving cloud credentials...").start();
-    await resolveCredentials(provider, authUrl);
-    credSpinner.succeed("Cloud credentials resolved");
   }
 
   // -------------------------------------------------------------------------

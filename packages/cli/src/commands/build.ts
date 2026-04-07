@@ -135,32 +135,94 @@ function isColimaRunning(): boolean {
   }
 }
 
+function isRunningUnderHomebrew(): boolean {
+  const installRoot = process.env.GTMSHIP_INSTALL_ROOT || "";
+  return (
+    installRoot.includes("/Cellar/") ||
+    installRoot.includes("/homebrew/") ||
+    installRoot.includes("/linuxbrew/")
+  );
+}
+
+function brewInstall(packages: string[]): void {
+  const brewBin = process.env.HOMEBREW_PREFIX
+    ? join(process.env.HOMEBREW_PREFIX, "bin", "brew")
+    : process.platform === "darwin"
+      ? "/opt/homebrew/bin/brew"
+      : "/home/linuxbrew/.linuxbrew/bin/brew";
+
+  console.log(chalk.gray(`  Installing ${packages.join(", ")} via Homebrew...`));
+  execWithPath(`${brewBin} install ${packages.join(" ")}`, {
+    stdio: "inherit",
+    timeout: 300_000, // 5 minutes for install
+  });
+}
+
 /**
  * Ensure Docker is available (CLI installed + daemon running).
- * On macOS, auto-starts colima if the daemon isn't running.
+ * On macOS, auto-installs docker/colima via Homebrew if needed,
+ * then auto-starts colima if the daemon isn't running.
  * Throws with an actionable message if Docker cannot be made available.
  */
 export function ensureDockerAvailable(): void {
+  const isBrew = isRunningUnderHomebrew();
+
+  // 1. Ensure Docker CLI is installed
   if (!isDockerCliInstalled()) {
-    throw new Error(
-      "Docker CLI is not installed. Install it with: brew install docker colima"
-    );
+    if (isBrew) {
+      const toInstall = ["docker"];
+      if (process.platform === "darwin" && !isColimaInstalled()) {
+        toInstall.push("colima");
+      }
+      try {
+        brewInstall(toInstall);
+      } catch (err) {
+        throw new Error(
+          `Failed to auto-install Docker via Homebrew. Install manually: brew install docker colima\n` +
+          `  ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+
+      if (!isDockerCliInstalled()) {
+        throw new Error(
+          "Docker CLI is still not available after brew install. Try: brew install docker"
+        );
+      }
+    } else {
+      throw new Error(
+        "Docker CLI is not installed. Install it with: brew install docker colima"
+      );
+    }
   }
 
+  // 2. Check if daemon is already running
   if (isDockerDaemonRunning()) {
     return;
   }
 
-  // Docker CLI exists but daemon is not running — try colima on macOS
+  // 3. Docker CLI exists but daemon is not running
   if (process.platform === "darwin") {
+    // Ensure colima is installed
     if (!isColimaInstalled()) {
-      throw new Error(
-        "Docker CLI is installed but the Docker daemon is not running.\n" +
-        "  Install colima to run Docker on macOS: brew install colima\n" +
-        "  Then start it with: colima start"
-      );
+      if (isBrew) {
+        try {
+          brewInstall(["colima"]);
+        } catch (err) {
+          throw new Error(
+            `Failed to auto-install colima via Homebrew. Install manually: brew install colima\n` +
+            `  ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      } else {
+        throw new Error(
+          "Docker CLI is installed but the Docker daemon is not running.\n" +
+          "  Install colima to run Docker on macOS: brew install colima\n" +
+          "  Then start it with: colima start"
+        );
+      }
     }
 
+    // Start colima
     if (!isColimaRunning()) {
       console.log(chalk.gray("  Starting colima (Docker runtime for macOS)..."));
       try {

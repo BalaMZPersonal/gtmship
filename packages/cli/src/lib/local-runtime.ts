@@ -125,6 +125,37 @@ function writePidFile(filePath: string, pid: number): void {
   writeFileSync(filePath, `${pid}\n`, "utf8");
 }
 
+async function readProcessCommand(pid: number): Promise<string | null> {
+  const result = await runCommand("ps", ["-p", `${pid}`, "-o", "command="], {
+    allowedExitCodes: [0, 1],
+  });
+
+  if (result.code !== 0) {
+    return null;
+  }
+
+  const command = result.stdout.trim();
+  return command || null;
+}
+
+async function stopStaleManagedProcess(
+  pidPath: string,
+  expectedEntrypoint: string
+): Promise<boolean> {
+  const pid = readPidFile(pidPath);
+  if (!pid || !isProcessRunning(pid)) {
+    return false;
+  }
+
+  const command = await readProcessCommand(pid);
+  if (command && command.includes(expectedEntrypoint)) {
+    return false;
+  }
+
+  await stopPidFile(pidPath);
+  return true;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -557,6 +588,8 @@ async function ensureAuthService(
   layout: RuntimeLayout,
   config: RuntimeConfig
 ): Promise<"running" | "external"> {
+  await stopStaleManagedProcess(pidFile(layout, "auth"), layout.authServiceEntry);
+
   const authHealthy = await waitForHttp(
     `${layout.authUrl}/health`,
     (body) => body.includes("\"service\":\"gtmship-auth\""),
@@ -605,6 +638,11 @@ async function ensureDashboard(
   layout: RuntimeLayout,
   config: RuntimeConfig
 ): Promise<"running" | "external"> {
+  await stopStaleManagedProcess(
+    pidFile(layout, "dashboard"),
+    layout.dashboardServerEntry
+  );
+
   const dashboardHealthy = await waitForHttp(
     `${layout.dashboardUrl}/api/health`,
     (body) => body.includes("\"service\":\"gtmship-dashboard\""),
@@ -945,31 +983,6 @@ export async function startLocalRuntime(input: {
 } = {}): Promise<RuntimeStatus> {
   const layout = resolveRuntimeLayout();
   const requireDashboard = input.ensureDashboard !== false;
-
-  const [existingAuth, existingDashboard] = await Promise.all([
-    authStatus(layout),
-    dashboardStatus(layout),
-  ]);
-
-  if (existingAuth.healthy && (!requireDashboard || existingDashboard.healthy)) {
-    if (input.openBrowser && requireDashboard) {
-      await openDashboard(layout.dashboardUrl);
-    }
-
-    return {
-      auth: existingAuth.state,
-      dashboard: existingDashboard.state,
-      postgres: "stopped",
-      authHealthy: existingAuth.healthy,
-      dashboardHealthy: existingDashboard.healthy,
-      authUrl: layout.authUrl,
-      dashboardUrl: layout.dashboardUrl,
-      projectRoot: layout.projectRoot,
-      authLogPath: layout.authLogPath,
-      dashboardLogPath: layout.dashboardLogPath,
-      postgresLogPath: layout.postgresLogPath,
-    };
-  }
 
   ensureRuntimePrerequisites(layout, {
     requireDashboard,

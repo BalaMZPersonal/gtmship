@@ -156,6 +156,24 @@ async function stopStaleManagedProcess(
   return true;
 }
 
+async function stopManagedProcessIfMatching(
+  pidPath: string,
+  expectedEntrypoint: string
+): Promise<boolean> {
+  const pid = readPidFile(pidPath);
+  if (!pid || !isProcessRunning(pid)) {
+    return false;
+  }
+
+  const command = await readProcessCommand(pid);
+  if (!command || !command.includes(expectedEntrypoint)) {
+    return false;
+  }
+
+  await stopPidFile(pidPath);
+  return true;
+}
+
 async function findListeningPid(port: number): Promise<number | null> {
   const lsof = findExecutable("lsof");
   if (!lsof) {
@@ -680,6 +698,7 @@ async function ensureAuthService(
   config: RuntimeConfig
 ): Promise<"running" | "external"> {
   await stopStaleManagedProcess(pidFile(layout, "auth"), layout.authServiceEntry);
+  await stopManagedProcessIfMatching(pidFile(layout, "auth"), layout.authServiceEntry);
 
   const existing = await assertNoConflictingHealthyService({
     port: DEFAULT_AUTH_PORT,
@@ -734,6 +753,10 @@ async function ensureDashboard(
   config: RuntimeConfig
 ): Promise<"running" | "external"> {
   await stopStaleManagedProcess(
+    pidFile(layout, "dashboard"),
+    layout.dashboardServerEntry
+  );
+  await stopManagedProcessIfMatching(
     pidFile(layout, "dashboard"),
     layout.dashboardServerEntry
   );

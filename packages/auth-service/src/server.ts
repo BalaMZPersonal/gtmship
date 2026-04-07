@@ -17,6 +17,7 @@ import { setupRoutes } from "./routes/setup.js";
 import { aiRoutes } from "./routes/ai.js";
 import { updateRoutes } from "./routes/updates.js";
 import { startConnectionSecretSyncReconciler } from "./services/auth-strategy.js";
+import { prisma } from "./services/db.js";
 import {
   getAllowedWebOrigins,
   isAllowedWebOrigin,
@@ -51,8 +52,24 @@ app.use(
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", service: "gtmship-auth", version });
+app.get("/health", async (_req, res) => {
+  try {
+    await prisma.$queryRawUnsafe("SELECT 1");
+    res.json({
+      status: "ok",
+      service: "gtmship-auth",
+      version,
+      database: "ok",
+    });
+  } catch (error) {
+    res.json({
+      status: "degraded",
+      service: "gtmship-auth",
+      version,
+      database: "error",
+      error: error instanceof Error ? error.message : "Database check failed.",
+    });
+  }
 });
 
 // Routes

@@ -41,6 +41,13 @@ interface RuntimeStatus {
   postgresLogPath: string;
 }
 
+function authServiceReady(body: string): boolean {
+  return (
+    body.includes("\"service\":\"gtmship-auth\"") &&
+    body.includes("\"database\":\"ok\"")
+  );
+}
+
 type CommandResult = {
   code: number;
   stdout: string;
@@ -704,7 +711,7 @@ async function ensureAuthService(
     port: DEFAULT_AUTH_PORT,
     url: layout.authUrl,
     healthPath: "/health",
-    matcher: (body) => body.includes("\"service\":\"gtmship-auth\""),
+    matcher: authServiceReady,
     expectedEntrypoint: layout.authServiceEntry,
     pidPath: pidFile(layout, "auth"),
     serviceLabel: "A GTMShip auth service",
@@ -734,7 +741,7 @@ async function ensureAuthService(
 
   const ready = await waitForHttp(
     `${layout.authUrl}/health`,
-    (body) => body.includes("\"service\":\"gtmship-auth\"")
+    authServiceReady
   );
 
   if (!ready) {
@@ -1041,7 +1048,7 @@ async function authStatus(layout: RuntimeLayout): Promise<{
 }> {
   const healthy = await waitForHttp(
     `${layout.authUrl}/health`,
-    (body) => body.includes("\"service\":\"gtmship-auth\""),
+    authServiceReady,
     1_000
   );
 

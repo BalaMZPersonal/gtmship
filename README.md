@@ -10,6 +10,14 @@ GTMship is an open-source workflow automation platform. Describe what you want i
 
 No vendor lock-in. No per-task pricing. No credits. No execution meters. Completely open source, MIT licensed.
 
+### Yes, even that use case
+
+GTMship can handle the most ridiculous workflows you can think of. Here's one:
+
+> *"When a Freshdesk ticket is tagged `angry-ceo`, look up the customer in HubSpot, pull their last 3 invoices from Google Drive, draft an apology email in Gmail with the invoices attached, summarize the ticket history with OpenAI, post a panic alert to #cs-alerts on Slack, and log the whole thing back to Google Sheets so finance knows what happened before they do."*
+
+Six integrations. One sentence. GTMship connects all of them, writes the workflow, previews every write, and lets you run it from your laptop or deploy it. You just describe it.
+
 ## Quick Start
 
 ### Install with Homebrew (macOS / Linux)

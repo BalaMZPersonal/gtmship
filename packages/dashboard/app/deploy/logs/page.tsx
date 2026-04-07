@@ -198,6 +198,10 @@ function LogsPageContent() {
   const [selectedExecutionName, setSelectedExecutionName] =
     useState(queryExecutionName);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoReconcileAttemptedRef = useRef(new Set<string>());
+  const [cloudSettings, setCloudSettings] = useState<Awaited<
+    ReturnType<typeof loadCloudDeploySettings>
+  > | null>(null);
 
   useEffect(() => {
     setWorkflowId(queryWorkflowValue);
@@ -225,6 +229,7 @@ function LogsPageContent() {
         return;
       }
 
+      setCloudSettings(settings);
       setProvider(
         resolvePreferredCloudProvider({
           requestedProvider,
@@ -331,12 +336,44 @@ function LogsPageContent() {
           return Array.isArray(deployments) ? deployments : [];
         };
 
+        const reconcileParams = {
+          provider,
+          region:
+            provider === "local"
+              ? undefined
+              : provider === "aws"
+                ? cloudSettings?.savedRegions.aws || cloudSettings?.region || undefined
+                : cloudSettings?.savedRegions.gcp || cloudSettings?.region || undefined,
+          gcpProject:
+            provider === "gcp"
+              ? cloudSettings?.gcpProject?.trim() || undefined
+              : undefined,
+          workflow: queryWorkflowSlug || workflowId.trim() || undefined,
+        };
+        const autoReconcileKey = [
+          provider,
+          workflowLookup.workflowId || "",
+          workflowLookup.workflowSlug || "",
+          queryDeploymentId,
+        ].join("::");
+        const shouldAutoReconcile =
+          !forceReconcile &&
+          Boolean(
+            workflowLookup.workflowId ||
+              workflowLookup.workflowSlug ||
+              queryDeploymentId,
+          ) &&
+          !autoReconcileAttemptedRef.current.has(autoReconcileKey);
+
         let nextDeployments = await fetchDeployments();
+        if (shouldAutoReconcile && nextDeployments.length === 0) {
+          autoReconcileAttemptedRef.current.add(autoReconcileKey);
+          await api.reconcileWorkflowDeployments(reconcileParams);
+          nextDeployments = await fetchDeployments();
+        }
         if (forceReconcile) {
-          await api.reconcileWorkflowDeployments({
-            provider,
-            workflow: queryWorkflowSlug || workflowId.trim() || undefined,
-          });
+          autoReconcileAttemptedRef.current.add(autoReconcileKey);
+          await api.reconcileWorkflowDeployments(reconcileParams);
           nextDeployments = await fetchDeployments();
         }
 
@@ -352,7 +389,15 @@ function LogsPageContent() {
         setDeploymentsLoading(false);
       }
     },
-    [provider, providerReady, queryWorkflowSlug, workflowId, workflowLookup]
+    [
+      cloudSettings,
+      provider,
+      providerReady,
+      queryDeploymentId,
+      queryWorkflowSlug,
+      workflowId,
+      workflowLookup,
+    ]
   );
 
   useEffect(() => {

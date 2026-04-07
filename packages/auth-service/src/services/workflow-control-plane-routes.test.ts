@@ -9,6 +9,7 @@ import {
   deriveGcpPlatformMetadata,
   deriveLocalPlatformMetadata,
   preflightDeploymentAuthRecords,
+  prepareDeploymentSyncRecords,
 } from "./workflow-control-plane-routes.js";
 
 test("deleteWorkflowDeploymentsByWorkflowId returns the deleted deployment count", async (t) => {
@@ -294,4 +295,44 @@ test("preflightDeploymentAuthRecords rejects cloud deployments while auth strate
       ]),
     /Cloud deployments require secret_manager auth/
   );
+});
+
+test("prepareDeploymentSyncRecords keeps local deployments outside secret-manager preflight work", async () => {
+  const result = await prepareDeploymentSyncRecords(
+    [
+      {
+        workflowId: "workflow-local",
+        provider: "local",
+        executionKind: "job",
+        bindings: [],
+        status: "active",
+      },
+    ],
+    "proxy",
+  );
+
+  assert.deepEqual(result, [
+    {
+      workflowId: "workflow-local",
+      provider: "local",
+      executionKind: "job",
+      region: null,
+      gcpProject: null,
+      workflowVersion: null,
+      authMode: "proxy",
+      authBackend: null,
+      authRuntimeAccess: null,
+      runtimeAuthManifest: null,
+      triggerType: null,
+      triggerConfig: undefined,
+      resourceInventory: undefined,
+      endpointUrl: null,
+      schedulerId: null,
+      eventTriggerId: null,
+      status: "active",
+      deployedAt: null,
+      bindings: [],
+      bindingsProvided: true,
+    },
+  ]);
 });

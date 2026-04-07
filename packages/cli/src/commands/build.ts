@@ -96,6 +96,101 @@ function execWithPath(command: string, options?: ExecSyncOptions): string | Buff
 }
 
 // ---------------------------------------------------------------------------
+// Docker availability
+// ---------------------------------------------------------------------------
+
+function isDockerCliInstalled(): boolean {
+  try {
+    execWithPath("docker --version", { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDockerDaemonRunning(): boolean {
+  try {
+    execWithPath("docker info", { stdio: "pipe", timeout: 10_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isColimaInstalled(): boolean {
+  try {
+    execWithPath("colima version", { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isColimaRunning(): boolean {
+  try {
+    const output = execWithPath("colima status", { stdio: "pipe", encoding: "utf-8", timeout: 5_000 });
+    return typeof output === "string" && output.includes("Running");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure Docker is available (CLI installed + daemon running).
+ * On macOS, auto-starts colima if the daemon isn't running.
+ * Throws with an actionable message if Docker cannot be made available.
+ */
+export function ensureDockerAvailable(): void {
+  if (!isDockerCliInstalled()) {
+    throw new Error(
+      "Docker CLI is not installed. Install it with: brew install docker colima"
+    );
+  }
+
+  if (isDockerDaemonRunning()) {
+    return;
+  }
+
+  // Docker CLI exists but daemon is not running — try colima on macOS
+  if (process.platform === "darwin") {
+    if (!isColimaInstalled()) {
+      throw new Error(
+        "Docker CLI is installed but the Docker daemon is not running.\n" +
+        "  Install colima to run Docker on macOS: brew install colima\n" +
+        "  Then start it with: colima start"
+      );
+    }
+
+    if (!isColimaRunning()) {
+      console.log(chalk.gray("  Starting colima (Docker runtime for macOS)..."));
+      try {
+        execWithPath("colima start", { stdio: "pipe", timeout: 120_000 });
+      } catch (err) {
+        throw new Error(
+          "Failed to auto-start colima. Start it manually with: colima start\n" +
+          `  ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    // Verify daemon is now reachable
+    if (!isDockerDaemonRunning()) {
+      throw new Error(
+        "Colima is running but Docker daemon is not reachable.\n" +
+        "  Try: colima stop && colima start"
+      );
+    }
+
+    return;
+  }
+
+  // Linux — daemon should be running via systemd
+  throw new Error(
+    "Docker daemon is not running. Start it with: sudo systemctl start docker"
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -416,6 +511,10 @@ export async function buildWorkflows(
   workflowPlans: WorkflowPlanRecord[],
   options: BuildWorkflowsOptions,
 ): Promise<BuildArtifact[]> {
+  if (options.provider === "gcp") {
+    ensureDockerAvailable();
+  }
+
   const buildRoot = join(process.cwd(), ".gtmship", "build");
   ensureDir(buildRoot);
   const versionTag = generateVersionTag();
@@ -518,20 +617,6 @@ export async function buildCommand(options: BuildOptions): Promise<void> {
       ),
     );
     process.exit(1);
-  }
-
-  // Check Docker availability for GCP
-  if (provider === "gcp") {
-    try {
-      execWithPath("docker info", { stdio: "pipe" });
-    } catch {
-      console.log(
-        chalk.red(
-          "  Docker is required for GCP builds but was not found. Please install Docker and try again.",
-        ),
-      );
-      process.exit(1);
-    }
   }
 
   const workflowPlans = loadWorkflowPlans(process.cwd(), {

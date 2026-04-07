@@ -47,6 +47,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify tagged package versions
+        run: pnpm verify:release-version --version=${{ github.ref_name }}
+
       - name: Build release bundle
         run: pnpm build:release -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
 

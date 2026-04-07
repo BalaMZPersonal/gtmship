@@ -14,6 +14,7 @@
     "lint": "turbo lint",
     "render:homebrew-formula": "node scripts/render-homebrew-formula.mjs",
     "render:homebrew-update-manifest": "node scripts/render-homebrew-update-manifest.mjs",
+    "verify:release-version": "node scripts/verify-release-version.mjs",
     "clean": "turbo clean",
     "typecheck": "turbo typecheck"
   },

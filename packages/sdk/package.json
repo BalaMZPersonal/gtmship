@@ -1,6 +1,6 @@
 {
   "name": "@gtmship/sdk",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "GTMShip SDK — AI-friendly workflow SDK for GTM engineering",
   "license": "MIT",
   "type": "module",

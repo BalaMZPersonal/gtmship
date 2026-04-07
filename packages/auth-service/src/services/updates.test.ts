@@ -37,15 +37,15 @@ test("normalizeUpdateManifest applies defaults and rejects invalid payloads", ()
 test("buildUpdateStatus distinguishes update and restart-required states", () => {
   const updateAvailable = buildUpdateStatus({
     installMethod: "homebrew",
-    runningVersion: "0.1.5",
-    installedVersion: "0.1.5",
+    runningVersion: "0.1.6",
+    installedVersion: "0.1.6",
     manifest: {
-      version: "0.1.6",
-      tag: "v0.1.6",
+      version: "0.1.7",
+      tag: "v0.1.7",
       releasedAt: "2026-04-07T12:00:00.000Z",
-      notesUrl: "https://example.com/releases/v0.1.6",
+      notesUrl: "https://example.com/releases/v0.1.7",
       severity: "warning",
-      message: "GTMShip 0.1.6 is available.",
+      message: "GTMShip 0.1.7 is available.",
       minimumSupportedVersion: null,
       recommendedCommand:
         "brew update && brew upgrade BalaMZPersonal/tap/gtmship",

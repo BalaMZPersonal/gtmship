@@ -33,15 +33,7 @@ class Gtmship < Formula
     (bin/"gtmship").write <<~EOS
       #!/bin/sh
       set -e
-      ROOT_DIR="#{libexec}"
-      export GTMSHIP_INSTALL_ROOT="${ROOT_DIR}"
-      export GTMSHIP_POSTGRES_BIN="${HOMEBREW_PREFIX}/opt/postgresql@16/bin"
-
-      if [ -x "${HOMEBREW_PREFIX}/opt/node@20/bin/node" ]; then
-        exec "${HOMEBREW_PREFIX}/opt/node@20/bin/node" "${ROOT_DIR}/packages/cli/dist/index.js" "$@"
-      fi
-
-      exec node "${ROOT_DIR}/packages/cli/dist/index.js" "$@"
+      exec "#{libexec}/bin/gtmship" "$@"
     EOS
   end
 
@@ -59,6 +51,7 @@ class Gtmship < Formula
   end
 
   test do
+    ENV.delete("HOMEBREW_PREFIX")
     output = shell_output("#{bin}/gtmship --help")
     assert_match "Usage: gtmship", output
   end

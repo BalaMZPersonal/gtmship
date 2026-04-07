@@ -78,6 +78,19 @@ function run(command, args, options = {}) {
   });
 }
 
+function capture(command, args, options = {}) {
+  return execFileSync(command, args, {
+    cwd: options.cwd || repoRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      FORCE_COLOR: "1",
+      ...options.env,
+    },
+  });
+}
+
 function copyIntoStage(relativePath, options = {}) {
   const source = path.join(repoRoot, relativePath);
   const destination = path.join(stagingDir, relativePath);
@@ -172,6 +185,66 @@ function rewriteAbsoluteStageSymlinks(dir) {
   }
 }
 
+function walkFiles(dir, predicate, results = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkFiles(fullPath, predicate, results);
+      continue;
+    }
+
+    if (entry.isFile() && predicate(fullPath)) {
+      results.push(fullPath);
+    }
+  }
+
+  return results;
+}
+
+function isSystemMachOPath(target) {
+  return (
+    target.startsWith("/usr/lib/") ||
+    target.startsWith("/System/Library/") ||
+    target.startsWith("/System/Volumes/Preboot/")
+  );
+}
+
+function rewriteMachOInstallNames(dir) {
+  if (platform !== "darwin") {
+    return;
+  }
+
+  const nativeBinaries = walkFiles(
+    dir,
+    (filePath) => filePath.endsWith(".node") || filePath.endsWith(".dylib")
+  );
+
+  for (const filePath of nativeBinaries) {
+    let dylibId = "";
+    try {
+      const output = capture("otool", ["-D", filePath]);
+      const lines = output
+        .split("\n")
+        .slice(1)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      dylibId = lines[0] || "";
+    } catch {
+      continue;
+    }
+
+    if (!dylibId || !path.isAbsolute(dylibId) || isSystemMachOPath(dylibId)) {
+      continue;
+    }
+
+    run("install_name_tool", [
+      "-id",
+      `@loader_path/${path.basename(dylibId)}`,
+      filePath,
+    ]);
+  }
+}
+
 function writeLauncher() {
   const launcherPath = path.join(stagingDir, "bin", "gtmship");
   mkdirSync(path.dirname(launcherPath), { recursive: true });
@@ -237,6 +310,7 @@ generatePrismaClient(authServiceDir);
 copyIntoStage("packages/dashboard/.next/standalone");
 copyIntoStage("packages/dashboard/.next/static");
 rewriteAbsoluteStageSymlinks(stagingDir);
+rewriteMachOInstallNames(stagingDir);
 
 writeLauncher();
 

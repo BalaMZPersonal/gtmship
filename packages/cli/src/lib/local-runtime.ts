@@ -209,6 +209,22 @@ function withRuntimeNodeEnv(
   };
 }
 
+function withPostgresLocaleEnv(
+  env: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  if (process.platform !== "darwin") {
+    return env;
+  }
+
+  const locale = env.GTMSHIP_POSTGRES_LOCALE?.trim() || "en_US.UTF-8";
+  return {
+    ...env,
+    LANG: locale,
+    LC_ALL: locale,
+    LC_CTYPE: locale,
+  };
+}
+
 function resolvePostgresTools(): PostgresTools {
   const hintedDir = process.env.GTMSHIP_POSTGRES_BIN?.trim();
   const brewDirs = [
@@ -376,6 +392,7 @@ async function ensurePostgresCluster(
   tools: PostgresTools
 ): Promise<void> {
   ensureDir(layout.postgresDir);
+  const postgresEnv = withPostgresLocaleEnv();
 
   if (!existsSync(path.join(layout.postgresDataDir, "PG_VERSION"))) {
     const initSpinner = ora("Initializing local PostgreSQL data directory...").start();
@@ -386,17 +403,28 @@ async function ensurePostgresCluster(
       resolveDatabaseUser(),
       "--auth=trust",
       "--encoding=UTF8",
-    ]);
+    ], {
+      env: postgresEnv,
+    });
 
     if (result.code !== 0) {
       initSpinner.fail("Failed to initialize PostgreSQL");
-      throw new Error(result.stderr || result.stdout || "initdb failed.");
+      const output = result.stderr || result.stdout || "initdb failed.";
+      const localeHint =
+        process.platform === "darwin" && /invalid locale settings/i.test(output)
+          ? "\nSet GTMSHIP_POSTGRES_LOCALE=en_US.UTF-8 and try again if your shell exports a custom locale."
+          : "";
+      throw new Error(`${output}${localeHint}`);
     }
 
     initSpinner.succeed("Initialized local PostgreSQL data directory");
   }
 
-  const status = await runCommand(tools.pgCtl, ["-D", layout.postgresDataDir, "status"]);
+  const status = await runCommand(
+    tools.pgCtl,
+    ["-D", layout.postgresDataDir, "status"],
+    { env: postgresEnv }
+  );
   if (status.code === 0) {
     return;
   }
@@ -417,7 +445,9 @@ async function ensurePostgresCluster(
     `-p ${DEFAULT_DATABASE_PORT}`,
     "-w",
     "start",
-  ]);
+  ], {
+    env: postgresEnv,
+  });
 
   if (start.code !== 0) {
     startSpinner.fail("Failed to start PostgreSQL");
@@ -429,7 +459,9 @@ async function ensurePostgresCluster(
     "127.0.0.1",
     "-p",
     `${DEFAULT_DATABASE_PORT}`,
-  ]);
+  ], {
+    env: postgresEnv,
+  });
   if (ready.code !== 0) {
     startSpinner.fail("PostgreSQL did not become ready");
     throw new Error(ready.stderr || ready.stdout || "pg_isready failed.");
@@ -442,6 +474,7 @@ async function ensureDatabase(
   layout: RuntimeLayout,
   tools: PostgresTools
 ): Promise<void> {
+  const postgresEnv = withPostgresLocaleEnv();
   const result = await runCommand(
     tools.createdb,
     [
@@ -453,7 +486,10 @@ async function ensureDatabase(
       resolveDatabaseUser(),
       "gtmship",
     ],
-    { allowedExitCodes: [0, 1] }
+    {
+      env: postgresEnv,
+      allowedExitCodes: [0, 1],
+    }
   );
 
   if (
@@ -827,7 +863,11 @@ async function postgresStatus(
   layout: RuntimeLayout,
   tools: PostgresTools
 ): Promise<"running" | "stopped"> {
-  const result = await runCommand(tools.pgCtl, ["-D", layout.postgresDataDir, "status"]);
+  const result = await runCommand(
+    tools.pgCtl,
+    ["-D", layout.postgresDataDir, "status"],
+    { env: withPostgresLocaleEnv() }
+  );
   return result.code === 0 ? "running" : "stopped";
 }
 
@@ -977,7 +1017,9 @@ export async function stopLocalRuntime(): Promise<RuntimeStatus> {
       "-m",
       "fast",
       "stop",
-    ]);
+    ], {
+      env: withPostgresLocaleEnv(),
+    });
   }
 
   return getLocalRuntimeStatus();

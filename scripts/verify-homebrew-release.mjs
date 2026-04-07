@@ -62,10 +62,42 @@ function walkSymlinks(dir, results = []) {
   return results;
 }
 
+function walkFiles(dir, predicate, results = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkFiles(fullPath, predicate, results);
+      continue;
+    }
+
+    if (entry.isFile() && predicate(fullPath)) {
+      results.push(fullPath);
+    }
+  }
+
+  return results;
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function isSystemMachOPath(target) {
+  return (
+    target.startsWith("/usr/lib/") ||
+    target.startsWith("/System/Library/") ||
+    target.startsWith("/System/Volumes/Preboot/")
+  );
+}
+
+function parseOtoolPaths(output) {
+  return output
+    .split("\n")
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/)[0] || "")
+    .filter(Boolean);
 }
 
 function verifyStageStructure(stageDir) {
@@ -122,6 +154,37 @@ function verifyCli(stageDir) {
     combinedOutput.includes("Usage: gtmship"),
     "Packaged CLI help output did not contain the expected usage banner."
   );
+}
+
+function verifyNativeInstallNames(stageDir, platform) {
+  if (platform !== "darwin") {
+    return;
+  }
+
+  const nativeBinaries = walkFiles(
+    stageDir,
+    (filePath) => filePath.endsWith(".node") || filePath.endsWith(".dylib")
+  );
+
+  for (const filePath of nativeBinaries) {
+    const result = spawnSync("otool", ["-L", filePath], {
+      encoding: "utf8",
+    });
+
+    assert(
+      result.status === 0,
+      `Could not inspect Mach-O install names for ${filePath}.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+
+    const problematicPaths = parseOtoolPaths(result.stdout).filter(
+      (target) => path.isAbsolute(target) && !isSystemMachOPath(target)
+    );
+
+    assert(
+      problematicPaths.length === 0,
+      `Mach-O file contains non-system absolute install names: ${filePath}\n${problematicPaths.join("\n")}`
+    );
+  }
 }
 
 function reservePort() {
@@ -263,6 +326,7 @@ async function main() {
 
   verifyStageStructure(stageDir);
   verifySymlinks(stageDir);
+  verifyNativeInstallNames(stageDir, platform);
   verifyCli(stageDir);
   await verifyAuthService(stageDir);
   await verifyDashboard(stageDir);

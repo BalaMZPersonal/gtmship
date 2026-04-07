@@ -2,6 +2,8 @@
 
 GTMShip ships to end users as a prebuilt macOS or Linux runtime bundle. Homebrew installs that bundle; it does not build the monorepo on the user's machine.
 
+The Homebrew formula is also responsible for installing baseline runtime dependencies that GTMShip needs locally. In particular, brewed installs now pull in `pulumi` up front so cloud deploys do not fail later with a missing Pulumi CLI. The CLI still handles cloud-provider-specific helpers like `gcloud-cli`, Docker, and Colima at deploy time because those are only needed for certain workflows or providers.
+
 In `github.com/BalaMZPersonal/gtmship`, pushing a `v*` tag is the intended publish flow. The `Release Homebrew` GitHub Actions workflow builds the release bundles, uploads the GitHub Release assets, renders `gtmship.rb`, renders `gtmship-update.json`, and updates `github.com/BalaMZPersonal/homebrew-tap` when the `HOMEBREW_TAP_TOKEN` repository secret is configured.
 
 ## Release Steps
@@ -59,6 +61,12 @@ gtmship open
 ```
 
 `gtmship open` starts the local Postgres cluster, auth service, and dashboard, then opens the browser to `http://localhost:3000`.
+
+For cloud deploys:
+
+- `pulumi` is installed as a Homebrew dependency of `gtmship`
+- the CLI preflights `pulumi`, cloud credentials, enabled APIs, and other deploy prerequisites before it starts building artifacts
+- the CLI auto-installs GCP-specific local helpers such as `gcloud-cli`, `docker`, and `colima` only when a workflow deploy actually needs them
 
 On headless Linux machines or VMs, use:
 

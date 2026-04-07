@@ -6,6 +6,7 @@ class Gtmship < Formula
 
   depends_on "node@20"
   depends_on "postgresql@16"
+  depends_on "pulumi"
 
   on_macos do
     if Hardware::CPU.arm?

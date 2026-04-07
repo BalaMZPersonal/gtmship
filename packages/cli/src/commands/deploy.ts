@@ -11,6 +11,7 @@ import {
 import {
   buildWorkflows,
   ensureGcpApplicationDefaultCredentials,
+  ensurePulumiAvailable,
   ensureGcpServicesEnabled,
   resolveRequiredGcpServices,
   type BuildArtifact,
@@ -814,6 +815,25 @@ export async function deployCommand(options: DeployOptions) {
     const credSpinner = ora("Resolving cloud credentials...").start();
     await resolveCredentials(provider, authUrl);
     credSpinner.succeed("Cloud credentials resolved");
+  }
+
+  if (provider !== "local") {
+    const pulumiPreflightSpinner = ora(
+      "Preflighting Pulumi CLI for infrastructure deploys...",
+    ).start();
+
+    try {
+      ensurePulumiAvailable();
+      pulumiPreflightSpinner.succeed("Pulumi CLI is ready");
+    } catch (err) {
+      pulumiPreflightSpinner.fail("Pulumi preflight failed");
+      console.log(
+        chalk.red(
+          `  ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+      process.exit(1);
+    }
   }
 
   if (provider === "gcp" && gcpProject) {

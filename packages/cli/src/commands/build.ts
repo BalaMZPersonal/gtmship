@@ -72,11 +72,11 @@ const GCLOUD_TIMEOUT_MS = 30 * 1000;
 // ---------------------------------------------------------------------------
 
 /**
- * Build an env object whose PATH includes common locations for `docker` and
- * `gcloud` on macOS and Linux (Homebrew, Docker Desktop, and common Cloud SDK
- * install paths). This ensures child processes can find these binaries even
- * when the CLI is launched from a minimal shell environment, such as the
- * packaged Homebrew app launcher.
+ * Build an env object whose PATH includes common locations for cloud and
+ * container tooling on macOS and Linux (Homebrew, Docker Desktop, and common
+ * Cloud SDK install paths). This ensures child processes can find these
+ * binaries even when the CLI is launched from a minimal shell environment,
+ * such as the packaged Homebrew app launcher.
  */
 export function resolveToolPathCandidates(
   env: NodeJS.ProcessEnv = process.env,
@@ -262,6 +262,33 @@ export function ensureGcloudAvailable(): void {
     "  GTMShip searches common Homebrew and Cloud SDK paths automatically, including\n" +
     "  /opt/homebrew/bin and /opt/homebrew/share/google-cloud-sdk/bin.",
   );
+}
+
+export function ensurePulumiAvailable(): void {
+  try {
+    execWithPath("pulumi version", { stdio: "pipe", timeout: 10_000 });
+    return;
+  } catch (error) {
+    if (isRunningUnderHomebrew()) {
+      try {
+        brewInstall(["pulumi"]);
+        execWithPath("pulumi version", { stdio: "pipe", timeout: 10_000 });
+        return;
+      } catch (installError) {
+        throw new Error(
+          "Pulumi CLI is required for cloud deployments, and GTMShip could not install it automatically.\n" +
+          "  Install it with: brew install pulumi\n" +
+          `  ${formatCommandError(installError)}`,
+        );
+      }
+    }
+
+    throw new Error(
+      "Pulumi CLI is required for cloud deployments.\n" +
+      "  Install it with: brew install pulumi\n" +
+      `  ${formatCommandError(error)}`,
+    );
+  }
 }
 
 export function ensureGcloudAuthenticated(): void {

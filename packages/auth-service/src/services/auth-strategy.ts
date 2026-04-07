@@ -369,6 +369,11 @@ export async function reconcileStaleConnectionSecretReplicas(options?: {
     };
   }
 
+  const configuredBackends = await loadConfiguredSecretBackendTargets();
+  const configuredBackendKeys = new Set(
+    configuredBackends.map((target) => buildSecretSyncTargetKey(target))
+  );
+
   const staleReplicas = await prisma.connectionSecretReplica.findMany({
     where: {
       status: { in: ["pending", "error"] },
@@ -397,6 +402,10 @@ export async function reconcileStaleConnectionSecretReplicas(options?: {
             region: replica.backendRegion || undefined,
             projectId: replica.backendProjectId || undefined,
           };
+
+          if (!configuredBackendKeys.has(buildSecretSyncTargetKey(target))) {
+            return null;
+          }
 
           return [
             buildConnectionSecretSyncKey(replica.connectionId, target),

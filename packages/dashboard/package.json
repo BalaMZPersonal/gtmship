@@ -1,6 +1,6 @@
 {
   "name": "@gtmship/dashboard",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "private": true,
   "scripts": {
     "dev": "node next-dev.js dev --port 3000",

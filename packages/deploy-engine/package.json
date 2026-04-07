@@ -1,6 +1,6 @@
 {
   "name": "@gtmship/deploy-engine",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "GTMShip Deploy Engine — Pulumi programs for AWS/GCP deployment",
   "license": "MIT",
   "type": "module",

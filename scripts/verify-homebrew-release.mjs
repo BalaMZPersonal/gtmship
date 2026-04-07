@@ -297,19 +297,64 @@ async function verifyDashboard(stageDir) {
     ".next",
     "standalone"
   );
-
-  await verifyServiceStart({
-    name: "Dashboard",
+  const child = spawn(process.execPath, ["packages/dashboard/server.js"], {
     cwd: standaloneDir,
-    args: ["packages/dashboard/server.js"],
     env: {
       ...process.env,
       PORT: `${port}`,
       HOSTNAME: "127.0.0.1",
     },
-    healthUrl: `http://127.0.0.1:${port}/api/health`,
-    matcher: (body) => body.includes("\"service\":\"gtmship-dashboard\""),
+    stdio: ["ignore", "pipe", "pipe"],
   });
+
+  let stdout = "";
+  let stderr = "";
+
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const healthBody = await waitForHttp(
+      `http://127.0.0.1:${port}/api/health`,
+      (body) => body.includes("\"service\":\"gtmship-dashboard\"")
+    );
+
+    if (!healthBody) {
+      throw new Error(`Dashboard did not become healthy.\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
+
+    const pageUrl = `http://127.0.0.1:${port}/connections`;
+    const response = await fetch(pageUrl);
+    const html = await response.text();
+    assert(response.ok, `Dashboard page did not load: ${pageUrl}\n${html}`);
+
+    const assetPaths = Array.from(
+      new Set(
+        [...html.matchAll(/(?:href|src)="([^"]+)"/g)]
+          .map((match) => match[1])
+          .filter((value) => value.startsWith("/_next/static/") || value.startsWith("/gtmship"))
+      )
+    );
+
+    assert(
+      assetPaths.some((value) => value.startsWith("/_next/static/")),
+      "Dashboard HTML did not reference any built static assets."
+    );
+
+    for (const assetPath of assetPaths) {
+      const assetResponse = await fetch(`http://127.0.0.1:${port}${assetPath}`);
+      assert(
+        assetResponse.ok,
+        `Dashboard asset failed to load: ${assetPath} (status ${assetResponse.status})`
+      );
+    }
+  } finally {
+    await stopChild(child);
+  }
 }
 
 async function main() {

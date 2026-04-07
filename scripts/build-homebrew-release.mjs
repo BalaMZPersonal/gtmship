@@ -109,6 +109,24 @@ function copyIntoStage(relativePath, options = {}) {
   });
 }
 
+function copyIntoStageAs(sourceRelativePath, destinationRelativePath, options = {}) {
+  const source = path.join(repoRoot, sourceRelativePath);
+  const destination = path.join(stagingDir, destinationRelativePath);
+  const { dereference = false, filter } = options;
+
+  if (!existsSync(source)) {
+    throw new Error(`Missing required release input: ${sourceRelativePath}`);
+  }
+
+  mkdirSync(path.dirname(destination), { recursive: true });
+  cpSync(source, destination, {
+    recursive: true,
+    dereference,
+    filter,
+    preserveTimestamps: true,
+  });
+}
+
 function deployWorkspacePackage(packageName, targetRelativePath) {
   const targetDir = path.join(stagingDir, targetRelativePath);
   rmSync(targetDir, { recursive: true, force: true });
@@ -308,7 +326,31 @@ const authServiceDir = deployWorkspacePackage(
 generatePrismaClient(authServiceDir);
 
 copyIntoStage("packages/dashboard/.next/standalone");
-copyIntoStage("packages/dashboard/.next/static");
+copyIntoStageAs(
+  "packages/dashboard/.next/static",
+  path.join(
+    "packages",
+    "dashboard",
+    ".next",
+    "standalone",
+    "packages",
+    "dashboard",
+    ".next",
+    "static"
+  )
+);
+copyIntoStageAs(
+  "packages/dashboard/public",
+  path.join(
+    "packages",
+    "dashboard",
+    ".next",
+    "standalone",
+    "packages",
+    "dashboard",
+    "public"
+  )
+);
 rewriteAbsoluteStageSymlinks(stagingDir);
 rewriteMachOInstallNames(stagingDir);
 

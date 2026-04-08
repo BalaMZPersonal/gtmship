@@ -8,4 +8,11 @@ dist/
 coverage/
 .next/
 .gtmship/build/
-packages/homepage/Archive.zip
+
+# Local tooling state
+.codex/
+.playwright-mcp/
+.recovery/
+
+# Local site workspace
+packages/homepage/
